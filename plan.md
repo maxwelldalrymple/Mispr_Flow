@@ -6,7 +6,7 @@ The engineering record for Mispr Flow: decisions, architecture, what's done, and
 
 Mispr Flow is a Wispr Flow clone built to be:
 
-1. **Open source.** Every part is readable and changeable. *To do: choose and add a license.*
+1. **Open source.** MIT licensed ([LICENSE](LICENSE)); every part is readable and changeable.
 2. **Free.** No subscription or account; free models running locally.
 3. **Private.** Voice audio is never sent to a cloud server; transcription and cleanup run on-device.
 4. **Fully customizable and multilingual.** Icons, sounds, widget, shortcuts, models, and prompts are all under the user's control. Multilingual: Whisper large-v3-turbo supports ~99 languages; the app currently transcribes English (`LANGUAGE = "en"` in `transcribe.py`) and the cleanup prompt is English. A language setting (explicit or auto-detect) plus multilingual cleanup examples are on the roadmap.
@@ -72,9 +72,9 @@ See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
 13. ⬜ Meeting notetaker (◉): mic + system audio, diarization, LLM summary to `meeting-recordings/`.
 14. ⬜ `.pkg` installer (py2app bundle, postinstall model download, Gemma terms), plus a DMG wrapper.
 15. ⬜ Wispr-style extras: custom dictionary, snippets, app-aware style.
-16. ⬜ Languages: a `language` setting (explicit code or auto-detect), multilingual cleanup prompt and examples, and eval cases per language.
+16. ⬜ Languages (French and Spanish at minimum; ideally every language Whisper supports): a `language` setting (explicit code or `auto`), multilingual cleanup prompt and examples, the detected language in the JSON record, and eval cases per language. See "Languages" below for test results.
 17. ⬜ Customization in the UI: choose icon, sounds, widget position/size, and shortcuts from the settings window.
-18. ⬜ Add an open-source license (e.g. MIT) and a CONTRIBUTING guide.
+18. ✅ MIT license, CONTRIBUTING guide, and CHANGELOG.
 
 ## Floating Widget
 
@@ -184,8 +184,25 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - Models under `/Library/Application Support` aren't checked yet (needed for the `.pkg`).
 - The app still runs from source; an `.app` bundle and signing are pending.
 - The meeting pill's waveform is simulated until meeting capture exists.
-- No license file yet, so the project isn't formally open source until one is added.
 - Transcription is English-only today despite the multilingual model.
+
+## Languages (planned)
+
+Whisper large-v3-turbo is multilingual; the app currently forces English (`LANGUAGE = "en"` in `transcribe.py`). A test on 2026-09-30 with macOS TTS voices (Samantha, Thomas, Mónica) and `language="auto"`:
+
+| Clip | Detected | Time (auto) | Time (forced `en`) | Transcript |
+|---|---|---|---|---|
+| English sentence | en | 1.96 s | 1.00 s | exact |
+| English short ("Yes, sounds good.") | en | 1.94 s | 0.98 s | exact |
+| French sentence | fr | 2.00 s | n/a | exact, accents correct |
+| Spanish sentence | es | 2.03 s | n/a | exact, accents correct |
+| French short ("D'accord, merci.") | fr | 2.24 s | n/a | exact |
+
+Findings: detection was correct on every clip, but auto-detect roughly doubles transcription time (~1 s extra), since whisper.cpp runs a detection pass first. Plan:
+
+- `language` setting: a fixed code (fastest) or `auto` (any language, ~1 s slower). The detected language comes from `whisper_full_lang_id`.
+- Cleanup: Gemma-3-4B is multilingual. Add a "never translate; keep the speaker's language" rule and French/Spanish few-shot examples. Extend the guard: Unicode word tokens (currently `[a-z]`), accent-insensitive comparison, and French/Spanish fillers (euh, ben, bah, du coup / eh, este, pues, o sea) and number words.
+- Tests: eval cases per language in `tools/eval_cleanup.py`, and integration tests with the French and Spanish voices.
 
 ## Branches and Releases
 

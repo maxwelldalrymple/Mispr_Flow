@@ -6,11 +6,19 @@ Private, fully local voice dictation for macOS. Hold **fn**, speak, and clean, p
 
 Modeled on the Wispr Flow desktop experience, without the cloud.
 
+**macOS · Apple Silicon · 100% on-device · free · [MIT licensed](LICENSE)**
+
+```bash
+python3.13 -m venv .venv && .venv/bin/pip install cmake
+CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m mispr        # then hold fn and speak
+```
+
 ## Why
 
 Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for four reasons:
 
-1. **Open source.** Every line (the hotkey, the audio pipeline, the prompts, the safety checks) is readable, auditable, and changeable. *(A license still needs to be chosen and added; until then the code is visible but not yet formally open source.)*
+1. **Open source.** MIT licensed. Every line (the hotkey, the audio pipeline, the prompts, the safety checks) is readable, auditable, and changeable.
 2. **Free.** No subscription and no account. The models are free downloads that run on your own Mac.
 3. **Your voice stays on your Mac.** Wispr Flow sends your audio to its servers for transcription and cleanup, where it may be retained by a third party. For code, credentials in context, or personal and business conversations, that's an unacceptable risk. Mispr Flow transcribes and cleans up entirely on-device.
 4. **Full control and customization.** The icons, sounds, widget look, shortcuts, models, and cleanup prompt are all yours to change (see `mispr/assets/`, `settings.json`, and [plan.md](plan.md)). It's also multilingual by design: the Whisper model understands about 99 languages. Today the app transcribes English; a language setting is on the roadmap.
@@ -22,7 +30,7 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 - **Local cleanup that never invents words.** A small LLM (Gemma-3-4B) removes "um/uh/like", repeated words, and retracted phrases ("Tuesday, no wait, Wednesday" becomes "Wednesday"), and fixes punctuation. A code-level check rejects any output containing a word you didn't say and pastes the raw transcript instead.
 - **Pastes into the focused app,** then restores your clipboard. The pasted text is marked private so clipboard managers ignore it.
 - **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. It follows the screen you're working on and hides in fullscreen apps.
-- **History on disk (optional).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). An Incognito setting turns this off completely.
+- **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
 - **Menu-bar app** with no Dock icon. It captures fn itself so macOS's emoji picker doesn't open.
 
 End to end, text appears about 1.8 s after you stop talking.
@@ -57,7 +65,7 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 | `space`, `return`, or `enter` (hands-free) | Finish and paste |
 | `delete` or `fn` (hands-free) | Cancel. A "Transcript cancelled · Undo" toast appears for 5 s |
 | `delete` (on the Undo toast) | Discard immediately |
-| Hover the pill above the Dock | Show the mic (dictate) and ◉ (meeting note) buttons |
+| Hover the pill above the Dock | Show the mic (dictate) and ◉ (meeting note; capture coming soon) buttons |
 | Click the mic / long-press it | Hands-free / push-to-talk with the mouse |
 
 A quick fn tap does nothing, and fn combined with another key (fn + arrow) works as normal. Soft sounds mark start, stop, and cancel.
@@ -149,7 +157,10 @@ Dictation works end to end. Next up: the main window (history, stats, and the In
 - [Troubleshooting](docs/troubleshooting.md): fixes for every problem we've hit
 - [Architecture](docs/architecture.md): how the pipeline, threads, and widget state machine work
 - [Development](docs/development.md): tests, golden files, tools, branches, releases
+- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Plan and roadmap](plan.md)
 
-## Licenses
+## License
 
-No license has been chosen for this repository's code yet (all rights reserved until one is added). The Gemma model is downloaded from Hugging Face (`ggml-org/gemma-3-4b-it-GGUF`) and is subject to Google's Gemma Terms of Use. Whisper models are MIT-licensed.
+Mispr Flow's code is [MIT licensed](LICENSE). The models are not part of this repository: they're downloaded on first run. Whisper models are MIT licensed; Gemma (`ggml-org/gemma-3-4b-it-GGUF`) is subject to Google's Gemma Terms of Use.
+
+Mispr Flow is an independent project and is not affiliated with Wispr Flow.
