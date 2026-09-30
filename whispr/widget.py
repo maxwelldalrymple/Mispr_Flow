@@ -11,9 +11,10 @@ States (see README / PLAN for the full behaviour):
     MEETING     notetaker running: outlined pill with waveform + ■ stop
     MISTAKE     "Started by mistake?" card (Discard / Keep)
 
-This build is UI-only: clicks drive every state, the waveform comes from a fake
-level source, and PROCESSING / meeting stop are stubs. `fn` handling, audio, STT
-and paste plug into begin_hold / begin_handsfree / finish / cancel later.
+Dictation is driven by the `fn` key (hold = push-to-talk, double-tap within 1 s =
+hands-free, press again to finish) or by clicking the widget. The waveform shows the
+live microphone level. Transcription/paste after PROCESSING and the meeting notetaker
+are still stubs; the meeting pill uses a simulated waveform.
 """
 
 import math
@@ -46,6 +47,7 @@ from Foundation import NSObject
 
 from . import draw, sounds
 from .draw import Rect, white
+from .audio import Recorder
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -68,6 +70,8 @@ BASE = 18  # centre line of the pill, in points above the bottom of the visible 
 FPS = 60
 MORPH = 0.3  # per-frame easing factor toward the target shape
 HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
+FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
+DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
 PROCESSING_STUB_SECONDS = 1.2
 TOAST_SECONDS = 3.0
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
@@ -200,8 +204,14 @@ class WidgetController:
         self.tip = None  # (parts, anchor Rect) — kept while fading out
         self.bar_levels = {11: [0.0] * 11, 5: [0.0] * 5}
 
-        self.levels = FakeLevelSource()
+        self.recorder = Recorder()
+        self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
+
+        self.hold_source = None  # "fn" or "mouse"
+        self.fn_press_at = 0.0
+        self.fn_consumed = False  # this fn press already did something; ignore its release
+        self.last_tap_at = None  # start time of a recent short fn tap (double-tap detection)
 
     # --- Setup --------------------------------------------------------------
 
@@ -257,24 +267,76 @@ class WidgetController:
         # Don't pop straight back into HOVER while the pointer is still resting on the pill.
         self.suppress_hover = True
 
-    def begin_hold(self):
+    def begin_hold(self, source):
+        if not self.recorder.start():
+            return
         self.sounds.play(sounds.START)
+        self.hold_source = source
         self.set_state(HOLD)
 
-    def begin_handsfree(self):
-        self.sounds.play(sounds.START)
+    def begin_handsfree(self, sound=True):
+        if not self.recorder.start():
+            return
+        if sound:
+            self.sounds.play(sounds.START)
         self.set_state(HANDSFREE)
 
     def finish(self):
+        self.recorder.stop()
         self.sounds.play(sounds.STOP)
         self.set_state(PROCESSING)
-        # TODO: transcribe -> clean up -> paste. Stubbed for the UI-only build.
+        # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
+        self.recorder.wipe()
         self.after(PROCESSING_STUB_SECONDS, self.to_idle)
 
     def cancel(self):
+        self.recorder.stop()
+        self.recorder.wipe()
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
         self.after(TOAST_SECONDS, self.to_idle)
+
+    def discard_quietly(self):
+        """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
+        self.recorder.stop()
+        self.recorder.wipe()
+        self.set_state(IDLE)
+
+    # --- fn key -------------------------------------------------------------
+
+    def fn_down(self):
+        now = time.monotonic()
+        self.fn_consumed = True
+        if self.state == HANDSFREE:
+            self.finish()
+        elif self.state not in (IDLE, HOVER, CANCELLED):
+            pass  # busy (processing, meeting, card): ignore fn
+        elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
+            # The first tap already played the start sound.
+            self.last_tap_at = None
+            self.begin_handsfree(sound=False)
+        else:
+            # Start recording immediately so the first word isn't clipped; a short
+            # release turns this into a tap instead.
+            self.fn_consumed = False
+            self.fn_press_at = now
+            self.begin_hold("fn")
+
+    def fn_up(self):
+        if self.fn_consumed or self.state != HOLD or self.hold_source != "fn":
+            return
+        if time.monotonic() - self.fn_press_at < FN_TAP_MAX:
+            self.last_tap_at = self.fn_press_at
+            self.discard_quietly()
+        else:
+            self.finish()
+
+    def fn_combo(self):
+        """Another key was pressed with fn held (fn+arrow, fn+F-key...): not dictation."""
+        self.last_tap_at = None
+        if not self.fn_consumed and self.state == HOLD and self.hold_source == "fn":
+            self.fn_consumed = True
+            self.discard_quietly()
 
     def begin_meeting(self):
         self.sounds.play(sounds.START)
@@ -305,14 +367,14 @@ class WidgetController:
 
             def maybe_hold():
                 if self.seq == seq and self.pressed == "mic":
-                    self.begin_hold()
+                    self.begin_hold("mouse")
 
             self.after(HOLD_DELAY, maybe_hold)
 
     def mouse_up(self, px, py):
         pressed, self.pressed = self.pressed, None
         released_on = self.hit(px, py)
-        if self.state == HOLD and pressed == "mic":
+        if self.state == HOLD and self.hold_source == "mouse" and pressed == "mic":
             self.finish()
             return
         if pressed is None or pressed != released_on:
@@ -396,8 +458,12 @@ class WidgetController:
         self.view.setNeedsDisplay_(True)
 
     def _update_levels(self, now):
-        live = self.state in RECORDING_STATES
-        lvl = self.levels.level(now) if live else 0.0
+        if self.state in (HOLD, HANDSFREE):
+            lvl = self.recorder.level()
+        elif self.state == MEETING:
+            lvl = self.meeting_levels.level(now)
+        else:
+            lvl = 0.0
         for n, arr in self.bar_levels.items():
             mid = (n - 1) / 2
             for i in range(n):
