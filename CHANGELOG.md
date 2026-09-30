@@ -4,6 +4,7 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
+- **Dock icon:** Mispr Flow is now a regular Dock app with the logo as its tile (it was menu-bar only), named "Mispr Flow" in the menu bar and ⌘-Tab, with an app menu (About, Setup Guide…, Hide, Quit). Clicking the Dock icon opens the setup window until the main window exists.
 - **Original sound cues** replace the macOS system sounds (Tink, Pop, Bottle). Ten cues, all synthesized from scratch by `tools/make_sounds.py` into `mispr/assets/sounds/`; a test checks the shipped WAVs match the generator byte for byte. Levels are baked into the files, so they play at full volume.
 - **Every sound is hooked up** to the events that exist today: start, stop, lock (double-tap into hands-free), paste (text landed), cancel, alert (recorded but no words came out), error (mic won't open, no text box, or model download failed), success (models installed, or a permission granted in setup), and achievement (setup finished). `notification` is reserved for the main window.
 - **No text box, no paste:** before pasting, Accessibility is asked what has keyboard focus. If it's clearly not a text input (Finder, the desktop, a web page with nothing focused), Mispr skips ⌘V, leaves the text on the clipboard, plays the error sound, and shows "No text box · Copied to clipboard" for 4 s. The recording is saved with status `copied`. When an app won't say (e.g. Electron apps like VS Code or Slack), it pastes as before.
