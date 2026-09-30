@@ -44,7 +44,7 @@
 5. Paste into the focused app, with clipboard restore.
 6. Add the LLM cleanup pass.
 7. Meeting notetaker: system audio capture, diarization, summary to `meeting-recordings/`.
-8. Package as a `.app` (py2app) with a stable code-signing identity so permissions persist.
+8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
 
 ## Floating Widget
 
@@ -76,3 +76,11 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - **Output:** the transcript and summary are saved to `meeting-recordings/`. Audio follows the same rule as dictation: RAM only, zeroed after processing, never written to disk.
 - **Notes window (later):** My thoughts / Transcript / Summary tabs, plus "Ask anything about this meeting" backed by the local LLM.
 - **Guard:** if a meeting captured only a few words, ask "Started by mistake?" (Discard / Keep).
+
+## Distribution
+
+- **Format:** DMG built from a py2app bundle, so others can download and install it.
+- **Signing:** unsigned for now. Users must allow it via System Settings > Privacy & Security > Open Anyway. Revisit a Developer ID and notarization before any wide release.
+- **Permissions caveat:** macOS ties Microphone, Accessibility, and Input Monitoring grants to the app's signature, so unsigned updates may require re-granting them. Ad-hoc sign with a consistent identifier to reduce this.
+- **Models:** downloaded on first launch (not bundled) to keep the DMG small.
+- **Timing:** after dictation works end to end (fn, record, transcribe, paste).
