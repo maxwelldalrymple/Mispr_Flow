@@ -61,7 +61,7 @@ class SecureAudioBuffer:
 
 
 class Recorder:
-    """Opens the mic only while recording, so the macOS mic indicator is honest."""
+    """Runs the mic only while recording, so the macOS mic indicator is honest."""
 
     def __init__(self):
         self.buffer = SecureAudioBuffer()
@@ -71,39 +71,67 @@ class Recorder:
 
     @property
     def recording(self):
-        return self._stream is not None
+        return self._stream is not None and self._stream.active
 
     def start(self):
-        """Begin a fresh recording. Returns False if the microphone could not be opened."""
+        """Begin a fresh recording. Returns False if the microphone could not be opened.
+
+        The stream is created once and then only started/stopped: starting an existing
+        stream takes ~80 ms versus ~150-230 ms to create one, so less of the first word
+        is lost. A stopped stream does not use the mic (no orange indicator).
+        """
         self.stop()
-        self.buffer.wipe()
+        self.wipe()
         self._level = 0.0
+        for attempt in range(2):
+            try:
+                if self._stream is None:
+                    self.prepare()
+                self._stream.start()
+                return True
+            except Exception as e:  # device gone/changed, or microphone permission denied
+                self._close_stream()
+                if attempt == 1:
+                    print(f"whispr: could not open microphone: {e}", file=sys.stderr)
+        return False
+
+    def prepare(self):
+        """Create the (stopped) stream ahead of time so the first recording starts fast."""
         try:
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE, channels=1, dtype="float32",
                 blocksize=BLOCK, callback=self._callback,
             )
-            self._stream.start()
-        except Exception as e:  # no device, or microphone permission denied
-            print(f"whispr: could not open microphone: {e}", file=sys.stderr)
-            self._stream = None
-            return False
-        return True
+        except Exception:
+            self._stream = None  # start() will retry and report
 
     def stop(self):
         """Stop capturing. The audio stays in the buffer until wipe()."""
+        if self._stream is not None and self._stream.active:
+            self._stream.stop()
+        self._level = 0.0
+
+    def _close_stream(self):
         stream, self._stream = self._stream, None
         if stream is not None:
-            stream.stop()
-            stream.close()
-        self._level = 0.0
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     def audio(self):
         return self.buffer.view()
 
     def wipe(self):
+        """Zero the recording. Returns (seconds, peak, verified_zero) for debug logging."""
         with self._lock:
+            n = self.buffer.length
+            audio = self.buffer.data[:n]
+            # max/min reduce in place; np.abs() would make an unwiped copy of the audio.
+            peak = max(float(audio.max()), -float(audio.min())) if n else 0.0
             self.buffer.wipe()
+            verified = not self.buffer.data[:n].any()
+        return n / SAMPLE_RATE, peak, verified
 
     def level(self, t=None):
         return self._level

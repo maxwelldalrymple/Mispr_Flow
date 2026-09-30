@@ -18,7 +18,9 @@ are still stubs; the meeting pill uses a simulated waveform.
 """
 
 import math
+import os
 import random
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -78,6 +80,15 @@ MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
+
+DEBUG = os.environ.get("WHISPR_DEBUG") == "1"
+
+
+def log(msg):
+    """Debug trace (WHISPR_DEBUG=1). Never logs audio content, only timings and stats."""
+    if DEBUG:
+        now = time.time()
+        print(f"[{time.strftime('%H:%M:%S', time.localtime(now))}.{int(now % 1 * 1000):03d}] {msg}", file=sys.stderr, flush=True)
 
 
 @dataclass
@@ -241,6 +252,7 @@ class WidgetController:
         p.setContentView_(self.view)
         self._poll_screen(force=True)
         p.orderFrontRegardless()
+        self.recorder.prepare()
 
         self.ticker = _Ticker.alloc().init()
         self.ticker.callback = self.tick
@@ -254,6 +266,7 @@ class WidgetController:
     def set_state(self, new):
         if new == self.state:
             return
+        log(f"state {self.state} -> {new}")
         self.state = new
         self.seq += 1
         self.state_since = time.monotonic()
@@ -281,17 +294,21 @@ class WidgetController:
             self.sounds.play(sounds.START)
         self.set_state(HANDSFREE)
 
+    def _wipe(self, reason):
+        secs, peak, ok = self.recorder.wipe()
+        log(f"{reason}: {secs:.2f}s captured, peak {peak:.3f}, wiped={'ok' if ok else 'FAILED'}")
+
     def finish(self):
         self.recorder.stop()
         self.sounds.play(sounds.STOP)
         self.set_state(PROCESSING)
         # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
-        self.recorder.wipe()
+        self._wipe("finished")
         self.after(PROCESSING_STUB_SECONDS, self.to_idle)
 
     def cancel(self):
         self.recorder.stop()
-        self.recorder.wipe()
+        self._wipe("cancelled")
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
         self.after(TOAST_SECONDS, self.to_idle)
@@ -299,13 +316,14 @@ class WidgetController:
     def discard_quietly(self):
         """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
         self.recorder.stop()
-        self.recorder.wipe()
+        self._wipe("discarded")
         self.set_state(IDLE)
 
     # --- fn key -------------------------------------------------------------
 
     def fn_down(self):
         now = time.monotonic()
+        log(f"fn down (state {self.state})")
         self.fn_consumed = True
         if self.state == HANDSFREE:
             self.finish()
@@ -323,6 +341,7 @@ class WidgetController:
             self.begin_hold("fn")
 
     def fn_up(self):
+        log(f"fn up (held {time.monotonic() - self.fn_press_at:.2f}s)" if not self.fn_consumed else "fn up")
         if self.fn_consumed or self.state != HOLD or self.hold_source != "fn":
             return
         if time.monotonic() - self.fn_press_at < FN_TAP_MAX:
@@ -333,6 +352,7 @@ class WidgetController:
 
     def fn_combo(self):
         """Another key was pressed with fn held (fn+arrow, fn+F-key...): not dictation."""
+        log("fn + other key")
         self.last_tap_at = None
         if not self.fn_consumed and self.state == HOLD and self.hold_source == "fn":
             self.fn_consumed = True
