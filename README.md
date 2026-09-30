@@ -29,7 +29,8 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 - **Local transcription.** whisper.cpp (large-v3-turbo) on the Mac's GPU: about 1.1 s for a 5-6 s clip.
 - **Local cleanup that never invents words.** A small LLM (Gemma-3-4B) removes "um/uh/like", repeated words, and retracted phrases ("Tuesday, no wait, Wednesday" becomes "Wednesday"), and fixes punctuation. A code-level check rejects any output containing a word you didn't say and pastes the raw transcript instead.
 - **Pastes into the focused app,** then restores your clipboard. The pasted text is marked private so clipboard managers ignore it. If nothing you can type into is focused (Finder, the desktop, a page with no text box), it skips the paste, plays the error sound, and leaves the text on your clipboard with a "No text box · Copied to clipboard" notice.
-- **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. It follows the screen you're working on and hides in fullscreen apps.
+- **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. On the first dictation after launch it names the mic in use ("Using Built-in mic (recommended)"). It follows the screen you're working on and hides in fullscreen apps.
+- **Sound cues** for every event (start, stop, hands-free lock, paste, cancel, errors). All original, synthesized by the app's own generator script.
 - **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
 - **Menu-bar app** with no Dock icon. It captures fn itself so macOS's emoji picker doesn't open.
 - **Guided setup.** A 4-step window on first launch (Welcome → Permissions → Models → Ready) explains each permission before asking for it. Reopen it anytime from the menu bar: **Setup Guide…**
@@ -69,7 +70,23 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 | Hover the pill above the Dock | Show the mic (dictate) and ◉ (meeting note; capture coming soon) buttons |
 | Click the mic / long-press it | Hands-free / push-to-talk with the mouse |
 
-A quick fn tap does nothing, and fn combined with another key (fn + arrow) works as normal. Soft sounds mark start, stop, the hands-free lock (double-tap), and cancel. They're original cues synthesized by `tools/make_sounds.py` into `mispr/assets/sounds/`; edit the script or drop in your own WAVs to change them.
+A quick fn tap does nothing, and fn combined with another key (fn + arrow) works as normal.
+
+### Sounds
+
+| Sound | Plays when |
+|---|---|
+| start | Recording begins |
+| stop | You release fn, or finish hands-free |
+| lock | A double-tap locks hands-free on |
+| paste | Your text lands in a text box |
+| cancel | You cancel a recording |
+| alert | You recorded, but no words came out |
+| error | The mic won't open, there's no text box to paste into, or the model download fails |
+| success | The models finish installing, or a permission turns green in the setup window |
+| achievement | You finish the setup guide |
+
+They're original cues synthesized by `tools/make_sounds.py` into `mispr/assets/sounds/` (a `notification` cue is reserved for the main window). Edit the script and re-run it, or drop in your own WAVs, to change them.
 
 ## Settings
 
@@ -139,7 +156,7 @@ logs/            stress-test and bug-fix reports
 .venv/bin/python -m pytest
 ```
 
-- **769 unit tests, about 14 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
+- **841 unit tests, about 15 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
 - **Integration tests (opt-in).** Real Whisper, Gemma, and microphone:
   ```bash
   MISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
@@ -148,11 +165,11 @@ logs/            stress-test and bug-fix reports
   ```bash
   UPDATE_GOLDEN=1 .venv/bin/python -m pytest
   ```
-- **Test-quality tools.** `tools/stress_test.py` runs repeated, random-order, and parallel runs; `tools/mutation_test.py` plants bugs and checks the tests catch them (current score: 97.6%); `tools/eval_cleanup.py` scores the cleanup model (invented words must be zero).
+- **Test-quality tools.** `tools/stress_test.py` runs repeated, random-order, and parallel runs; `tools/mutation_test.py` plants bugs and checks the tests catch them (current score: 97.6%); `tools/eval_cleanup.py` scores the cleanup model (invented words must be zero). `tools/make_sounds.py` and `tools/make_icon.py` regenerate the sound cues and `AppIcon.icns`.
 
 ## Status
 
-Dictation works end to end. Next up: the main window (history, stats, and the Incognito and cleanup switches), the meeting notetaker, and a `.pkg` installer. See [plan.md](plan.md) for the decisions and roadmap.
+Dictation works end to end, with original sound cues and a guided setup window. Next up: the main window (history, stats, settings), modeled screen by screen on Wispr Flow's; then languages, the meeting notetaker, and an installable app (DMG/`.pkg`). See [plan.md](plan.md) for the decisions and roadmap.
 
 ## Documentation
 

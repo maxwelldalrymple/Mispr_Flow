@@ -4,14 +4,18 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
-- **No text box, no paste:** if nothing typeable is focused, the text is left on the clipboard with an error sound and a "No text box · Copied to clipboard" notice instead of a ⌘V that goes nowhere. Saved with status `copied`.
-- **Original sound cues** replace the macOS system sounds: start, stop, hands-free lock, cancel, and error, plus paste, notification, alert, success, and achievement cues for the upcoming main window. All synthesized from scratch by `tools/make_sounds.py` (a test checks the shipped WAVs match the generator byte for byte).
-- **Mic name on first dictation:** "Using Built-in mic (recommended)" or "Using <device>" above the widget for 3 s.
-- **App icon** redrawn on the macOS icon grid (`tools/make_icon.py`).
+- **Original sound cues** replace the macOS system sounds (Tink, Pop, Bottle). Ten cues, all synthesized from scratch by `tools/make_sounds.py` into `mispr/assets/sounds/`; a test checks the shipped WAVs match the generator byte for byte. Levels are baked into the files, so they play at full volume.
+- **Every sound is hooked up** to the events that exist today: start, stop, lock (double-tap into hands-free), paste (text landed), cancel, alert (recorded but no words came out), error (mic won't open, no text box, or model download failed), success (models installed, or a permission granted in setup), and achievement (setup finished). `notification` is reserved for the main window.
+- **No text box, no paste:** before pasting, Accessibility is asked what has keyboard focus. If it's clearly not a text input (Finder, the desktop, a web page with nothing focused), Mispr skips ⌘V, leaves the text on the clipboard, plays the error sound, and shows "No text box · Copied to clipboard" for 4 s. The recording is saved with status `copied`. When an app won't say (e.g. Electron apps like VS Code or Slack), it pastes as before.
+- **Mic name on first dictation:** "Using Built-in mic (recommended)" or "Using <device>" above the widget for 3 s, like Wispr Flow. The pill is now a general notice used by the copied-to-clipboard message too.
+- **App icon** redrawn on the macOS icon grid (824 px rounded tile with a soft shadow); `tools/make_icon.py` rebuilds it from `icon.png`.
+- Tests: 841 unit tests (+72), 44 golden files.
+
+## Sep 30: Setup window and rename
+
 - **First-run setup window** (native macOS, light/dark): Welcome → Permissions → Models → Ready. Live permission checkmarks (Microphone and Accessibility required, Screen & System Audio optional), model download progress with Retry, and a quick fn guide. Reappears when something required is missing; reopen from the menu bar via **Setup Guide…**.
 - Permissions are no longer requested on launch; fn starts working within a second of granting Accessibility (no restart).
 - Tests: 769 unit tests; golden-image comparison now round-trips both sides through PNG (fixes false failures on text-heavy renders).
-
 - Renamed to **Mispr Flow** (package `mispr`, data folder and repo `Mispr_Flow`), after briefly being "Mhispr_Flow".
 - MIT license, CONTRIBUTING guide, this changelog.
 - Documentation rewritten: README, `plan.md` (renamed from `PLAN.md`), and `docs/` (getting started, troubleshooting, architecture, development).
