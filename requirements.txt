@@ -3,3 +3,4 @@ pyobjc-framework-Cocoa
 pyobjc-framework-Quartz
 sounddevice
 numpy
+pyobjc-framework-ApplicationServices

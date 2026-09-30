@@ -31,9 +31,8 @@
 ## macOS Permissions Required
 
 - Microphone
-- Accessibility (to post the paste keystroke)
-- Input Monitoring (for the event tap)
-- The `fn` key must not be set to trigger the Emoji picker or system Dictation (System Settings > Keyboard > "Press 🌐 key to" > Do Nothing)
+- Accessibility: swallow `fn` presses so macOS doesn't open the emoji picker (like Wispr Flow), and post the paste keystroke
+- Input Monitoring: fallback listen-only `fn` tap when Accessibility isn't granted (macOS's own fn action then still fires)
 
 ## Milestones
 
@@ -57,7 +56,7 @@ A transparent, non-activating panel centred just above the Dock on the screen th
 | Hold | Compact black pill with live waveform | Hold `fn`, or long-press the mic |
 | Hands-free | ✕ · waveform · ✓; tooltips "Cancel", "Finish and paste", "Press **fn** to finish and paste" | Double-tap `fn`, or click the mic |
 | Processing | Dim waveform + spinner | Release `fn`, press `fn`, or click ✓ |
-| Cancelled | "Transcript cancelled" toast with draining progress bar (no Undo: audio is wiped immediately) | Click ✕ |
+| Cancelled | "Transcript cancelled · Undo" toast with a 5 s draining progress bar. Undo processes the recording; otherwise the audio (held in locked RAM) is wiped when the bar runs out | Click ✕ |
 | Meeting | Outlined pill: small waveform + ■ stop | Click ◉ or press ⌥M |
 | Started by mistake? | Card with Discard / Keep | Stopping a meeting that captured almost nothing |
 

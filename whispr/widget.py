@@ -7,7 +7,7 @@ States (see README / PLAN for the full behaviour):
     HOLD        push-to-talk recording: compact pill with live waveform
     HANDSFREE   toggle recording: ✕ · waveform · ✓
     PROCESSING  transcribing: dim waveform + spinner
-    CANCELLED   "Transcript cancelled" toast with a draining progress bar
+    CANCELLED   "Transcript cancelled · Undo" toast with a draining progress bar
     MEETING     notetaker running: outlined pill with waveform + ■ stop
     MISTAKE     "Started by mistake?" card (Discard / Keep)
 
@@ -75,7 +75,7 @@ HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
 FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
 DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
 PROCESSING_STUB_SECONDS = 1.2
-TOAST_SECONDS = 3.0
+TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
 
@@ -137,7 +137,9 @@ def layout(state):
         # ✕ disappears while processing, so the pill's left edge tucks in.
         return Layout(Shape(Rect(CX - 38, BASE - 14, 90, 28), 14, 0.92, 0.12), elems)
     if state == CANCELLED:
-        return Layout(Shape(Rect.centered(CX, BASE + 6, 200, 40), 20, 0.92, 0.1))
+        toast = Rect.centered(CX, BASE + 6, 240, 44)
+        undo = Rect(toast.right - 8 - 58, toast.cy - 14, 58, 28)
+        return Layout(Shape(toast, 22, 0.92, 0.1), {"undo": undo}, ("undo",))
     if state == MEETING:
         elems = {
             "stop": Rect.centered(CX + 19, BASE, 18, 18),
@@ -189,7 +191,7 @@ class WidgetView(NSView):
         self.ctrl.mouse_up(*self._point(event))
 
 
-class _Ticker(NSObject):
+class Ticker(NSObject):
     """NSTimer needs an Objective-C target; this forwards each tick to a Python callback."""
 
     def tick_(self, timer):
@@ -256,7 +258,7 @@ class WidgetController:
         p.orderFrontRegardless()
         self.recorder.prepare()
 
-        self.ticker = _Ticker.alloc().init()
+        self.ticker = Ticker.alloc().init()
         self.ticker.callback = self.tick
         self.timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             1.0 / FPS, self.ticker, "tick:", None, True
@@ -282,7 +284,13 @@ class WidgetController:
         # Don't pop straight back into HOVER while the pointer is still resting on the pill.
         self.suppress_hover = True
 
+    def _drop_cancelled(self):
+        # A new recording replaces one still waiting in the Undo toast.
+        if self.state == CANCELLED:
+            self._wipe("cancelled (superseded)")
+
     def begin_hold(self, source):
+        self._drop_cancelled()
         if not self.recorder.start():
             return
         self.sounds.play(sounds.START)
@@ -290,6 +298,7 @@ class WidgetController:
         self.set_state(HOLD)
 
     def begin_handsfree(self, sound=True):
+        self._drop_cancelled()
         if not self.recorder.start():
             return
         if sound:
@@ -303,17 +312,27 @@ class WidgetController:
     def finish(self):
         self.recorder.stop()
         self.sounds.play(sounds.STOP)
+        self._process("finished")
+
+    def _process(self, reason):
         self.set_state(PROCESSING)
         # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
-        self._wipe("finished")
+        self._wipe(reason)
         self.after(PROCESSING_STUB_SECONDS, self.to_idle)
 
     def cancel(self):
+        """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
         self.recorder.stop()
-        self._wipe("cancelled")
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
-        self.after(TOAST_SECONDS, self.to_idle)
+        self.after(TOAST_SECONDS, self._expire_cancel)
+
+    def _expire_cancel(self):
+        self._wipe("cancelled")
+        self.to_idle()
+
+    def undo_cancel(self):
+        self._process("undo")
 
     def discard_quietly(self):
         """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
@@ -410,6 +429,7 @@ class WidgetController:
             (MISTAKE, "close"): self.to_idle,
             (MISTAKE, "discard"): self.to_idle,
             (MISTAKE, "keep"): self.to_idle,  # TODO: keep -> summarise like a normal meeting
+            (CANCELLED, "undo"): self.undo_cancel,
         }.get((self.state, pressed))
         if action:
             action()
@@ -535,7 +555,11 @@ class WidgetController:
 
         elif s == CANCELLED:
             label = draw.rich([("Transcript cancelled", False)], 14, white(1.0, a))
-            draw.draw_text_centered(label, r.cx, r.cy + 1)
+            draw.draw_text_left(label, r.x + 18, r.cy + 1)
+            undo = lay.elems["undo"]
+            lit = self.hovered == "undo"
+            draw.fill_round(undo, 9, white(1.0, (0.24 if lit else 0.14) * a))
+            draw.draw_text_centered(draw.rich([("Undo", False)], 13, white(1.0, a)), undo.cx, undo.cy)
             remaining = max(0.0, 1.0 - (time.monotonic() - self.state_since) / TOAST_SECONDS)
             track = Rect(r.x + 16, r.y + 3, r.w - 32, 2)
             draw.fill_round(track, 1, white(1.0, 0.18 * a))

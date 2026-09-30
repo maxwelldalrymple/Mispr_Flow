@@ -1,13 +1,15 @@
-"""Global `fn` key monitoring via a listen-only Quartz event tap.
+"""Global `fn` key handling via a Quartz event tap.
 
-Needs the Input Monitoring permission. A listen-only tap cannot swallow the key,
-so macOS's own fn action must be off: System Settings > Keyboard >
-"Press 🌐 key to" > Do Nothing.
+Preferred: an *active* tap that swallows fn presses, so macOS never sees them and
+doesn't open the emoji picker / input switcher / dictation (what Wispr Flow does).
+That needs the Accessibility permission. Without it we fall back to a listen-only
+tap (Input Monitoring), which works but lets macOS's own fn action fire too.
 """
 
 import subprocess
 import sys
 
+import ApplicationServices as AS
 import Quartz
 
 FN_MASK = Quartz.kCGEventFlagMaskSecondaryFn
@@ -15,13 +17,22 @@ FN_MASK = Quartz.kCGEventFlagMaskSecondaryFn
 _FN_USAGE_DO_NOTHING = "0"  # AppleFnUsageType value for "Do Nothing"
 
 
-def has_permission():
+def has_input_monitoring():
     return bool(Quartz.CGPreflightListenEventAccess())
 
 
-def request_permission():
+def request_input_monitoring():
     """Shows the system Input Monitoring prompt (only the first time)."""
     return bool(Quartz.CGRequestListenEventAccess())
+
+
+def has_accessibility():
+    return bool(AS.AXIsProcessTrusted())
+
+
+def request_accessibility():
+    """Shows the system Accessibility prompt (only the first time)."""
+    return bool(AS.AXIsProcessTrustedWithOptions({AS.kAXTrustedCheckOptionPrompt: True}))
 
 
 def fn_key_does_nothing():
@@ -39,25 +50,48 @@ class FnMonitor:
     def __init__(self, on_down, on_up, on_combo):
         self.on_down, self.on_up, self.on_combo = on_down, on_up, on_combo
         self.fn_down = False
+        self.active = False  # True when fn presses are swallowed
         self._tap = None
+        self._source = None
 
     def start(self):
+        return self._install(active=True) or self._install(active=False)
+
+    def upgrade(self):
+        """Switch from listen-only to swallowing fn once Accessibility is granted."""
+        if self.active or not has_accessibility():
+            return False
+        self._remove()
+        if self._install(active=True):
+            return True
+        self._install(active=False)
+        return False
+
+    def _install(self, active):
         mask = Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged) | Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
-        self._tap = Quartz.CGEventTapCreate(
+        tap = Quartz.CGEventTapCreate(
             Quartz.kCGSessionEventTap,
             Quartz.kCGHeadInsertEventTap,
-            Quartz.kCGEventTapOptionListenOnly,
+            Quartz.kCGEventTapOptionDefault if active else Quartz.kCGEventTapOptionListenOnly,
             mask,
             self._callback,
             None,
         )
-        if self._tap is None:
-            print("whispr: cannot watch the fn key; grant Input Monitoring and restart", file=sys.stderr)
+        if tap is None:
             return False
-        source = Quartz.CFMachPortCreateRunLoopSource(None, self._tap, 0)
-        Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), source, Quartz.kCFRunLoopCommonModes)
-        Quartz.CGEventTapEnable(self._tap, True)
+        self._tap, self.active = tap, active
+        self._source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        Quartz.CFRunLoopAddSource(Quartz.CFRunLoopGetCurrent(), self._source, Quartz.kCFRunLoopCommonModes)
+        Quartz.CGEventTapEnable(tap, True)
         return True
+
+    def _remove(self):
+        if self._tap is not None:
+            Quartz.CGEventTapEnable(self._tap, False)
+            Quartz.CFRunLoopRemoveSource(Quartz.CFRunLoopGetCurrent(), self._source, Quartz.kCFRunLoopCommonModes)
+            Quartz.CFMachPortInvalidate(self._tap)
+        self._tap = self._source = None
+        self.active = False
 
     def _callback(self, proxy, event_type, event, refcon):
         if event_type in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):
@@ -66,9 +100,11 @@ class FnMonitor:
         if event_type == Quartz.kCGEventKeyDown:
             if self.fn_down:
                 self.on_combo()
-            return event
+            return event  # fn+arrow etc. still reach the app
         down = bool(Quartz.CGEventGetFlags(event) & FN_MASK)
-        if down != self.fn_down:
-            self.fn_down = down
-            (self.on_down if down else self.on_up)()
-        return event
+        if down == self.fn_down:
+            return event  # another modifier changed
+        self.fn_down = down
+        (self.on_down if down else self.on_up)()
+        # Swallowing the fn press itself is what stops macOS's emoji picker.
+        return None if self.active else event

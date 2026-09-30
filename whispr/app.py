@@ -12,12 +12,13 @@ from AppKit import (
     NSImage,
     NSMenu,
     NSStatusBar,
+    NSTimer,
     NSVariableStatusItemLength,
 )
 from PyObjCTools import AppHelper
 
 from . import hotkey
-from .widget import WidgetController
+from .widget import Ticker, WidgetController
 
 
 def _status_item():
@@ -69,18 +70,33 @@ def main():
     _install_shutdown(status_item, widget)
     widget.start()
 
-    if not hotkey.has_permission():
-        hotkey.request_permission()
+    if not hotkey.has_accessibility():
+        hotkey.request_accessibility()
+    if not hotkey.has_input_monitoring():
+        hotkey.request_input_monitoring()
     if not fn.start():
         print(
             "whispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
             " Input Monitoring, then restart. Clicking the widget still works.",
             file=sys.stderr,
         )
-    if not hotkey.fn_key_does_nothing():
-        print(
-            'whispr: set System Settings > Keyboard > "Press 🌐 key to" > Do Nothing,'
-            " otherwise macOS also opens its own fn action (emoji picker / dictation).",
-            file=sys.stderr,
+    elif not fn.active:
+        if not hotkey.fn_key_does_nothing():
+            print(
+                "whispr: fn works, but macOS will also open the emoji picker until this app is allowed"
+                " in System Settings > Privacy & Security > Accessibility (no restart needed).",
+                file=sys.stderr,
+            )
+        # Swap to swallowing fn as soon as Accessibility is granted.
+        def try_upgrade():
+            if fn.upgrade():
+                print("whispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
+                upgrade_timer.invalidate()
+
+        ticker = Ticker.alloc().init()
+        ticker.callback = try_upgrade
+        upgrade_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, ticker, "tick:", None, True
         )
+        _keepalive.append(ticker)
     AppHelper.runEventLoop(installInterrupt=False)  # our own signal handlers clean up
