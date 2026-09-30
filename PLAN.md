@@ -42,7 +42,7 @@
 4. ✅ Transcribe with whisper.cpp (large-v3-turbo q5, Metal): ~1.1 s for a 5-6 s clip, ~690 MB RAM.
 5. ✅ Paste into the focused app, with clipboard restore.
 6. Add the LLM cleanup pass.
-7. Meeting notetaker: system audio capture, diarization, summary to `~/Documents/meeting-recordings`.
+7. Meeting notetaker: system audio capture, diarization, summary to `meeting-recordings/` (in the project folder).
 8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
 
 ## Floating Widget
@@ -72,7 +72,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - **Capture:** microphone ("You") plus system audio (other participants) via ScreenCaptureKit audio capture. Requires the Screen & System Audio Recording permission.
 - **Transcription:** whisper.cpp in chunks for a live transcript; a speaker-diarization pass after the meeting to label speakers.
 - **Summary:** a local LLM turns the transcript into a structured document (overview, decisions, action items with owners, open questions).
-- **Output:** the transcript and summary are saved to `~/Documents/meeting-recordings`. Audio follows the same rule as dictation: RAM only, zeroed after processing, never written to disk.
+- **Output:** the transcript and summary are saved to `meeting-recordings/` (in the project folder). Audio follows the same rule as dictation: saved alongside by default, RAM-only and never written to disk in Incognito mode.
 - **Notes window (later):** My thoughts / Transcript / Summary tabs, plus "Ask anything about this meeting" backed by the local LLM.
 - **Guard:** if a meeting captured only a few words, ask "Started by mistake?" (Discard / Keep).
 
@@ -109,7 +109,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Recording Storage
 
-- **Default:** every finished or cancelled dictation is saved to `~/Documents/voice-recordings/YYYY-MM-DD/`, named by its start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) plus `2026-09-30_12-28-33-123.json`. The JSON holds `started_at`/`ended_at` (ms precision), duration, status (`pasted`/`cancelled`), transcript, word count, `recorded_in` (app), `pasted_into` (app, bundle id, and for browsers the page `url` and `page_title`), and the model. This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
+- **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/WhisprClone/` once packaged as an .app, since a DMG install has no project folder), named by its start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) plus `2026-09-30_12-28-33-123.json`. The JSON holds `started_at`/`ended_at` (ms precision), duration, status (`pasted`/`cancelled`), transcript, word count, `recorded_in` (app), `pasted_into` (app, bundle id, and for browsers the page `url` and `page_title`), and the model. This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
 - **Browser page lookup:** via the Accessibility API (walk up from the focused element to the outermost `AXWebArea` and read `AXURL`, falling back to the window's `AXDocument`), so no per-browser Automation prompts. ~50 ms in Chrome; 0.3 s timeout.
 - **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/WhisprClone/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, and silent clips.

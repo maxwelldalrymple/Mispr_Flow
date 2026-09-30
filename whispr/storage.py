@@ -1,6 +1,6 @@
 """Saving recordings locally (when Incognito is off) for history and usage stats.
 
-Each recording becomes two files in ~/Documents/voice-recordings/YYYY-MM-DD/, named by
+Each recording becomes two files in <project>/voice-recordings/YYYY-MM-DD/, named by
 the recording's start time down to the millisecond:
     2026-09-30_12-28-33-123.wav   16 kHz mono 16-bit PCM
     2026-09-30_12-28-33-123.json  metadata: times, duration, status, transcript, words,
@@ -9,12 +9,22 @@ Nothing here is ever uploaded.
 """
 
 import json
+import sys
 import wave
 from pathlib import Path
 
 import numpy as np
 
-RECORDINGS_DIR = Path.home() / "Documents" / "voice-recordings"
+
+
+def _data_root():
+    """The project folder when running from source; Application Support once packaged as an .app."""
+    if getattr(sys, "frozen", False):
+        return Path.home() / "Library" / "Application Support" / "WhisprClone"
+    return Path(__file__).resolve().parent.parent
+
+
+RECORDINGS_DIR = _data_root() / "voice-recordings"
 SAMPLE_RATE = 16_000
 
 # Status values written to the metadata.
