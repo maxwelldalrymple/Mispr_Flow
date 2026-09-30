@@ -1,0 +1,6 @@
+pytest
+pytest-randomly
+pytest-xdist
+pytest-repeat
+pytest-cov
+pytest-timeout
