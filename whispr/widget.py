@@ -30,6 +30,8 @@ from AppKit import (
     NSColor,
     NSCompositingOperationCopy,
     NSEvent,
+    NSFontWeightBold,
+    NSFontWeightSemibold,
     NSMakeRect,
     NSPanel,
     NSRectFillUsingOperation,
@@ -80,6 +82,7 @@ MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
+NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
 
 DEBUG = os.environ.get("WHISPR_DEBUG") == "1"
 
@@ -528,12 +531,12 @@ class WidgetController:
         draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
 
         if s == HOVER:
-            draw.icon_mic(r.cx, r.cy, white(1.0, a))
+            draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)
             note = lay.elems["note"]
             lit = self.hovered == "note"
             draw.fill_circle(note.cx, note.cy, note.w / 2, white(0.15 if lit else 0.1, 0.92 * a))
             draw.stroke_circle(note.cx, note.cy, note.w / 2 - 0.5, white(1.0, 0.15 * a))
-            draw.icon_record(note.cx, note.cy, white(1.0, (1.0 if lit else 0.85) * a))
+            draw.symbol(NOTE_ICON, note.cx, note.cy, 17, alpha=(1.0 if lit else 0.85) * a)
 
         elif s == HOLD:
             draw.bars(r.cx, r.cy, self.bar_levels[11], 3.5, 2, 16, white(1.0, a))
@@ -547,9 +550,9 @@ class WidgetController:
                 c = lay.elems["cancel"]
                 lit = self.hovered == "cancel"
                 draw.fill_circle(c.cx, c.cy, 9, white(1.0, (0.28 if lit else 0.18) * a))
-                draw.icon_x(c.cx, c.cy, 3, white(1.0, a))
+                draw.symbol("xmark", c.cx, c.cy, 8, alpha=a, weight=NSFontWeightBold)
                 draw.fill_circle(fin.cx, fin.cy, 9, white(1.0, a))
-                draw.icon_check(fin.cx, fin.cy, white(0.0, a))
+                draw.symbol("checkmark", fin.cx, fin.cy, 9, rgb=(0.0, 0.0, 0.0), alpha=a, weight=NSFontWeightBold)
             else:
                 draw.spinner(fin.cx, fin.cy, 7, time.monotonic() * 1.2, a)
 
@@ -571,7 +574,7 @@ class WidgetController:
             st = lay.elems["stop"]
             lit = self.hovered == "stop"
             draw.fill_circle(st.cx, st.cy, 9, white(1.0, (0.35 if lit else 0.22) * a))
-            draw.icon_stop(st.cx, st.cy, white(1.0, 0.85 * a))
+            draw.symbol("stop.fill", st.cx, st.cy, 7, alpha=0.85 * a)
 
         elif s == MISTAKE:
             self._draw_mistake_card(r, lay, a)
@@ -580,14 +583,14 @@ class WidgetController:
 
     def _draw_mistake_card(self, card, lay, a):
         title_y = card.top - 28
-        draw.icon_warning(card.x + 30, title_y, draw.srgb(*WARNING_YELLOW, a))
+        draw.symbol("exclamationmark.triangle.fill", card.x + 30, title_y, 14, rgb=WARNING_YELLOW, alpha=a)
         title = draw.rich([("Started by mistake?", True)], 15, white(1.0, a))
         draw.draw_text_left(title, card.x + 46, title_y)
 
         close = lay.elems["close"]
         lit = self.hovered == "close"
         draw.stroke_circle(close.cx, close.cy, 12, white(1.0, (0.9 if lit else 0.6) * a), 1.2)
-        draw.icon_x(close.cx, close.cy, 4, white(1.0, a), 1.4)
+        draw.symbol("xmark", close.cx, close.cy, 10, alpha=a, weight=NSFontWeightSemibold)
 
         body = draw.rich(
             [("Only a few words were captured. Keep this meeting or discard it.", False)],

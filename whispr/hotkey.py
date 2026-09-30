@@ -11,6 +11,7 @@ import sys
 
 import ApplicationServices as AS
 import Quartz
+from PyObjCTools import AppHelper
 
 FN_MASK = Quartz.kCGEventFlagMaskSecondaryFn
 
@@ -69,8 +70,10 @@ class FnMonitor:
 
     def _install(self, active):
         mask = Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged) | Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+        # The HID tap sees keys before the window server acts on them; swallowing fn at the
+        # later session tap is too late to stop the emoji picker.
         tap = Quartz.CGEventTapCreate(
-            Quartz.kCGSessionEventTap,
+            Quartz.kCGHIDEventTap if active else Quartz.kCGSessionEventTap,
             Quartz.kCGHeadInsertEventTap,
             Quartz.kCGEventTapOptionDefault if active else Quartz.kCGEventTapOptionListenOnly,
             mask,
@@ -97,14 +100,16 @@ class FnMonitor:
         if event_type in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):
             Quartz.CGEventTapEnable(self._tap, True)
             return event
+        # Handlers run on the next run-loop pass: an active tap holds up every keystroke
+        # system-wide until this callback returns, and starting the mic takes ~50-100 ms.
         if event_type == Quartz.kCGEventKeyDown:
             if self.fn_down:
-                self.on_combo()
+                AppHelper.callAfter(self.on_combo)
             return event  # fn+arrow etc. still reach the app
         down = bool(Quartz.CGEventGetFlags(event) & FN_MASK)
         if down == self.fn_down:
             return event  # another modifier changed
         self.fn_down = down
-        (self.on_down if down else self.on_up)()
+        AppHelper.callAfter(self.on_down if down else self.on_up)
         # Swallowing the fn press itself is what stops macOS's emoji picker.
         return None if self.active else event

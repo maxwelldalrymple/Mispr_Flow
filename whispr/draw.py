@@ -5,6 +5,11 @@ from dataclasses import dataclass
 
 from AppKit import (
     NSAttributedString,
+    NSCompositingOperationSourceOver,
+    NSFontWeightMedium,
+    NSImage,
+    NSImageSymbolConfiguration,
+    NSZeroRect,
     NSBezierPath,
     NSColor,
     NSFont,
@@ -110,41 +115,28 @@ def _stroke_lines(points_list, color, width):
 
 # --- Icons -----------------------------------------------------------------
 
-def icon_mic(cx, cy, color):
-    fill_round(Rect.centered(cx, cy + 2.5, 6, 10), 3, color)
-    color.set()
-    arc = NSBezierPath.bezierPath()
-    arc.setLineWidth_(1.4)
-    arc.setLineCapStyle_(NSRoundLineCapStyle)
-    arc.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_clockwise_(
-        NSMakePoint(cx, cy + 2.5), 5.5, 180, 360, False
+_symbol_cache = {}
+
+
+def symbol(name, cx, cy, size, rgb=(1.0, 1.0, 1.0), alpha=1.0, weight=NSFontWeightMedium):
+    """Draw an SF Symbol centred at (cx, cy); `size` is the symbol point size."""
+    key = (name, size, rgb, weight)
+    img = _symbol_cache.get(key)
+    if img is None:
+        base = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+        if base is None:
+            return
+        config = NSImageSymbolConfiguration.configurationWithPointSize_weight_(size, weight)
+        config = config.configurationByApplyingConfiguration_(
+            NSImageSymbolConfiguration.configurationWithPaletteColors_([srgb(*rgb, 1.0)])
+        )
+        img = base.imageWithSymbolConfiguration_(config)
+        _symbol_cache[key] = img
+    sz = img.size()
+    rect = NSMakeRect(cx - sz.width / 2, cy - sz.height / 2, sz.width, sz.height)
+    img.drawInRect_fromRect_operation_fraction_respectFlipped_hints_(
+        rect, NSZeroRect, NSCompositingOperationSourceOver, max(0.0, min(1.0, alpha)), True, None
     )
-    arc.moveToPoint_(NSMakePoint(cx, cy - 3))
-    arc.lineToPoint_(NSMakePoint(cx, cy - 6))
-    arc.stroke()
-
-
-def icon_record(cx, cy, color):
-    stroke_circle(cx, cy, 6.5, color, 1.4)
-    fill_circle(cx, cy, 3, color)
-
-
-def icon_x(cx, cy, s, color, width=1.5):
-    _stroke_lines([[(cx - s, cy - s), (cx + s, cy + s)], [(cx - s, cy + s), (cx + s, cy - s)]], color, width)
-
-
-def icon_check(cx, cy, color):
-    _stroke_lines([[(cx - 4, cy), (cx - 1.2, cy - 2.8), (cx + 4, cy + 3)]], color, 1.8)
-
-
-def icon_stop(cx, cy, color):
-    fill_round(Rect.centered(cx, cy, 6, 6), 1.5, color)
-
-
-def icon_warning(cx, cy, color):
-    _stroke_lines([[(cx, cy + 7), (cx - 8, cy - 6), (cx + 8, cy - 6), (cx, cy + 7)]], color, 1.6)
-    _stroke_lines([[(cx, cy + 2), (cx, cy - 1.5)]], color, 1.6)
-    fill_circle(cx, cy - 3.8, 0.9, color)
 
 
 def spinner(cx, cy, r, phase, alpha):
