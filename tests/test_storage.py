@@ -117,6 +117,10 @@ class TestSaveRecording:
         m = meta_of(save(transcript="Hello there.", raw_transcript="um hello there", cleanup=info))
         assert m["raw_transcript"] == "um hello there" and m["cleanup"] == info
 
+    def test_json_is_pretty_printed_with_two_spaces(self):
+        text = save().with_suffix(".json").read_text()
+        assert text.startswith('{\n  "id": ') and '\n    "app": ' in text
+
     def test_unicode_preserved_not_escaped(self):
         wav = save(transcript="Café in São Paulo — naïve 😀")
         raw_json = wav.with_suffix(".json").read_text()

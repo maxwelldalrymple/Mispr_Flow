@@ -89,3 +89,15 @@ def test_full_pipeline_speech_to_clean_text(transcriber, cleaner, tmp_path):
     text, info = cleaner.clean(raw)
     assert "monday" in text.lower() and "um" not in text.lower().split()
     assert check(raw, text) is None
+
+
+@pytest.mark.parametrize("spec", [models.DEFAULT_MODEL, models.CLEANUP_MODEL], ids=lambda s: s.filename)
+def test_installed_models_match_their_specs(spec):
+    """Verifies the hard-coded sizes and checksums against the real downloaded files."""
+    import hashlib
+    assert spec.path.stat().st_size == spec.size
+    digest = hashlib.sha256()
+    with open(spec.path, "rb") as f:
+        while chunk := f.read(1 << 24):
+            digest.update(chunk)
+    assert digest.hexdigest() == spec.sha256

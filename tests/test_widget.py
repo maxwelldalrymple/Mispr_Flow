@@ -665,3 +665,579 @@ class TestDraw:
         controller.fullscreen = True
         controller.draw()
         assert bitmap_context(100, 18)[3] == 0.0
+
+
+# =========================================================================================
+# Added after mutation testing: specification, snapshots, side effects, and the UI glue.
+# =========================================================================================
+
+from datetime import datetime  # noqa: E402
+
+from conftest import FakeScreen, render  # noqa: E402
+
+
+class TestSpecification:
+    """Product decisions, asserted as literal values (not compared to themselves)."""
+
+    def test_fn_timing(self):
+        assert (W.FN_TAP_MAX, W.DOUBLE_TAP_WINDOW, W.HOLD_DELAY) == (0.3, 1.0, 0.3)
+
+    def test_undo_window_and_meeting_guard(self):
+        assert (W.TOAST_SECONDS, W.MIN_MEETING_SECONDS) == (5.0, 10)
+
+    def test_handsfree_keys(self):
+        assert (W.KEY_SPACE, W.KEY_RETURN, W.KEY_KEYPAD_ENTER, W.KEY_DELETE) == (49, 36, 76, 51)
+
+    def test_panel_and_animation(self):
+        assert (W.VIEW_W, W.VIEW_H, W.BASE, W.FPS) == (480, 220, 18, 60)
+        assert (W.MORPH, W.SCREEN_POLL_SECONDS) == (0.3, 0.5)
+
+    def test_tooltip_copy(self):
+        assert W.TOOLTIPS == {
+            (W.HOVER, "mic"): [("Dictate ", False), ("fn", True)],
+            (W.HOVER, "note"): [("New note ", False), ("⌥M", True)],
+            (W.HANDSFREE, "cancel"): [("Cancel", False)],
+            (W.HANDSFREE, "finish"): [("Finish and paste", False)],
+            (W.HANDSFREE, "wave"): [("space", True), (" to paste · ", False), ("fn", True), (" to cancel", False)],
+        }
+
+    def test_icons(self):
+        assert W.NOTE_ICON == "record.circle"
+        assert W.WARNING_YELLOW == (0.96, 0.77, 0.26)
+
+    def test_state_names_are_stable(self):
+        # Used in logs and (later) persisted UI state.
+        assert ALL_STATES == ["idle", "hover", "hold", "handsfree", "processing", "cancelled",
+                              "meeting", "mistake", "setup"]
+        assert W.RECORDING_STATES == ("hold", "handsfree", "meeting")
+
+
+class TestLayoutSnapshot:
+    def test_every_state_matches_golden_geometry(self, golden_json):
+        def rect(r):
+            return [r.x, r.y, r.w, r.h]
+
+        snapshot = {}
+        for state in ALL_STATES:
+            lay = W.layout(state)
+            snapshot[state] = {
+                "bg": {"rect": rect(lay.bg.rect), "radius": lay.bg.radius, "fill": lay.bg.fill, "stroke": lay.bg.stroke},
+                "elems": {name: rect(r) for name, r in lay.elems.items()},
+                "interactive": list(lay.interactive),
+            }
+        golden_json("widget_layouts", snapshot)
+
+
+class TestInitialState:
+    def test_defaults(self, controller, clock):
+        c = controller
+        assert (c.state, c.seq, c.state_since, c.meeting_started) == (W.IDLE, 0, clock.now, 0.0)
+        assert c.pending == [] and c.pressed is None and c.hovered is None
+        assert (c.suppress_hover, c.accepting_mouse, c.fullscreen) == (False, False, False)
+        assert (c.screen_frame, c.next_screen_poll) == (None, 0.0)
+        assert c.shape == W.layout(W.IDLE).bg.values()
+        assert (c.content_a, c.tip_a, c.tip) == (1.0, 0.0, None)
+        assert c.bar_levels == {11: [0.0] * 11, 5: [0.0] * 5}
+        assert (c.setup_progress, c.setup_error) == (0.0, None)
+        assert (c.rec_started_at, c.rec_ended_at, c.rec_recorded_in) == (None, None, None)
+        assert (c.hold_source, c.fn_press_at, c.fn_consumed, c.last_tap_at) == (None, 0.0, False, None)
+
+
+class TestSoundCues:
+    """SpySounds records every cue, so each gesture's audible feedback is pinned."""
+
+    def test_fn_hold(self, controller, clock):
+        controller.fn_down()
+        clock.advance(1)
+        controller.fn_up()
+        assert controller.sounds.played == ["Tink", "Pop"]
+
+    def test_double_tap_plays_start_once(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        clock.advance(0.2)
+        controller.fn_down()
+        assert controller.state == W.HANDSFREE and controller.sounds.played == ["Tink"]
+
+    def test_quick_tap_discard_is_silent_after_start(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        assert controller.sounds.played == ["Tink"]
+
+    def test_mouse_handsfree_then_cancel(self, controller):
+        controller.set_state(W.HOVER)
+        click(controller, "mic")
+        click(controller, "cancel")
+        assert controller.sounds.played == ["Tink", "Bottle"]
+
+    def test_undo_and_expiry_are_silent(self, controller, clock):
+        controller.begin_handsfree()
+        controller.cancel()
+        controller.undo_cancel()
+        assert controller.sounds.played == ["Tink", "Bottle"]
+
+    def test_meeting(self, controller, clock):
+        controller.begin_meeting()
+        clock.advance(30)
+        controller.stop_meeting()
+        assert controller.sounds.played == ["Tink", "Pop"]
+
+    def test_short_meeting_still_confirms_stop(self, controller):
+        controller.begin_meeting()
+        controller.stop_meeting()
+        assert controller.sounds.played == ["Tink", "Pop"] and controller.state == W.MISTAKE
+
+    def test_mic_failure_is_silent(self, controller):
+        controller.recorder.start_ok = False
+        controller.fn_down()
+        controller.begin_handsfree()
+        assert controller.sounds.played == []
+
+
+class TestStateMachineDetails:
+    def test_tap_threshold_is_exclusive(self, controller, clock):
+        clock.now = 0.0  # exact float arithmetic at the boundary
+        controller.fn_down()
+        clock.now = W.FN_TAP_MAX
+        controller.fn_up()
+        assert controller.state == W.PROCESSING  # exactly 0.3 s is a hold, not a tap
+
+    @pytest.mark.parametrize("samples,saved", [(4799, False), (4800, True)])
+    def test_save_minimum_length_boundary(self, controller, isolated_paths, samples, saved):
+        controller.recorder.audio_data = np.full(samples, 0.5, np.float32)
+        controller.begin_handsfree()
+        controller._save(storage.PASTED, "hi")
+        assert bool(saved_json(isolated_paths)) is saved
+
+    def test_saved_times_are_recording_start_and_stop(self, controller, speech, isolated_paths):
+        controller.recorder.audio_data = speech
+        controller.begin_handsfree()
+        controller.rec_started_at = datetime(2026, 9, 30, 12, 0, 0, 0)
+        controller._stop_recording()
+        controller.rec_ended_at = datetime(2026, 9, 30, 12, 0, 7, 250000)
+        controller._save(storage.PASTED, "hi")
+        (meta,) = saved_json(isolated_paths)
+        assert meta["started_at"].startswith("2026-09-30T12:00:00.000")
+        assert meta["ended_at"].startswith("2026-09-30T12:00:07.250")
+
+    def test_missing_end_time_falls_back_to_now(self, controller, speech, isolated_paths):
+        controller.recorder.audio_data = speech
+        controller.begin_handsfree()
+        controller.rec_ended_at = None
+        controller._save(storage.PASTED, "hi")
+        (meta,) = saved_json(isolated_paths)
+        assert meta["ended_at"] >= meta["started_at"]
+
+    def test_superseded_cancel_is_saved_before_new_recording(self, controller, speech, isolated_paths):
+        controller.recorder.audio_data = speech
+        controller.begin_handsfree()
+        controller.cancel()
+        controller.set_state(W.CANCELLED)
+        controller.begin_handsfree()  # new hands-free recording replaces the toast
+        (meta,) = saved_json(isolated_paths)
+        assert meta["status"] == "cancelled" and controller.state == W.HANDSFREE
+
+    def test_hold_records_where_dictation_started(self, controller):
+        controller.begin_hold("fn")
+        assert controller.rec_recorded_in == {"app": "TestApp", "bundle_id": "com.test.app", "url": None,
+                                              "page_title": None}
+        assert controller.rec_started_at is not None and controller.rec_ended_at is None
+
+    def test_discard_stops_the_mic(self, controller):
+        controller.begin_hold("fn")
+        stops = controller.recorder.stopped
+        controller.discard_quietly()
+        assert controller.recorder.stopped == stops + 1
+
+    def test_long_press_ignored_if_released_outside(self, controller, clock):
+        controller.set_state(W.HOVER)
+        controller.mouse_down(*center(controller, "mic"))
+        controller.mouse_up(1, 1)  # dragged off the button
+        controller._run_due(clock.now + W.HOLD_DELAY)
+        assert controller.state == W.HOVER and controller.recorder.started == 0
+
+    def test_long_press_only_on_mic(self, controller, clock):
+        controller.set_state(W.HOVER)
+        controller.mouse_down(*center(controller, "note"))
+        assert controller.pending == []
+
+    def test_long_press_ignored_after_state_change(self, controller, clock):
+        controller.set_state(W.HOVER)
+        controller.mouse_down(*center(controller, "mic"))
+        maybe_hold = controller.pending[0][2]
+        controller.set_state(W.IDLE)
+        maybe_hold()  # even if it ran, a state change must cancel the long-press
+        assert controller.state == W.IDLE
+
+
+class TestLevelsCharacterization:
+    def test_envelope_snapshot(self, controller, golden_json):
+        import random
+        random.seed(7)
+        controller.state = W.HOLD
+        controller.recorder._level = 0.8
+        for _ in range(5):
+            controller._update_levels(0)
+        golden_json("widget_bar_levels_seed7", {n: [round(v, 9) for v in arr]
+                                                 for n, arr in controller.bar_levels.items()})
+
+    def test_center_bar_tallest_edges_symmetric(self, controller, monkeypatch):
+        monkeypatch.setattr(W.random, "uniform", lambda a, b: 1.0)  # remove jitter
+        controller.state = W.HOLD
+        controller.recorder._level = 1.0
+        for _ in range(100):
+            controller._update_levels(0)
+        bars = controller.bar_levels[11]
+        assert bars[5] == pytest.approx(1.0, abs=1e-6)
+        for i in range(5):
+            assert bars[i] == pytest.approx(bars[10 - i]) and bars[i] < bars[i + 1]
+
+
+# --- UI glue (humble objects replaced by fakes) -----------------------------------------------
+
+class TestPointer:
+    def test_entering_idle_zone_opens_hover(self, controller, ui):
+        ui.point_at(W.CX, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.HOVER
+
+    def test_pointer_elsewhere_stays_idle(self, controller, ui):
+        ui.point_at(W.CX + 100, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.IDLE
+
+    @pytest.mark.parametrize("dx,dy,inside", [(36, 0, True), (36.4, 0, False), (-36, 0, True), (-36.4, 0, False),
+                                              (0, 17, True), (0, 17.4, False), (0, -17, True), (0, -17.4, False)])
+    def test_idle_hover_zone_edges(self, controller, ui, dx, dy, inside):
+        ui.point_at(W.CX + dx, W.BASE + dy)  # zone is 72 x 34 around the pill
+        controller._update_mouse()
+        assert (controller.state == W.HOVER) is inside
+
+    def test_suppressed_until_pointer_leaves(self, controller, ui):
+        controller.suppress_hover = True
+        ui.point_at(W.CX, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.IDLE and controller.suppress_hover is True
+        ui.point_at(W.CX + 200, W.BASE)
+        controller._update_mouse()
+        assert controller.suppress_hover is False
+        ui.point_at(W.CX, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.HOVER
+
+    def test_leaving_buttons_closes_hover(self, controller, ui):
+        controller.set_state(W.HOVER)
+        ui.point_at(W.CX + 150, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.IDLE
+
+    def test_hover_has_a_ten_point_grace_margin(self, controller, ui):
+        controller.set_state(W.HOVER)
+        lay = W.layout(W.HOVER)
+        zone = lay.elems["mic"].union(lay.elems["note"])
+        ui.point_at(zone.right + 9, zone.cy)
+        controller._update_mouse()
+        assert controller.state == W.HOVER
+        ui.point_at(zone.right + 11, zone.cy)
+        controller._update_mouse()
+        assert controller.state == W.IDLE
+
+    def test_hover_kept_while_button_pressed(self, controller, ui):
+        controller.set_state(W.HOVER)
+        controller.pressed = "mic"
+        ui.point_at(W.CX + 150, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.HOVER
+
+    def test_hidden_widget_ignores_pointer(self, controller, ui):
+        controller.fullscreen = True
+        ui.point_at(W.CX, W.BASE)
+        controller._update_mouse()
+        assert controller.state == W.IDLE and controller.hovered is None
+
+    def test_accepts_clicks_only_over_buttons(self, controller, ui):
+        controller.set_state(W.HOVER)
+        ui.point_at(*center(controller, "mic"))
+        controller._update_mouse()
+        assert controller.hovered == "mic" and ui.panel.ignores_mouse == [False]
+        ui.point_at(*center(controller, "note"))
+        controller._update_mouse()
+        assert ui.panel.ignores_mouse == [False]  # unchanged: no redundant calls
+        ui.point_at(W.CX + 150, W.BASE + 80)
+        controller._update_mouse()
+        assert ui.panel.ignores_mouse == [False, True]
+
+    def test_pressed_button_keeps_accepting_clicks(self, controller, ui):
+        controller.state, controller.pressed = W.HOLD, "mic"
+        ui.point_at(1, 1)
+        controller._update_mouse()
+        assert ui.panel.ignores_mouse == [False]
+
+    def test_pointer_coordinates_are_panel_relative(self, controller, ui):
+        ui.panel.origin = (500.0, 300.0)
+        controller.set_state(W.HOVER)
+        ui.point_at(*center(controller, "note"))
+        controller._update_mouse()
+        assert controller.hovered == "note"
+
+
+class TestScreenFollowing:
+    def test_panel_centered_on_visible_frame_bottom(self, controller, ui):
+        ui.set_screen(FakeScreen(x=100, y=80, w=1000, h=700))
+        controller._poll_screen()
+        assert ui.panel.frames == [(100 + 500 - 240, 80, 480, 220)]
+        assert controller.screen_frame == (360, 80)
+
+    def test_not_moved_when_unchanged(self, controller, ui):
+        controller._poll_screen()
+        assert ui.panel.frames == []
+
+    def test_force_always_repositions(self, controller, ui):
+        controller._poll_screen(force=True)
+        assert len(ui.panel.frames) == 1
+
+    def test_moves_to_new_screen(self, controller, ui):
+        ui.set_screen(FakeScreen(x=1512, y=0, w=1920, h=1050))
+        controller._poll_screen()
+        assert ui.panel.frames[-1] == (1512 + 960 - 240, 0, 480, 220)
+
+    def test_records_fullscreen(self, controller, ui):
+        ui.set_screen(FakeScreen(), fullscreen=True)
+        controller._poll_screen()
+        assert controller.fullscreen is True
+
+
+class TestFrameLoop:
+    def test_tick_runs_due_callbacks(self, controller, ui, clock):
+        ran = []
+        controller.after(0, lambda: ran.append(1))
+        controller.tick()
+        assert ran == [1]
+
+    def test_screen_polled_on_cadence(self, controller, ui, clock):
+        controller.tick()
+        assert controller.next_screen_poll == clock.now + 0.5
+        ui.set_screen(FakeScreen(x=1512, y=0, w=1920, h=1050))
+        clock.advance(0.49)
+        controller.tick()
+        assert ui.panel.frames == []  # not polled yet
+        clock.advance(0.01)
+        controller.tick()
+        assert len(ui.panel.frames) == 1  # polled at 0.5 s and moved
+
+    def test_shape_eases_thirty_percent_toward_target(self, controller, ui):
+        start = controller.shape[:]
+        controller.set_state(W.HANDSFREE)
+        controller.tick()
+        target = W.layout(W.HANDSFREE).bg.values()
+        assert controller.shape == pytest.approx([s + (t - s) * 0.3 for s, t in zip(start, target)])
+
+    def test_content_fades_in(self, controller, ui):
+        controller.set_state(W.HANDSFREE)  # a state the pointer position can't change
+        controller.tick()
+        assert controller.content_a == pytest.approx(0.25)
+        controller.tick()
+        assert controller.content_a == pytest.approx(0.4375)
+
+    def test_tooltip_follows_hovered_element(self, controller, ui):
+        controller.set_state(W.HOVER)
+        ui.point_at(*center(controller, "mic"))
+        controller.tick()
+        parts, anchor = controller.tip
+        assert parts == W.TOOLTIPS[(W.HOVER, "mic")] and anchor == W.layout(W.HOVER).elems["mic"]
+        assert controller.tip_a == pytest.approx(0.3)
+
+    def test_tooltip_fades_out_but_keeps_content(self, controller, ui):
+        controller.set_state(W.HOVER)
+        ui.point_at(*center(controller, "mic"))
+        controller.tick()
+        ui.point_at(W.CX + 36, W.BASE + 60)  # inside hover grace margin, over no button
+        controller.tick()
+        assert controller.tip is not None and controller.tip_a == pytest.approx(0.3 * 0.7)
+
+    def test_every_tick_redraws(self, controller, ui):
+        controller.tick()
+        controller.tick()
+        assert ui.view.redraws == [True, True]
+
+    def test_tick_animates_waveform(self, controller, ui):
+        controller.state = W.HOLD
+        controller.recorder._level = 1.0
+        controller.tick()
+        assert controller.bar_levels[11][5] > 0.1
+
+
+class TestStart:
+    @pytest.fixture
+    def appkit(self, monkeypatch):
+        """Fake NSPanel / NSTimer / NSRunLoop so start() builds nothing on screen."""
+        made = {}
+
+        class Panel:
+            @classmethod
+            def alloc(cls):
+                return cls()
+
+            def initWithContentRect_styleMask_backing_defer_(self, rect, mask, backing, defer):
+                made["panel"] = self
+                self.cfg = {"rect": (rect.size.width, rect.size.height), "mask": mask}
+                self.calls = []
+                return self
+
+            def __getattr__(self, name):  # record every configuration call in order
+                return lambda *args: self.calls.append((name, args))
+
+            def frame(self):
+                from AppKit import NSMakeRect
+                return NSMakeRect(0, 0, 480, 220)
+
+        class Timer:
+            @staticmethod
+            def timerWithTimeInterval_target_selector_userInfo_repeats_(interval, target, sel, info, repeats):
+                made["timer"] = (interval, target, sel, repeats)
+                return "TIMER"
+
+        class RunLoop:
+            @staticmethod
+            def currentRunLoop():
+                return RunLoop()
+
+            def addTimer_forMode_(self, timer, mode):
+                made["runloop"] = (timer, mode)
+
+        monkeypatch.setattr(W, "NSPanel", Panel)
+        monkeypatch.setattr(W, "NSTimer", Timer)
+        monkeypatch.setattr(W, "NSRunLoop", RunLoop)
+        monkeypatch.setattr(W, "active_screen", lambda: (FakeScreen(), False))
+        return made
+
+    def test_panel_configuration(self, controller, appkit, monkeypatch):
+        monkeypatch.setattr(W.setup, "missing", lambda: [])
+        controller.start()
+        p = appkit["panel"]
+        assert p.cfg == {"rect": (480, 220), "mask": W.NSWindowStyleMaskBorderless | W.NSWindowStyleMaskNonactivatingPanel}
+        names = [n for n, _ in p.calls]
+        # Level must be set after setFloatingPanel_ (which resets it).
+        assert names.index("setFloatingPanel_") < names.index("setLevel_")
+        calls = dict(p.calls)
+        assert calls["setFloatingPanel_"] == (True,)
+        assert calls["setLevel_"] == (W.NSStatusWindowLevel,)
+        assert calls["setBackgroundColor_"] == (W.NSColor.clearColor(),)
+        assert calls["setContentView_"] == (controller.view,)
+        f = controller.view.frame()
+        assert (f.origin.x, f.origin.y, f.size.width, f.size.height) == (0, 0, W.VIEW_W, W.VIEW_H)
+        assert calls["setOpaque_"] == (False,) and calls["setHasShadow_"] == (False,)
+        assert calls["setHidesOnDeactivate_"] == (False,) and calls["setIgnoresMouseEvents_"] == (True,)
+        assert calls["setCollectionBehavior_"] == (
+            W.NSWindowCollectionBehaviorCanJoinAllSpaces | W.NSWindowCollectionBehaviorStationary
+            | W.NSWindowCollectionBehaviorFullScreenAuxiliary | W.NSWindowCollectionBehaviorIgnoresCycle,)
+        assert "orderFrontRegardless" in names and "setFrame_display_" in names
+        assert controller.view.ctrl is controller
+
+    def test_frame_timer_at_60fps_in_common_modes(self, controller, appkit, monkeypatch):
+        monkeypatch.setattr(W.setup, "missing", lambda: [])
+        controller.start()
+        interval, target, sel, repeats = appkit["timer"]
+        assert interval == pytest.approx(1 / 60) and sel == "tick:" and repeats is True
+        assert target.callback == controller.tick
+        assert appkit["runloop"] == ("TIMER", W.NSRunLoopCommonModes)
+
+    def test_models_present_loads_engines(self, controller, appkit, monkeypatch):
+        monkeypatch.setattr(W.setup, "missing", lambda: [])
+        controller.start()
+        assert controller.state == W.IDLE and controller.recorder.prepared == 1
+        assert controller.transcriber.loaded == 1 and controller.cleaner.loaded == 1
+
+    def test_missing_models_enter_mandatory_setup(self, controller, appkit, monkeypatch):
+        monkeypatch.setattr(W.setup, "missing", lambda: [W.DEFAULT_MODEL])
+        installs = []
+        monkeypatch.setattr(W.setup, "install_async", lambda *a: installs.append(a))
+        controller.start()
+        assert controller.state == W.SETUP and len(installs) == 1
+        assert controller.transcriber.loaded == 0  # engines wait for the download
+
+
+class TestObjCBridges:
+    def test_view_contract(self, controller):
+        from AppKit import NSMakeRect
+        view = W.WidgetView.alloc().initWithFrame_(NSMakeRect(0, 0, W.VIEW_W, W.VIEW_H))
+        assert view.isFlipped() is False  # y grows upward, matching the layout maths
+        assert view.acceptsFirstMouse_(None) is True  # first click works without activating
+
+    def test_view_forwards_mouse_in_view_coordinates(self, controller):
+        from AppKit import NSMakePoint, NSMakeRect
+        view = W.WidgetView.alloc().initWithFrame_(NSMakeRect(0, 0, W.VIEW_W, W.VIEW_H))
+        seen = []
+        view.ctrl = type("Ctrl", (), {"mouse_down": lambda s, x, y: seen.append(("down", x, y)),
+                                      "mouse_up": lambda s, x, y: seen.append(("up", x, y))})()
+        event = type("Ev", (), {"locationInWindow": lambda s: NSMakePoint(12.5, 34.0)})()
+        view.mouseDown_(event)
+        view.mouseUp_(event)
+        assert seen == [("down", 12.5, 34.0), ("up", 12.5, 34.0)]
+
+    def test_ticker_forwards_to_callback(self):
+        ticks = []
+        t = W.Ticker.alloc().init()
+        t.callback = lambda: ticks.append(1)
+        t.tick_(None)
+        assert ticks == [1]
+
+
+# --- Golden images of every widget state -------------------------------------------------------
+
+def _prepare_render(controller, state, hovered=None, error=None):
+    controller.state = state
+    controller.shape = W.layout(state).bg.values()
+    controller.content_a = 1.0
+    controller.hovered = hovered
+    controller.setup_error = error
+    controller.setup_progress = 0.42
+    controller.state_since = controller.state_since  # fake clock: toast bar is deterministic
+    for n, arr in controller.bar_levels.items():
+        mid = (n - 1) / 2
+        arr[:] = [0.9 * (1 - abs(i - mid) / (mid + 1)) for i in range(n)]
+    tip = W.TOOLTIPS.get((state, hovered))
+    controller.tip, controller.tip_a = ((tip, W.layout(state).elems[hovered]), 1.0) if tip else (None, 0.0)
+
+
+RENDER_CASES = [(s, None, None) for s in ALL_STATES] + [
+    (W.HOVER, "mic", None), (W.HOVER, "note", None), (W.HANDSFREE, "cancel", None),
+    (W.HANDSFREE, "finish", None), (W.HANDSFREE, "wave", None), (W.CANCELLED, "undo", None),
+    (W.MEETING, "stop", None), (W.MISTAKE, "keep", None), (W.SETUP, "retry", "offline"),
+]
+
+
+@pytest.mark.parametrize("state,hovered,error", RENDER_CASES)
+def test_state_matches_golden_image(controller, clock, golden_image, state, hovered, error):
+    _prepare_render(controller, state, hovered, error)
+    clock.advance(2.0)  # 2 s into the Undo countdown; spinner phase fixed by the fake clock
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image(f"widget_{state}_{hovered or 'plain'}", pixels, rep)
+
+
+class TestDebugLog:
+    def test_env_var_switches_debug_on_only_for_1(self):
+        import os
+        import subprocess
+        import sys
+        code = "import whispr.widget as W; print(W.DEBUG)"
+        def debug_with(value):
+            env = {k: v for k, v in os.environ.items() if k != "WHISPR_DEBUG"}
+            if value is not None:
+                env["WHISPR_DEBUG"] = value
+            out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+            return out.stdout.strip().splitlines()[-1]
+        assert debug_with("1") == "True"
+        assert debug_with("0") == "False" and debug_with(None) == "False"
+
+    def test_fn_up_logs_how_long_fn_was_held(self, controller, clock, monkeypatch, capsys):
+        monkeypatch.setattr(W, "DEBUG", True)
+        controller.fn_down()
+        clock.advance(1.5)
+        controller.fn_up()
+        assert "fn up (held 1.50s)" in capsys.readouterr().err
+
+    def test_consumed_fn_up_logs_plainly(self, controller, clock, monkeypatch, capsys):
+        monkeypatch.setattr(W, "DEBUG", True)
+        controller.begin_handsfree()
+        controller.fn_down()  # cancels; this press is consumed
+        controller.fn_up()
+        assert "fn up\n" in capsys.readouterr().err

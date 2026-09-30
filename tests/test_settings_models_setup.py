@@ -27,6 +27,20 @@ class TestSettings:
         settings.save(settings.Settings())
         assert settings.SETTINGS_PATH.exists()
 
+    def test_save_creates_missing_grandparent_folders(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "a" / "b" / "c" / "settings.json")
+        settings.save(settings.Settings())
+        assert settings.SETTINGS_PATH.exists()
+
+    def test_save_twice_overwrites(self):
+        settings.save(settings.Settings(incognito=True))
+        settings.save(settings.Settings(incognito=False))
+        assert settings.load().incognito is False
+
+    def test_saved_file_is_human_readable(self):
+        settings.save(settings.Settings())
+        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true\n}'
+
     def test_saved_file_is_readable_json(self):
         settings.save(settings.Settings(incognito=True))
         assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True}
@@ -100,6 +114,11 @@ class TestModelSpec:
         assert spec.size > 100_000_000
         assert spec.url.startswith("https://huggingface.co/") and spec.url.endswith(spec.filename)
 
+    def test_spec_is_immutable(self):
+        import dataclasses
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            spec_for().size = 1
+
     def test_configured_models(self):
         assert models.DEFAULT_MODEL is models.WHISPER_TURBO_Q5
         assert models.CLEANUP_MODEL is models.GEMMA3_4B_Q4
@@ -129,6 +148,22 @@ class TestEnsureModel:
         assert models.ensure_model(s) == s.path
         assert s.path.read_bytes() == PAYLOAD
         assert requested == [s.url]
+
+    def test_creates_missing_models_folder_tree(self, serve, monkeypatch, tmp_path):
+        monkeypatch.setattr(models, "MODELS_DIR", tmp_path / "x" / "y" / "models")
+        serve()
+        assert models.ensure_model(spec_for()).exists()
+
+    def test_download_has_a_timeout(self, monkeypatch):
+        seen = {}
+
+        def urlopen(url, timeout=None):
+            seen["timeout"] = timeout
+            return FakeResponse(PAYLOAD)
+
+        monkeypatch.setattr(models.urllib.request, "urlopen", urlopen)
+        models.ensure_model(spec_for())
+        assert seen["timeout"] and 0 < seen["timeout"] <= 60
 
     def test_no_partial_file_left_after_success(self, serve):
         serve()
@@ -183,66 +218,66 @@ class TestEnsureModel:
 
 
 # --- setup ---------------------------------------------------------------------------
+# Small fake specs are injected (install_async(specs=...)), so progress fractions are exact.
 
-def run_install(monkeypatch, ensure):
+A = ModelSpec("a.bin", 300, "0" * 64)
+B = ModelSpec("b.bin", 100, "0" * 64)
+
+
+def run_install(monkeypatch, ensure, specs=(A, B)):
     monkeypatch.setattr(setup, "ensure_model", ensure)
-    got = {"progress": []}
-    finished = threading.Event()
-
-    def on_done():
-        got["done"] = True
-        finished.set()
-
-    def on_error(msg):
-        got["error"] = msg
-        finished.set()
-
-    setup.install_async(got["progress"].append, on_done, on_error)
-    assert finished.wait(5)
+    got = {"progress": [], "done": 0, "errors": []}
+    setup.install_async(got["progress"].append, lambda: got.__setitem__("done", got["done"] + 1),
+                        got["errors"].append, specs=specs)
     return got
+
+
+def fake_download(downloaded):
+    def ensure(spec, progress):
+        progress(spec.size // 2, spec.size)
+        progress(spec.size, spec.size)
+        downloaded.append(spec)
+    return ensure
 
 
 class TestSetup:
     def test_required_models(self):
         assert setup.REQUIRED == (models.DEFAULT_MODEL, models.CLEANUP_MODEL)
 
-    def test_missing_lists_everything_initially(self):
-        assert setup.missing() == list(setup.REQUIRED)
+    def test_missing_defaults_to_required(self):
+        assert setup.missing() == list(setup.REQUIRED)  # nothing installed in the tmp models dir
 
     def test_missing_excludes_installed(self, monkeypatch):
-        monkeypatch.setattr(setup, "is_installed", lambda s: s is models.DEFAULT_MODEL)
-        assert setup.missing() == [models.CLEANUP_MODEL]
+        monkeypatch.setattr(setup, "is_installed", lambda s: s is A)
+        assert setup.missing([A, B]) == [B]
 
     def test_nothing_missing(self, monkeypatch):
         monkeypatch.setattr(setup, "is_installed", lambda s: True)
-        assert setup.missing() == []
+        assert setup.missing([A, B]) == []
 
-    def test_install_reports_combined_progress(self, monkeypatch):
+    def test_progress_is_exact_fraction_of_all_bytes(self, monkeypatch):
         downloaded = []
-
-        def ensure(spec, progress):
-            progress(spec.size // 2, spec.size)
-            progress(spec.size, spec.size)
-            downloaded.append(spec)
-
-        got = run_install(monkeypatch, ensure)
-        assert got.get("done") and "error" not in got
-        assert downloaded == list(setup.REQUIRED)
-        p = got["progress"]
-        assert p == sorted(p) and p[-1] == pytest.approx(1.0) and 0 < p[0] < 1
+        got = run_install(monkeypatch, fake_download(downloaded))
+        # A: 150/400, 300/400; then B continues from 300: 350/400, 400/400
+        assert got["progress"] == [0.375, 0.75, 0.875, 1.0]
+        assert downloaded == [A, B] and got["done"] == 1 and got["errors"] == []
 
     def test_install_only_downloads_missing(self, monkeypatch):
-        monkeypatch.setattr(setup, "is_installed", lambda s: s is models.DEFAULT_MODEL)
+        monkeypatch.setattr(setup, "is_installed", lambda s: s is A)
         downloaded = []
-        got = run_install(monkeypatch, lambda spec, progress: downloaded.append(spec))
-        assert got.get("done") and downloaded == [models.CLEANUP_MODEL]
+        got = run_install(monkeypatch, fake_download(downloaded))
+        assert downloaded == [B] and got["progress"] == [0.5, 1.0]
+
+    def test_runs_on_named_daemon_worker(self, monkeypatch, inline_threads):
+        run_install(monkeypatch, fake_download([]))
+        assert inline_threads == ["model-setup"]
 
     def test_install_failure_reports_error(self, monkeypatch):
         def ensure(spec, progress):
             raise RuntimeError("model download failed verification")
 
         got = run_install(monkeypatch, ensure)
-        assert got["error"] == "model download failed verification" and "done" not in got
+        assert got["errors"] == ["model download failed verification"] and got["done"] == 0
 
     def test_install_stops_after_first_failure(self, monkeypatch):
         attempts = []
@@ -252,15 +287,21 @@ class TestSetup:
             raise OSError("offline")
 
         run_install(monkeypatch, ensure)
-        assert attempts == [setup.REQUIRED[0]]
+        assert attempts == [A]
 
     def test_install_with_nothing_missing_finishes(self, monkeypatch):
         monkeypatch.setattr(setup, "is_installed", lambda s: True)
         got = run_install(monkeypatch, lambda spec, progress: pytest.fail("should not download"))
-        assert got.get("done")
+        assert got["done"] == 1 and got["progress"] == []
+
+    def test_defaults_install_the_required_models(self, monkeypatch):
+        downloaded = []
+        monkeypatch.setattr(setup, "ensure_model", lambda spec, progress: downloaded.append(spec))
+        setup.install_async(lambda f: None, lambda: None, lambda e: None)
+        assert downloaded == list(setup.REQUIRED)
 
 
-# --- levels --------------------------------------------------------------------------
+# --- levels ---------------------------------------------------------------------------
 
 class TestFakeLevels:
     def test_always_in_range(self):
@@ -281,3 +322,13 @@ class TestFakeLevels:
     def test_instances_are_offset(self):
         a, b = levels.FakeLevelSource(), levels.FakeLevelSource()
         assert a._offset != b._offset
+
+    def test_seeded_sequence_matches_snapshot(self, golden_json):
+        """Characterization test: pins the exact synthetic waveform for a fixed seed."""
+        import random
+        random.seed(1234)
+        src = levels.FakeLevelSource()
+        golden_json("fake_levels_seed1234", {
+            "offset": round(src._offset, 9),
+            "levels": [round(src.level(t / 20), 9) for t in range(120)],
+        })

@@ -14,6 +14,7 @@ import time
 from llama_cpp import Llama
 
 from .models import CLEANUP_MODEL, ensure_model
+from .threads import start_daemon
 
 SYSTEM_PROMPT = """You are a dictation cleanup filter. The user message is raw speech-to-text inside <dictation> tags.
 Return the same text, minimally edited:
@@ -81,15 +82,16 @@ def check(raw, cleaned):
 
 
 class Cleaner:
-    def __init__(self, spec=CLEANUP_MODEL):
+    def __init__(self, spec=CLEANUP_MODEL, clock=time.monotonic):
         self.spec = spec
+        self.clock = clock
         self.error = None
         self._llm = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
 
     def load_async(self):
-        threading.Thread(target=self._load, name="cleanup-load", daemon=True).start()
+        start_daemon(self._load, "cleanup-load")
 
     def _load(self):
         try:
@@ -129,7 +131,7 @@ class Cleaner:
         if self._llm is None:
             info["rejected"] = "model unavailable"
             return raw, info
-        started = time.monotonic()
+        started = self.clock()
         with self._lock:
             out = self._llm.create_chat_completion(
                 self._messages(raw),
@@ -137,7 +139,7 @@ class Cleaner:
                 temperature=0,
             )
         cleaned = out["choices"][0]["message"]["content"].strip().strip('"')
-        info["ms"] = round((time.monotonic() - started) * 1000)
+        info["ms"] = round((self.clock() - started) * 1000)
         info["rejected"] = check(raw, cleaned)
         if info["rejected"]:
             return raw, info

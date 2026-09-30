@@ -1,16 +1,30 @@
 """Shared fixtures. Unit tests never touch the real mic, clipboard, keyboard, models,
 recordings folder, or settings file: those are all faked or redirected to tmp_path."""
 
+import json
+import os
 import time as _real_time
+from pathlib import Path
 
 import numpy as np
 import pytest
-from AppKit import NSBitmapImageRep, NSGraphicsContext
+from AppKit import NSBitmapImageRep, NSGraphicsContext, NSMakeRect, NSPNGFileType
 from PyObjCTools import AppHelper
 
 import whispr.models as models
 import whispr.settings as settings
 import whispr.storage as storage
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """llama-cpp-python opens /dev/null twice at import and never closes it (third-party
+    leak, reported as ResourceWarning at interpreter exit); close it so runs stay clean."""
+    import sys
+    utils = sys.modules.get("llama_cpp._utils")
+    for name in ("outnull_file", "errnull_file"):
+        f = getattr(utils, name, None)
+        if f is not None and not f.closed:
+            f.close()
 
 
 def pytest_configure(config):
@@ -24,6 +38,26 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "RECORDINGS_DIR", tmp_path / "voice-recordings")
     monkeypatch.setattr(models, "MODELS_DIR", tmp_path / "models")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def inline_threads(monkeypatch):
+    """Run background work synchronously (deterministic tests, no sleeps or polling).
+    Records (name, target) for every daemon start; `threads.start_daemon` itself is
+    tested separately with real threads."""
+    import whispr.cleanup
+    import whispr.setup
+    import whispr.transcribe
+
+    started = []
+
+    def start_daemon(target, name):
+        started.append(name)
+        target()
+
+    for module in (whispr.cleanup, whispr.transcribe, whispr.setup):
+        monkeypatch.setattr(module, "start_daemon", start_daemon)
+    return started
 
 
 @pytest.fixture(autouse=True)
@@ -123,6 +157,17 @@ class FakeCleaner:
         self.closed += 1
 
 
+class SpySounds:
+    """Records every sound cue instead of playing it."""
+
+    def __init__(self):
+        self.played = []
+        self.enabled = True
+
+    def play(self, name):
+        self.played.append(name)
+
+
 @pytest.fixture
 def speech():
     """One second of a loud-enough sine wave (passes the length and silence gates)."""
@@ -146,8 +191,8 @@ def controller(monkeypatch, clock):
         "url": "https://example.com/page" if include_page else None,
         "page_title": "Example" if include_page else None,
     })
+    monkeypatch.setattr(W.sounds, "Sounds", SpySounds)
     c = W.WidgetController()
-    c.sounds.enabled = False
     c.pasted = pasted
     return c
 
@@ -169,3 +214,156 @@ def bitmap_context():
 
     yield pixel
     NSGraphicsContext.restoreGraphicsState()
+
+
+# --- Golden files (approval testing) ---------------------------------------------------
+# Snapshots of outputs that are easier to review than to assert field-by-field (layout
+# geometry, rendered pixels). A mismatch fails; after an intentional change, regenerate with
+#     UPDATE_GOLDEN=1 .venv/bin/python -m pytest
+# and review the diff of tests/golden/ like any other code change.
+
+GOLDEN_DIR = Path(__file__).parent / "golden"
+UPDATE_GOLDEN = os.environ.get("UPDATE_GOLDEN") == "1"
+
+
+@pytest.fixture
+def golden_json():
+    def check(name, data):
+        path = GOLDEN_DIR / f"{name}.json"
+        text = json.dumps(data, indent=2, sort_keys=True) + "\n"
+        if UPDATE_GOLDEN or not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            if not UPDATE_GOLDEN:
+                pytest.fail(f"created missing golden file {path.name}; review it and re-run")
+        assert json.loads(text) == json.loads(path.read_text()), f"{name} differs from golden file"
+
+    return check
+
+
+def render(draw_fn, width, height):
+    """Render `draw_fn()` into an offscreen RGBA bitmap; returns (rgba uint8 array, rep)."""
+    rep = NSBitmapImageRep.alloc().initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel_(
+        None, width, height, 8, 4, True, False, "NSDeviceRGBColorSpace", width * 4, 32
+    )
+    ctx = NSGraphicsContext.graphicsContextWithBitmapImageRep_(rep)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.setCurrentContext_(ctx)
+    try:
+        draw_fn()
+        ctx.flushGraphics()
+    finally:
+        NSGraphicsContext.restoreGraphicsState()
+    data = np.frombuffer(rep.bitmapData(), dtype=np.uint8, count=width * height * 4).reshape(height, width, 4).copy()
+    return data, rep
+
+
+def _read_png(path):
+    rep = NSBitmapImageRep.imageRepWithContentsOfFile_(str(path))
+    w, h = rep.pixelsWide(), rep.pixelsHigh()
+    out, _ = render(lambda: rep.drawInRect_(NSMakeRect(0, 0, w, h)), w, h)
+    return out
+
+
+@pytest.fixture
+def golden_image():
+    """Compare a rendering to tests/golden/<name>.png. Tolerates anti-aliasing noise:
+    at most 0.5% of pixels may differ, each by at most 48/255 in any channel."""
+
+    def check(name, pixels, rep):
+        path = GOLDEN_DIR / f"{name}.png"
+        if UPDATE_GOLDEN or not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            rep.representationUsingType_properties_(NSPNGFileType, {}).writeToFile_atomically_(str(path), True)
+            if not UPDATE_GOLDEN:
+                pytest.fail(f"created missing golden image {path.name}; review it and re-run")
+        expected = _read_png(path)
+        assert expected.shape == pixels.shape, f"{name}: size changed"
+        diff = np.abs(expected.astype(int) - pixels.astype(int)).max(axis=2)
+        bad = (diff > 48).mean()
+        assert bad <= 0.005, f"{name}: {bad:.2%} of pixels differ from the golden image"
+
+    return check
+
+
+# --- Fakes for the macOS UI objects the widget talks to -------------------------------------
+
+class FakePanel:
+    def __init__(self, origin=(0.0, 0.0)):
+        self.origin = origin
+        self.ignores_mouse = []  # history of setIgnoresMouseEvents_ values
+        self.frames = []
+
+    def frame(self):
+        return NSMakeRect(self.origin[0], self.origin[1], 480, 220)
+
+    def setIgnoresMouseEvents_(self, value):
+        self.ignores_mouse.append(value)
+
+    def setFrame_display_(self, rect, display):
+        assert display is True, "panel must redisplay when moved"
+        self.frames.append((rect.origin.x, rect.origin.y, rect.size.width, rect.size.height))
+        self.origin = (rect.origin.x, rect.origin.y)
+
+
+class FakeView:
+    def __init__(self):
+        self.redraws = []
+
+    def setNeedsDisplay_(self, flag):
+        self.redraws.append(flag)
+
+
+class FakeScreen:
+    def __init__(self, x=0.0, y=90.0, w=1512.0, h=860.0):
+        self._vf = NSMakeRect(x, y, w, h)
+
+    def visibleFrame(self):
+        return self._vf
+
+
+def make_pointer():
+    """A fresh stand-in for NSEvent per test: `mouseLocation()` returns wherever the test put
+    the pointer. (A shared class attribute leaked the position between tests.)"""
+    from AppKit import NSMakePoint
+
+    class Pointer:
+        location = (-1000.0, -1000.0)  # off the widget until a test places it
+
+        @classmethod
+        def mouseLocation(cls):
+            return NSMakePoint(*cls.location)
+
+    return Pointer
+
+
+@pytest.fixture
+def ui(controller, monkeypatch):
+    """Attach fake panel/view/screen/pointer to the controller (the UI 'humble objects')."""
+    import whispr.widget as W
+
+    screen = {"screen": FakeScreen(), "fullscreen": False}
+    monkeypatch.setattr(W, "active_screen", lambda: (screen["screen"], screen["fullscreen"]))
+    Pointer = make_pointer()
+    monkeypatch.setattr(W, "NSEvent", Pointer)
+    controller.panel, controller.view = FakePanel(), FakeView()
+    # Arrange: settle the panel where the screen puts it, so the first tick doesn't move it
+    # out from under a pointer the test has already placed.
+    controller._poll_screen(force=True)
+    controller.next_screen_poll = 0.0
+    controller.panel.frames.clear()
+
+    class UI:
+        panel, view = controller.panel, controller.view
+
+        @staticmethod
+        def point_at(x, y):
+            """Place the pointer at widget-local coordinates."""
+            ox, oy = controller.panel.origin
+            Pointer.location = (ox + x, oy + y)
+
+        @staticmethod
+        def set_screen(scr, fullscreen=False):
+            screen["screen"], screen["fullscreen"] = scr, fullscreen
+
+    return UI

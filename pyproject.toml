@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    "error",  # any warning (e.g. a leaked file: ResourceWarning) fails the run
+]

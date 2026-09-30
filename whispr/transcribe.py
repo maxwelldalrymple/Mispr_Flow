@@ -14,6 +14,7 @@ from PyObjCTools import AppHelper
 from pywhispercpp.model import Model
 
 from .models import DEFAULT_MODEL, ensure_model
+from .threads import start_daemon
 
 SAMPLE_RATE = 16_000
 LANGUAGE = "en"
@@ -30,8 +31,9 @@ def clean_text(text):
 
 
 class Transcriber:
-    def __init__(self, spec=DEFAULT_MODEL, language=LANGUAGE):
+    def __init__(self, spec=DEFAULT_MODEL, language=LANGUAGE, clock=time.monotonic):
         self.spec = spec
+        self.clock = clock
         self.language = language
         self.error = None
         self._model = None
@@ -43,7 +45,7 @@ class Transcriber:
         return self._ready.is_set() and self._model is not None
 
     def load_async(self):
-        threading.Thread(target=self._load, name="whisper-load", daemon=True).start()
+        start_daemon(self._load, "whisper-load")
 
     def _load(self):
         try:
@@ -72,12 +74,12 @@ class Transcriber:
         """
 
         def work():
-            started = time.monotonic()
+            started = self.clock()
             raw = self._transcribe(audio)
             text, info = post(raw) if (post and raw) else (raw, None)
-            AppHelper.callAfter(on_done, text, raw, info, time.monotonic() - started)
+            AppHelper.callAfter(on_done, text, raw, info, self.clock() - started)
 
-        threading.Thread(target=work, name="whisper-run", daemon=True).start()
+        start_daemon(work, "whisper-run")
 
     def _transcribe(self, audio):
         if len(audio) < MIN_SECONDS * SAMPLE_RATE:

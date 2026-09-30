@@ -105,7 +105,9 @@ class TestCheck:
         assert check(raw, clean) is None
 
 
-# --- Cleaner -------------------------------------------------------------------------
+# --- Cleaner ---------------------------------------------------------------------------
+# Test doubles: FakeLlm (stub + spy for the model), SpyEvent (records readiness waits),
+# and an injected clock, so timings are exact and nothing depends on real threads or time.
 
 class FakeLlm:
     def __init__(self, reply="", raises=None):
@@ -123,8 +125,36 @@ class FakeLlm:
         self.closed = True
 
 
-def ready_cleaner(llm):
-    c = Cleaner()
+class SpyEvent:
+    """Stand-in for threading.Event that records wait() calls."""
+
+    def __init__(self, on_wait=None):
+        self.waits = 0
+        self.on_wait = on_wait
+
+    def wait(self, timeout=None):
+        self.waits += 1
+        if self.on_wait:
+            self.on_wait()
+        return True
+
+    def set(self):
+        pass
+
+    def is_set(self):
+        return True
+
+
+class Clock:
+    def __init__(self, *readings):
+        self.readings = list(readings)
+
+    def __call__(self):
+        return self.readings.pop(0)
+
+
+def ready_cleaner(llm, clock=None):
+    c = Cleaner(clock=clock or Clock(0.0, 0.0))
     c._llm = llm
     c._ready.set()
     return c
@@ -134,26 +164,43 @@ class TestCleanerClean:
     def test_empty_raw_returns_immediately(self):
         llm = FakeLlm("x")
         text, info = ready_cleaner(llm).clean("")
-        assert text == "" and info["applied"] is False and info["rejected"] is None
+        assert (text, info) == ("", {"model": cleanup.CLEANUP_MODEL.filename, "applied": False, "ms": 0, "rejected": None})
         assert llm.calls == []
 
     def test_empty_raw_does_not_wait_for_model(self):
-        c = Cleaner()  # never loaded: _ready unset
-        assert c.clean("")[0] == ""
+        c = Cleaner()
+        c._ready = SpyEvent()
+        c.clean("")
+        assert c._ready.waits == 0
+
+    def test_waits_for_model_before_cleaning(self):
+        """A dictation that finishes while the model is still loading must wait for it,
+        not fall back to raw text."""
+        c = Cleaner(clock=Clock(0.0, 0.1))
+        llm = FakeLlm("Send the report.")
+        c._ready = SpyEvent(on_wait=lambda: setattr(c, "_llm", llm))  # load completes during the wait
+        text, info = c.clean("um send the report")
+        assert c._ready.waits == 1
+        assert text == "Send the report." and info["applied"] is True
 
     def test_model_unavailable_returns_raw(self):
         c = Cleaner()
         c._ready.set()
         text, info = c.clean("um hello there")
         assert text == "um hello there"
-        assert info["rejected"] == "model unavailable" and info["applied"] is False
+        assert info == {"model": cleanup.CLEANUP_MODEL.filename, "applied": False, "ms": 0,
+                        "rejected": "model unavailable"}
 
     def test_good_cleanup_applied(self):
         text, info = ready_cleaner(FakeLlm("Send the report.")).clean("Um, send the, uh, report.")
         assert text == "Send the report."
         assert info["applied"] is True and info["rejected"] is None
         assert info["model"] == cleanup.CLEANUP_MODEL.filename
-        assert isinstance(info["ms"], int) and info["ms"] >= 0
+
+    @pytest.mark.parametrize("start,end,ms", [(10.0, 10.5, 500), (0.0, 0.0004, 0), (3.0, 4.2345, 1234)])
+    def test_elapsed_ms_uses_injected_clock(self, start, end, ms):
+        _, info = ready_cleaner(FakeLlm("Hi."), clock=Clock(start, end)).clean("hi")
+        assert info["ms"] == ms
 
     def test_whitespace_and_quotes_stripped_from_output(self):
         text, _ = ready_cleaner(FakeLlm('  "Send the report."  \n')).clean("send the report")
@@ -224,22 +271,33 @@ class TestCleanerLifecycle:
         c.close()
         assert c._llm is None
 
-    def test_load_success(self, monkeypatch, tmp_path):
-        created = {}
+    @pytest.fixture
+    def llama_spy(self, monkeypatch, tmp_path):
+        created = []
 
         class FakeLlama(FakeLlm):
             def __init__(self, model_path, **kw):
                 super().__init__("ok")
-                created.update(path=model_path, **kw)
+                self.path, self.kw = model_path, kw
+                created.append(self)
 
         monkeypatch.setattr(cleanup, "Llama", FakeLlama)
         monkeypatch.setattr(cleanup, "ensure_model", lambda spec: tmp_path / "m.gguf")
+        return created
+
+    def test_load_configures_model(self, llama_spy, tmp_path):
         c = Cleaner()
         c._load()
-        assert c._ready.is_set() and c._llm is not None and c.error is None
-        assert created["path"] == str(tmp_path / "m.gguf")
-        assert created["n_gpu_layers"] == -1  # everything on the GPU
-        assert len(c._llm.calls) == 1  # warm-up
+        (llm,) = llama_spy
+        assert c._ready.is_set() and c._llm is llm and c.error is None
+        assert llm.path == str(tmp_path / "m.gguf")
+        assert llm.kw == {"n_gpu_layers": -1, "n_ctx": 2048, "verbose": False}  # all layers on GPU, quiet
+
+    def test_load_warms_up_deterministically(self, llama_spy):
+        Cleaner()._load()
+        (warmup,) = llama_spy[0].calls
+        assert warmup["temperature"] == 0 and warmup["max_tokens"] <= 8
+        assert warmup["messages"][0]["content"] == cleanup.SYSTEM_PROMPT  # caches the fixed prefix
 
     def test_load_failure_is_recorded_and_still_ready(self, monkeypatch):
         def boom(spec):
@@ -252,8 +310,8 @@ class TestCleanerLifecycle:
         assert isinstance(c.error, RuntimeError)
         assert c.clean("hello")[1]["rejected"] == "model unavailable"
 
-    def test_load_async_runs_in_background(self, monkeypatch):
-        done = threading.Event()
-        monkeypatch.setattr(Cleaner, "_load", lambda self: done.set())
+    def test_load_async_uses_named_daemon_worker(self, monkeypatch, inline_threads):
+        loaded = []
+        monkeypatch.setattr(Cleaner, "_load", lambda self: loaded.append(True))
         Cleaner().load_async()
-        assert done.wait(2)
+        assert loaded == [True] and inline_threads == ["cleanup-load"]

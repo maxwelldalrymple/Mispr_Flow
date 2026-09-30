@@ -78,6 +78,57 @@ class TestSecureAudioBuffer:
         assert b.length == 3 and b.view().tolist() == pytest.approx([0.2] * 3)
 
 
+class FakeLibc:
+    """Spy for the C library: records mlock/munlock and can simulate mlock failure."""
+
+    def __init__(self, mlock_result=0):
+        self.mlock_result = mlock_result
+        self.calls = []
+
+    def mlock(self, ptr, n):
+        self.calls.append(("mlock", n.value))
+        return self.mlock_result
+
+    def munlock(self, ptr, n):
+        self.calls.append(("munlock", n.value))
+        return 0
+
+
+class TestMemoryLocking:
+    def test_locks_exact_buffer_size(self, monkeypatch):
+        libc = FakeLibc()
+        monkeypatch.setattr(audio, "_libc", libc)
+        b = SecureAudioBuffer(seconds=1)
+        assert b.locked and libc.calls == [("mlock", 16000 * 4)]
+
+    def test_close_unlocks_once(self, monkeypatch):
+        libc = FakeLibc()
+        monkeypatch.setattr(audio, "_libc", libc)
+        b = SecureAudioBuffer(seconds=1)
+        b.close()
+        b.close()
+        assert libc.calls == [("mlock", 64000), ("munlock", 64000)]
+
+    def test_mlock_failure_is_reported_and_not_unlocked(self, monkeypatch, capsys):
+        libc = FakeLibc(mlock_result=-1)
+        monkeypatch.setattr(audio, "_libc", libc)
+        b = SecureAudioBuffer(seconds=1)
+        assert b.locked is False
+        assert "mlock failed" in capsys.readouterr().err
+        b.close()
+        assert ("munlock", 64000) not in libc.calls
+
+    def test_mlock_success_is_silent(self, monkeypatch, capsys):
+        monkeypatch.setattr(audio, "_libc", FakeLibc())
+        SecureAudioBuffer(seconds=1)
+        assert capsys.readouterr().err == ""
+
+    def test_default_capacity_is_ten_minutes(self, monkeypatch):
+        monkeypatch.setattr(audio, "_libc", FakeLibc())
+        assert audio.MAX_SECONDS == 600
+        assert len(SecureAudioBuffer().data) == 600 * 16000
+
+
 class FakeStream:
     instances = []
 
@@ -155,6 +206,49 @@ class TestRecorder:
         assert r.start() is True
         assert len(FakeStream.instances) == 2 and FakeStream.instances[0].closed
 
+    def test_start_tries_exactly_twice(self, monkeypatch):
+        FakeStream.instances = []
+        attempts = iter([1, 1, 0])  # a third attempt would succeed, but there must not be one
+        monkeypatch.setattr(audio.sd, "InputStream", lambda **kw: FakeStream(fail_start=next(attempts), **kw))
+        assert Recorder().start() is False and len(FakeStream.instances) == 2
+
+    def test_successful_retry_reports_no_error(self, monkeypatch, capsys):
+        attempts = iter([1, 0])
+        monkeypatch.setattr(audio.sd, "InputStream", lambda **kw: FakeStream(fail_start=next(attempts), **kw))
+        assert Recorder().start() is True
+        assert capsys.readouterr().err == ""
+
+    def test_restart_stops_running_stream_first(self, fake_sd):
+        r = Recorder()
+        r.start()
+        stops = []
+        stream = fake_sd.instances[0]
+        original_stop = stream.stop
+        stream.stop = lambda: (stops.append(True), original_stop())
+        r.start()
+        assert stops == [True] and r.recording
+
+    def test_start_resets_level(self, fake_sd):
+        r = Recorder()
+        r._level = 0.9
+        r.start()
+        assert r.level() == 0.0
+
+    def test_stream_uses_small_blocks_for_low_latency(self, fake_sd):
+        Recorder().prepare()
+        assert fake_sd.instances[0].kw["blocksize"] == 512  # ~32 ms per callback
+
+    def test_close_stream_swallows_close_errors(self, fake_sd):
+        r = Recorder()
+        r.prepare()
+
+        def bad_close():
+            raise RuntimeError("already closed")
+
+        r._stream.close = bad_close
+        r._close_stream()
+        assert r._stream is None
+
     def test_start_gives_up_after_two_failures(self, monkeypatch, capsys):
         monkeypatch.setattr(audio.sd, "InputStream", lambda **kw: FakeStream(fail_start=9, **kw))
         r = Recorder()
@@ -187,6 +281,18 @@ class TestRecorder:
         r.start()
         r._callback(frames([0.2] * 10), 10, None, None)
         assert np.shares_memory(r.audio(), r.buffer.data)
+
+    # Level mapping: dBFS of each block -> 0..1 target (-55 dB floor, -12 dB ceiling); the first
+    # block moves the level 60% of the way (attack), so level = 0.6 * target.
+    @pytest.mark.parametrize("dbfs,target", [(-60, 0.0), (-55, 0.0), (-33.5, 0.5), (-12, 1.0), (-3, 1.0)])
+    def test_dbfs_to_level_mapping(self, dbfs, target):
+        r = Recorder()
+        amplitude = 10 ** (dbfs / 20)
+        r._callback(frames([amplitude] * 512), 512, None, None)
+        assert r.level() == pytest.approx(0.6 * target, abs=1e-6)
+
+    def test_mapping_constants(self):
+        assert (audio.FLOOR_DB, audio.CEIL_DB) == (-55.0, -12.0)
 
     def test_callback_silence_keeps_level_zero(self):
         r = Recorder()

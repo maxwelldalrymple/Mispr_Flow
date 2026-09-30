@@ -48,7 +48,11 @@ def desktop(monkeypatch):
     monkeypatch.setattr(screens, "NSWorkspace", Workspace)
     monkeypatch.setattr(screens, "NSScreen", Screen)
     monkeypatch.setattr(screens, "NSEvent", Event)
-    monkeypatch.setattr(screens.Quartz, "CGWindowListCopyWindowInfo", lambda opts, wid: state["windows"])
+    def window_list(opts, wid):
+        state["query"] = (opts, wid)
+        return state["windows"]
+
+    monkeypatch.setattr(screens.Quartz, "CGWindowListCopyWindowInfo", window_list)
     return state
 
 
@@ -69,6 +73,18 @@ class TestFrontmostWindowBounds:
     def test_skips_non_normal_layers(self, desktop):
         desktop["windows"] = [window(layer=25, x=1), window(layer=0, x=2)]
         assert screens._frontmost_window_bounds()["X"] == 2
+
+    def test_queries_only_onscreen_app_windows(self, desktop):
+        desktop["windows"] = [window()]
+        screens._frontmost_window_bounds()
+        import Quartz
+        assert desktop["query"] == (Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+                                    Quartz.kCGNullWindowID)
+
+    @pytest.mark.parametrize("w,h,counted", [(50, 50, True), (49, 500, False), (500, 49, False), (51, 51, True)])
+    def test_min_window_size_boundary(self, desktop, w, h, counted):
+        desktop["windows"] = [window(w=w, h=h)]
+        assert (screens._frontmost_window_bounds() is not None) is counted
 
     def test_skips_tiny_windows(self, desktop):
         desktop["windows"] = [window(w=10, h=10, x=1), window(x=2)]
@@ -101,6 +117,34 @@ class TestActiveScreen:
     def test_maximized_but_not_fullscreen(self, desktop):
         desktop["windows"] = [window(x=0, y=33, w=1512, h=949)]  # below the menu bar
         assert screens.active_screen() == (PRIMARY, False)
+
+    def test_straddling_window_belongs_to_screen_holding_its_center(self, desktop):
+        # x 1100..2000: centre 1550 is past the primary's right edge (1512) -> second screen.
+        desktop["windows"] = [window(x=1100, w=900)]
+        assert screens.active_screen()[0] is SECOND
+        desktop["windows"] = [window(x=700, w=900)]  # centre 1150 -> primary
+        assert screens.active_screen()[0] is PRIMARY
+
+    def test_vertical_center_uses_flipped_coordinates(self, desktop, monkeypatch):
+        above = FakeScreen(0, 982, 1512, 982, "above")  # stacked on top of the primary
+        monkeypatch.setattr(screens, "NSScreen", type("S", (), {
+            "screens": staticmethod(lambda: [PRIMARY, above]), "mainScreen": staticmethod(lambda: PRIMARY)}))
+        # CG y grows downward from the primary's top; a window at CG y -700..-100 has its
+        # centre at CG -400 = AppKit 1382, which is on the upper screen.
+        desktop["windows"] = [window(x=100, y=-700, h=600)]
+        assert screens.active_screen()[0] is above
+        desktop["windows"] = [window(x=100, y=-200, h=600)]  # centre CG 100 = AppKit 882 -> primary
+        assert screens.active_screen()[0] is PRIMARY
+
+    @pytest.mark.parametrize("dx,dy,dw,dh", [(1, 0, 0, 0), (0, 1, 0, 0), (0, 0, -1, 0), (0, 0, 0, -1)])
+    def test_fullscreen_tolerance_is_under_one_point(self, desktop, dx, dy, dw, dh):
+        desktop["windows"] = [window(x=dx, y=dy, w=1512 + dw, h=982 + dh)]
+        assert screens.active_screen() == (PRIMARY, False)
+
+    @pytest.mark.parametrize("dx,dy,dw,dh", [(0.5, 0, 0, 0), (0, 0.5, 0, 0), (0, 0, -0.5, 0), (0, 0, 0, -0.5)])
+    def test_fullscreen_tolerates_subpixel_differences(self, desktop, dx, dy, dw, dh):
+        desktop["windows"] = [window(x=dx, y=dy, w=1512 + dw, h=982 + dh)]
+        assert screens.active_screen() == (PRIMARY, True)
 
     def test_falls_back_to_mouse_screen(self, desktop):
         desktop["mouse"] = (2000, 500)
@@ -171,6 +215,10 @@ class TestSounds:
         s.play(sounds.STOP)
         assert [p.name for p in s._playing] == ["Pop"]
 
+    def test_default_volume_is_subtle(self, fake_nssound):
+        sounds.Sounds().play(sounds.START)
+        assert fake_nssound.played[0].volume == 0.3
+
     def test_cue_names_are_system_sounds(self):
         assert (sounds.START, sounds.STOP, sounds.CANCEL) == ("Tink", "Pop", "Bottle")
 
@@ -178,25 +226,57 @@ class TestSounds:
 # --- app -----------------------------------------------------------------------------
 
 class TestSingleInstance:
-    def test_first_instance_gets_lock(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(app.tempfile, "gettempdir", lambda: str(tmp_path))
-        lock = app._single_instance_lock()
-        assert not lock.closed and (tmp_path / "whispr-clone.lock").exists()
+    """The lock path is injected, so tests never touch the real lock or patch tempfile."""
+
+    @pytest.fixture
+    def lock_path(self, tmp_path):
+        return tmp_path / "whispr-clone.lock"
+
+    @pytest.fixture
+    def other_instance(self, lock_path):
+        """Simulates another running copy holding the lock; released at teardown."""
+        lock = app._single_instance_lock(lock_path)
+        yield lock
         lock.close()
 
-    def test_second_instance_exits(self, monkeypatch, tmp_path, capsys):
-        monkeypatch.setattr(app.tempfile, "gettempdir", lambda: str(tmp_path))
-        first = app._single_instance_lock()
+    def test_default_path_is_in_temp_dir(self):
+        assert app.LOCK_PATH.name == "whispr-clone.lock"
+        assert app.LOCK_PATH.parent == app.Path(app.tempfile.gettempdir())
+
+    def test_first_instance_gets_lock(self, lock_path):
+        lock = app._single_instance_lock(lock_path)
+        try:
+            assert not lock.closed and lock_path.exists()
+        finally:
+            lock.close()
+
+    def test_second_instance_exits_with_code_1(self, lock_path, other_instance, capsys):
         with pytest.raises(SystemExit) as exit_info:
-            app._single_instance_lock()
+            app._single_instance_lock(lock_path)
         assert exit_info.value.code == 1
         assert "already running" in capsys.readouterr().err
-        first.close()
 
-    def test_lock_released_when_closed(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(app.tempfile, "gettempdir", lambda: str(tmp_path))
-        app._single_instance_lock().close()
-        app._single_instance_lock().close()  # no SystemExit
+    def test_second_instance_releases_its_file(self, lock_path, other_instance):
+        import gc
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(SystemExit):
+                app._single_instance_lock(lock_path)
+            gc.collect()  # a leaked file object would emit ResourceWarning here
+        assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+
+    def test_lock_is_released_when_closed(self, lock_path):
+        app._single_instance_lock(lock_path).close()
+        second = app._single_instance_lock(lock_path)  # no SystemExit
+        second.close()
+
+    def test_locks_are_independent_per_path(self, tmp_path):
+        a = app._single_instance_lock(tmp_path / "a.lock")
+        b = app._single_instance_lock(tmp_path / "b.lock")
+        a.close()
+        b.close()
 
 
 class TestShutdown:

@@ -37,12 +37,16 @@ def _status_item():
 _keepalive = []  # strong references for the lifetime of the app
 
 
-def _single_instance_lock():
+LOCK_PATH = Path(tempfile.gettempdir()) / "whispr-clone.lock"
+
+
+def _single_instance_lock(path=LOCK_PATH):
     """Exit if another copy is already running (two copies = two widgets, two fn handlers)."""
-    lock = open(Path(tempfile.gettempdir()) / "whispr-clone.lock", "w")
+    lock = open(path, "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
+        lock.close()
         print("whispr: already running", file=sys.stderr)
         sys.exit(1)
     return lock  # the lock is held until the process exits

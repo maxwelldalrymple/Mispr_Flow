@@ -55,6 +55,13 @@ class TestRect:
         assert outer.union(inner) == outer
         assert inner.union(outer) == outer
 
+    def test_union_with_nonzero_origins(self):
+        # Origins away from zero catch width/height computed as `right + x` instead of `right - x`.
+        assert Rect(10, 20, 5, 5).union(Rect(30, 40, 10, 10)) == Rect(10, 20, 30, 30)
+
+    def test_union_with_negative_origins(self):
+        assert Rect(-10, -20, 5, 5).union(Rect(-3, -4, 2, 2)) == Rect(-10, -20, 9, 18)
+
     def test_union_is_commutative(self):
         a, b = Rect(-5, 3, 10, 2), Rect(7, -8, 4, 20)
         assert a.union(b) == b.union(a)
@@ -204,3 +211,64 @@ class TestDrawing:
         draw.draw_text_left(label, 30, 50)
         painted = [x for x in range(0, 200) if bitmap_context(x, 50)[3] > 0.3]
         assert painted and 28 <= min(painted) <= 40
+
+
+# --- Golden images of every drawing primitive ---------------------------------------------------
+# Pixel-exact-ish snapshots (see conftest.golden_image): catch changes to stroke widths, insets,
+# colours, spinner geometry, symbol placement, and text alignment that spot checks miss.
+
+from conftest import render  # noqa: E402
+
+PRIMITIVES = {
+    "fill_round": lambda: draw.fill_round(Rect(20, 20, 80, 40), 10, white(1, 1)),
+    "stroke_round": lambda: draw.stroke_round(Rect(20, 20, 80, 40), 10, white(1, 1), 3.0),
+    "stroke_round_default_width": lambda: draw.stroke_round(Rect(20, 20, 80, 40), 10, white(1, 1)),
+    "fill_circle": lambda: draw.fill_circle(60, 50, 25, srgb(1, 0.5, 0, 1)),
+    "stroke_circle": lambda: draw.stroke_circle(60, 50, 25, white(1, 1), 3.0),
+    "stroke_circle_default_width": lambda: draw.stroke_circle(60, 50, 25, white(1, 1)),
+    "bars": lambda: draw.bars(60, 50, [0.0, 0.3, 1.0, 0.6, 0.1], 8, 3, 40, white(1, 1)),
+    "spinner_phase_0": lambda: draw.spinner(60, 50, 20, 0.0, 1.0),
+    "spinner_phase_0_4": lambda: draw.spinner(60, 50, 20, 0.4, 1.0),
+    "symbol_mic": lambda: draw.symbol("mic.fill", 60, 50, 24),
+    "symbol_tinted": lambda: draw.symbol("stop.fill", 60, 50, 24, rgb=(1.0, 0.0, 0.0), alpha=0.5),
+    "text_centered": lambda: draw.draw_text_centered(draw.rich([("Mid", True)], 18, white(1, 1)), 60, 50),
+    "text_left": lambda: draw.draw_text_left(draw.rich([("Left", False)], 18, white(1, 1)), 10, 50),
+}
+
+
+@pytest.mark.parametrize("name", PRIMITIVES)
+def test_primitive_matches_golden_image(name, golden_image):
+    pixels, rep = render(PRIMITIVES[name], 120, 100)
+    assert pixels[..., 3].any(), "nothing was drawn"
+    golden_image(f"draw_{name}", pixels, rep)
+
+
+class TestDrawingDetails:
+    """Details too small for the golden-image tolerance, checked with targeted pixels."""
+
+    def test_lines_have_round_caps(self, bitmap_context):
+        draw._stroke_lines([[(40, 50), (120, 50)]], white(1, 1), 12)
+        assert bitmap_context(36, 50)[3] > 0.5  # a round cap extends ~6 px past the end point
+        assert bitmap_context(36, 44.5)[3] < 0.2  # ...but is round, not a square block
+
+    def test_polylines_have_round_joins(self, bitmap_context):
+        # Corner at (80, 60), half-width 7: a round join stops at y=67; a miter apex reaches y=69.9.
+        draw._stroke_lines([[(40, 20), (80, 60), (120, 20)]], white(1, 1), 14)
+        assert bitmap_context(80, 65)[3] > 0.5  # inside the round join
+        assert bitmap_context(80, 68)[3] < 0.2  # only a miter join would paint here
+
+    def test_spinner_fades_from_20_to_90_percent(self, bitmap_context):
+        import math
+        draw.spinner(100, 50, 30, 0.0, 1.0)  # step 0: spoke 0 faintest, spoke 7 brightest
+        def tip(i):
+            a = 2 * math.pi * i / 8
+            return bitmap_context(100 + math.cos(a) * 26, 50 + math.sin(a) * 26)[3]
+        assert tip(0) == pytest.approx(0.2, abs=0.08)
+        assert tip(7) == pytest.approx(0.9, abs=0.08)
+        assert tip(0) < tip(3) < tip(7)
+
+    def test_bars_are_fully_rounded(self, bitmap_context):
+        draw.bars(100, 50, [1.0], 30, 24, 60, white(1, 1))  # 24 px wide -> radius 12 (full round)
+        assert bitmap_context(100, 50)[3] == pytest.approx(1.0)
+        # (91, 76) lies outside a radius-12 corner (centre 100,68) but inside a radius-8 one.
+        assert bitmap_context(91, 76)[3] < 0.6  # anti-aliased edge (~0.43); radius 8 would be ~1.0

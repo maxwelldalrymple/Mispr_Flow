@@ -95,6 +95,28 @@ class TestBrowserPage:
         context._browser_page(1)
         assert ax["timeout"] == context._AX_TIMEOUT
 
+    def test_timeout_never_stalls_paste_noticeably(self):
+        assert 0 < context._AX_TIMEOUT <= 0.3
+
+    @staticmethod
+    def chain(depth):
+        """A focused element whose page (web area) is `depth` parents up."""
+        node = AXNode("AXWebArea", url="https://deep.example", title="Deep")
+        for _ in range(depth):
+            node = AXNode("AXGroup", parent=node)
+        return node
+
+    def test_hop_limit_reaches_exactly_max_hops(self, ax):
+        ax["app"].attrs["AXFocusedUIElement"] = self.chain(context._MAX_HOPS - 1)  # 60th node visited
+        assert context._browser_page(1)[0] == "https://deep.example"
+
+    def test_hop_limit_stops_after_max_hops(self, ax):
+        ax["app"].attrs["AXFocusedUIElement"] = self.chain(context._MAX_HOPS)  # would be the 61st
+        assert context._browser_page(1)[0] is None
+
+    def test_max_hops_value(self):
+        assert context._MAX_HOPS == 60
+
     def test_cyclic_parents_terminate(self, ax):
         a = AXNode("AXGroup")
         b = AXNode("AXGroup", parent=a)
@@ -172,6 +194,19 @@ class TestPaste:
         paste.paste_text("Hello there.")
         assert posted == ["Hello there."]
         assert board.stringForType_(NSPasteboardTypeString) == "Hello there."
+
+    def test_paste_contains_only_dictation_during_paste(self, board, monkeypatch):
+        board, posted = board
+        put(board, "old", "com.test.custom", b"x")
+        monkeypatch.setattr(paste.AppHelper, "callLater", lambda delay, fn: None)
+        paste.paste_text("dictated")
+        # nothing from the previous clipboard may leak into what the app pastes
+        assert "com.test.custom" not in set(board.types())
+        assert len(board.pasteboardItems()) == 1
+
+    def test_timing_and_key_spec(self):
+        assert paste.RESTORE_AFTER == 0.5  # long enough for Electron apps, short enough to feel instant
+        assert paste.KEY_V == 9  # kVK_ANSI_V
 
     def test_dictated_text_marked_private(self, board, monkeypatch):
         board, posted = board

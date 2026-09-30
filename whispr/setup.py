@@ -4,23 +4,22 @@ Downloads run on a background thread; progress is exposed as a 0..1 fraction the
 draws, and completion/failure are delivered on the main thread.
 """
 
-import threading
-
 from PyObjCTools import AppHelper
 
 from .models import CLEANUP_MODEL, DEFAULT_MODEL, ensure_model, is_installed
+from .threads import start_daemon
 
 REQUIRED = (DEFAULT_MODEL, CLEANUP_MODEL)
 
 
-def missing():
-    return [spec for spec in REQUIRED if not is_installed(spec)]
+def missing(specs=REQUIRED):
+    return [spec for spec in specs if not is_installed(spec)]
 
 
-def install_async(on_progress, on_done, on_error):
+def install_async(on_progress, on_done, on_error, specs=REQUIRED):
     """Download whatever is missing. `on_progress(fraction)` is called from the worker thread
     and must only store the value; `on_done()` / `on_error(message)` run on the main thread."""
-    todo = missing()
+    todo = missing(specs)
     total = sum(spec.size for spec in todo) or 1
 
     def work():
@@ -33,4 +32,4 @@ def install_async(on_progress, on_done, on_error):
         except Exception as e:
             AppHelper.callAfter(on_error, str(e))
 
-    threading.Thread(target=work, name="model-setup", daemon=True).start()
+    start_daemon(work, "model-setup")
