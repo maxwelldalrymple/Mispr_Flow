@@ -1,12 +1,17 @@
 """Microphone capture into a locked, wipeable in-memory buffer.
 
 Privacy rules (see README):
-- Audio never touches disk; it lives in one preallocated NumPy buffer.
+- In Incognito mode audio never touches disk; it lives in one preallocated NumPy buffer.
 - The buffer's pages are mlock'ed so they cannot be swapped out.
 - After use the written region is zeroed in place (`wipe`), and the buffer is
   never converted to immutable `bytes`, which could not be wiped.
-Known limitation: PortAudio's transient callback buffers are owned by the
-library; we copy out of them immediately and cannot zero them ourselves.
+Known limitation: CoreAudio's transient tap buffers and the resampler's small internal
+state are owned by those libraries; samples are copied out immediately.
+
+Capture uses AVAudioEngine (Apple's native audio API). It replaced PortAudio, whose macOS
+backend can deadlock inside Pa_StopStream (see logs/*_mic-deadlock-fix.md). Stopping is
+also non-blocking by design: capture is gated off instantly and the engine is stopped on a
+background thread, so a stuck CoreAudio call can never freeze the app.
 """
 
 import ctypes
@@ -16,11 +21,14 @@ import sys
 import threading
 
 import numpy as np
-import sounddevice as sd
+import soxr
+
+from .threads import start_daemon
 
 SAMPLE_RATE = 16_000  # what whisper.cpp expects
 MAX_SECONDS = 10 * 60
-BLOCK = 512  # ~32 ms per callback
+TAP_FRAMES = 1024  # requested tap size (~23 ms at 44.1 kHz)
+STOP_TIMEOUT = 1.0  # a stop slower than this is treated as hung: use a fresh engine
 
 # Map RMS loudness to the 0..1 waveform range.
 FLOOR_DB, CEIL_DB = -55.0, -12.0
@@ -60,64 +68,137 @@ class SecureAudioBuffer:
             self.locked = False
 
 
-class Recorder:
-    """Runs the mic only while recording, so the macOS mic indicator is honest."""
+class MicEngine:
+    """Thin adapter over AVAudioEngine: the only code that touches AVFoundation.
 
-    def __init__(self):
+    `on_samples(mono_float32, sample_rate)` is called on CoreAudio's thread with each
+    tapped buffer. The array views CoreAudio's memory and is only valid during the call.
+    """
+
+    def __init__(self, on_samples, engine_cls=None):
+        self._on_samples = on_samples
+        self._engine_cls = engine_cls
+        self._engine = None
+        self.rate = None
+
+    def prepare(self):
+        engine_cls = self._engine_cls
+        if engine_cls is None:
+            from AVFoundation import AVAudioEngine as engine_cls
+
+        engine = engine_cls.alloc().init()
+        node = engine.inputNode()
+        fmt = node.outputFormatForBus_(0)
+        self.rate = fmt.sampleRate()
+        node.installTapOnBus_bufferSize_format_block_(0, TAP_FRAMES, fmt, self._tap)
+        engine.prepare()
+        self._engine = engine
+
+    def _tap(self, buffer, when):
+        n = buffer.frameLength()
+        if n:
+            channel0 = buffer.floatChannelData()[0].as_buffer(n)
+            self._on_samples(np.frombuffer(channel0, dtype=np.float32), self.rate)
+
+    def start(self):
+        ok, _error = self._engine.startAndReturnError_(None)
+        return bool(ok)
+
+    def stop(self):
+        self._engine.stop()
+
+
+def _soxr_stream(in_rate):
+    return soxr.ResampleStream(in_rate, SAMPLE_RATE, 1, dtype="float32")
+
+
+class Recorder:
+    """Runs the mic only while recording, so the macOS mic indicator is honest.
+
+    `engine_factory(on_samples)` and `resampler_factory(in_rate)` are injectable seams
+    (tests use fakes; the app uses AVAudioEngine and soxr).
+    """
+
+    def __init__(self, engine_factory=MicEngine, resampler_factory=_soxr_stream, stop_timeout=STOP_TIMEOUT):
         self.buffer = SecureAudioBuffer()
-        self._stream = None
+        self._engine_factory = engine_factory
+        self._resampler_factory = resampler_factory
+        self._stop_timeout = stop_timeout
+        self._engine = None
+        self._resampler = None
+        self._capturing = False
+        self._stopping = None  # Event set once the background engine stop finishes
         self._lock = threading.Lock()
         self._level = 0.0
 
     @property
     def recording(self):
-        return self._stream is not None and self._stream.active
+        return self._capturing
+
+    def prepare(self):
+        """Build the (stopped) engine ahead of time so the first recording starts fast."""
+        try:
+            engine = self._engine_factory(self._on_samples)
+            engine.prepare()
+            self._engine = engine
+        except Exception:
+            self._engine = None  # start() will retry and report
 
     def start(self):
-        """Begin a fresh recording. Returns False if the microphone could not be opened.
-
-        The stream is created once and then only started/stopped: starting an existing
-        stream takes ~80 ms versus ~150-230 ms to create one, so less of the first word
-        is lost. A stopped stream does not use the mic (no orange indicator).
-        """
+        """Begin a fresh recording. Returns False if the microphone could not be started."""
         self.stop()
+        self._await_stop()
         self.wipe()
         self._level = 0.0
         for attempt in range(2):
             try:
-                if self._stream is None:
-                    self.prepare()
-                self._stream.start()
+                if self._engine is None:
+                    engine = self._engine_factory(self._on_samples)
+                    engine.prepare()
+                    self._engine = engine
+                with self._lock:
+                    self._resampler = self._resampler_factory(self._engine.rate)
+                    self._capturing = True
+                if not self._engine.start():
+                    raise RuntimeError("microphone did not start")
                 return True
             except Exception as e:  # device gone/changed, or microphone permission denied
-                self._close_stream()
+                with self._lock:
+                    self._capturing = False
+                    self._resampler = None
+                self._engine = None
                 if attempt == 1:
                     print(f"whispr: could not open microphone: {e}", file=sys.stderr)
         return False
 
-    def prepare(self):
-        """Create the (stopped) stream ahead of time so the first recording starts fast."""
-        try:
-            self._stream = sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=1, dtype="float32",
-                blocksize=BLOCK, callback=self._callback,
-            )
-        except Exception:
-            self._stream = None  # start() will retry and report
-
     def stop(self):
-        """Stop capturing. The audio stays in the buffer until wipe()."""
-        if self._stream is not None and self._stream.active:
-            self._stream.stop()
-        self._level = 0.0
+        """Stop capturing now. The audio stays in the buffer until wipe().
 
-    def _close_stream(self):
-        stream, self._stream = self._stream, None
-        if stream is not None:
-            try:
-                stream.close()
-            except Exception:
-                pass
+        No sample is accepted after this returns. The engine itself is stopped on a
+        background thread, so a stuck CoreAudio stop can never block the caller.
+        """
+        with self._lock:
+            was_capturing, self._capturing = self._capturing, False
+            if was_capturing and self._resampler is not None:
+                self.buffer.append(self._resampler.resample_chunk(np.zeros(0, np.float32), last=True))
+            self._resampler = None
+        self._level = 0.0
+        if was_capturing and self._engine is not None:
+            engine, done = self._engine, threading.Event()
+            self._stopping = done
+
+            def stop_engine():
+                engine.stop()
+                done.set()
+
+            start_daemon(stop_engine, "mic-stop")
+
+    def _await_stop(self):
+        """Before reusing the engine, wait for its previous stop; abandon it if that hung."""
+        done, self._stopping = self._stopping, None
+        if done is not None and not done.wait(self._stop_timeout):
+            print("whispr: microphone stop hung; switching to a fresh audio engine", file=sys.stderr)
+            self._engine = None
 
     def audio(self):
         return self.buffer.view()
@@ -136,11 +217,16 @@ class Recorder:
     def level(self, t=None):
         return self._level
 
-    def _callback(self, indata, frames, time_info, status):
-        mono = indata[:, 0]
+    def _on_samples(self, samples, rate):
+        """Called on CoreAudio's thread for every tapped buffer."""
         with self._lock:
-            self.buffer.append(mono)
-        rms = float(np.sqrt(np.mean(mono * mono))) if frames else 0.0
+            if not self._capturing:
+                return  # gated off: nothing after stop() is ever recorded
+            chunk = self._resampler.resample_chunk(samples)
+            self.buffer.append(chunk)
+        if not len(chunk):
+            return
+        rms = float(np.sqrt(np.mean(chunk * chunk)))
         db = 20 * math.log10(rms) if rms > 1e-9 else FLOOR_DB
         target = min(1.0, max(0.0, (db - FLOOR_DB) / (CEIL_DB - FLOOR_DB)))
         # Fast attack, slower release, so the waveform feels responsive but not jittery.

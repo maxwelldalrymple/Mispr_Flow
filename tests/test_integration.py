@@ -101,3 +101,31 @@ def test_installed_models_match_their_specs(spec):
         while chunk := f.read(1 << 24):
             digest.update(chunk)
     assert digest.hexdigest() == spec.sha256
+
+
+def test_real_microphone_start_stop_soak():
+    """Regression for the PortAudio deadlock: many real start/stop cycles, each call watched.
+    Uses the actual microphone (opt-in suite only)."""
+    import threading
+    import time
+    from whispr import audio, threads
+
+    def watched(fn, limit=2.0):
+        done, out = threading.Event(), {}
+        threading.Thread(target=lambda: (out.setdefault("r", fn()), done.set()), daemon=True).start()
+        assert done.wait(limit), f"{fn.__name__} hung (> {limit}s)"
+        return out["r"]
+
+    audio.start_daemon = threads.start_daemon  # real background stops, as in the app
+    r = audio.Recorder()
+    r.prepare()
+    for secs in [0.2, 0.5, 1.0, 0.3] * 5 + [3.0]:
+        assert watched(r.start) is True
+        time.sleep(secs)
+        t = time.perf_counter()
+        watched(r.stop)
+        assert time.perf_counter() - t < 0.05  # stop never blocks the caller
+        captured = len(r.audio()) / audio.SAMPLE_RATE
+        assert secs - 0.25 <= captured <= secs + 0.05  # ~0.1 s start latency is expected
+        assert r.wipe()[2] is True
+    assert r.recording is False

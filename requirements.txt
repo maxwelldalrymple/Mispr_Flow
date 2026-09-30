@@ -2,7 +2,8 @@ pyobjc-core
 pyobjc-framework-Cocoa
 pyobjc-framework-Quartz
 pyobjc-framework-ApplicationServices
-sounddevice
+pyobjc-framework-AVFoundation
+soxr
 numpy
 pywhispercpp
 llama-cpp-python

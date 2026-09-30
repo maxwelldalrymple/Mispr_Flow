@@ -45,6 +45,7 @@ def inline_threads(monkeypatch):
     """Run background work synchronously (deterministic tests, no sleeps or polling).
     Records (name, target) for every daemon start; `threads.start_daemon` itself is
     tested separately with real threads."""
+    import whispr.audio
     import whispr.cleanup
     import whispr.setup
     import whispr.transcribe
@@ -55,7 +56,7 @@ def inline_threads(monkeypatch):
         started.append(name)
         target()
 
-    for module in (whispr.cleanup, whispr.transcribe, whispr.setup):
+    for module in (whispr.audio, whispr.cleanup, whispr.transcribe, whispr.setup):
         monkeypatch.setattr(module, "start_daemon", start_daemon)
     return started
 
