@@ -119,9 +119,11 @@ def layout(state):
     if state == IDLE:
         return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.35, 0.5))
     if state == HOVER:
-        mic = Rect.centered(CX - 16, BASE, 48, 28)
-        note = Rect.centered(CX + 26, BASE, 28, 28)
-        return Layout(Shape(mic, 14, 0.9, 0.15), {"mic": mic, "note": note}, ("mic", "note"))
+        # Taller than the recording pills and lifted off the Dock, so they're easy to hit.
+        h, bottom, gap = 36, 12, 5
+        mic = Rect(CX - 48, bottom, 56, h)
+        note = Rect(mic.right + gap, bottom, h, h)
+        return Layout(Shape(mic, h / 2, 0.9, 0.15), {"mic": mic, "note": note}, ("mic", "note"))
     if state == HOLD:
         return Layout(Shape(Rect.centered(CX, BASE, 64, 28), 14, 0.92, 0.12))
     if state in (HANDSFREE, PROCESSING):
