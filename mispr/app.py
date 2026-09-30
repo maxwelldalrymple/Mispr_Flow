@@ -1,4 +1,4 @@
-"""App entry point: menu bar item + floating widget, no Dock icon."""
+"""App entry point: Dock icon, menu bar item, and the floating widget."""
 
 import fcntl
 import signal
@@ -8,10 +8,12 @@ from pathlib import Path
 
 from AppKit import (
     NSApplication,
-    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
     NSApplicationWillTerminateNotification,
     NSImage,
+    NSBundle,
     NSMenu,
+    NSMenuItem,
     NSNotificationCenter,
     NSStatusBar,
     NSTimer,
@@ -48,6 +50,30 @@ def _menubar_icon():
 
 def _app_icon():
     return NSImage.alloc().initWithContentsOfFile_(str(ASSETS / "AppIcon.icns"))
+
+
+def _brand_process():
+    """Running from source, the process is Python's; name it Mispr Flow so the menu bar,
+    About box, and ⌘-Tab say so. (A packaged .app gets this from its Info.plist.)"""
+    info = NSBundle.mainBundle().infoDictionary()
+    info["CFBundleName"] = APP_NAME
+    info["CFBundleDisplayName"] = APP_NAME
+
+
+def _main_menu(actions):
+    """The menu bar's app menu (shown while Mispr Flow is the active app)."""
+    menubar = NSMenu.alloc().init()
+    app_item = NSMenuItem.alloc().init()
+    menubar.addItem_(app_item)
+    menu = NSMenu.alloc().initWithTitle_(APP_NAME)
+    menu.addItemWithTitle_action_keyEquivalent_(f"About {APP_NAME}", "orderFrontStandardAboutPanel:", "")
+    menu.addItem_(NSMenuItem.separatorItem())
+    menu.addItemWithTitle_action_keyEquivalent_("Setup Guide…", "openSetup:", ",").setTarget_(actions)
+    menu.addItem_(NSMenuItem.separatorItem())
+    menu.addItemWithTitle_action_keyEquivalent_(f"Hide {APP_NAME}", "hide:", "h")
+    menu.addItemWithTitle_action_keyEquivalent_(f"Quit {APP_NAME}", "terminate:", "q")
+    app_item.setSubmenu_(menu)
+    return menubar
 
 
 def _status_item():
@@ -106,6 +132,14 @@ class _MenuActions(NSObject):
         self.open_setup()
 
 
+class _AppDelegate(NSObject):
+    """Clicking the Dock icon opens our window (the setup guide until the main window exists)."""
+
+    def applicationShouldHandleReopen_hasVisibleWindows_(self, app, has_visible):
+        self.on_reopen()
+        return True
+
+
 def maintain_hotkey(fn):
     """Called every second: install the fn tap as soon as a permission allows it, and swap
     a listen-only tap for the active one once Accessibility is granted (no restart needed).
@@ -139,11 +173,12 @@ def _setup_flow(widget):
 
 def main():
     lock = _single_instance_lock()
+    _brand_process()
     app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)  # a Dock icon, like Wispr Flow
     icon = _app_icon()
     if icon is not None:
-        app.setApplicationIconImage_(icon)  # alerts and About; the .app bundle uses AppIcon.icns
+        app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key)
     status_item = _status_item()
@@ -164,6 +199,13 @@ def main():
         window.show()
 
     _keepalive.append(add_setup_menu_item(status_item, open_setup))
+    menu_actions = _MenuActions.alloc().init()
+    menu_actions.open_setup = open_setup
+    app.setMainMenu_(_main_menu(menu_actions))
+    delegate = _AppDelegate.alloc().init()
+    delegate.on_reopen = open_setup  # TODO: the main window, once it exists
+    app.setDelegate_(delegate)
+    _keepalive.extend([menu_actions, delegate])
     if _setup_flow(widget).needed():
         open_setup()
 

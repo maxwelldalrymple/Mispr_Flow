@@ -32,7 +32,7 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 - **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. On the first dictation after launch it names the mic in use ("Using Built-in mic (recommended)"). It follows the screen you're working on and hides in fullscreen apps.
 - **Sound cues** for every event (start, stop, hands-free lock, paste, cancel, errors). All original, synthesized by the app's own generator script.
 - **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
-- **Menu-bar app** with no Dock icon. It captures fn itself so macOS's emoji picker doesn't open.
+- **Dock and menu-bar app.** The logo sits in the Dock while it runs (click it to open the app's window), with a menu-bar icon too. It captures fn itself so macOS's emoji picker doesn't open.
 - **Guided setup.** A 4-step window on first launch (Welcome → Permissions → Models → Ready) explains each permission before asking for it. Reopen it anytime from the menu bar: **Setup Guide…**
 
 End to end, text appears about 1.8 s after you stop talking.

@@ -449,6 +449,53 @@ class TestHotkeyMaintenance:
         assert app.maintain_hotkey(fn) is None and fn.calls == []
 
 
+class TestDockApp:
+    """Mispr Flow is a regular Dock app (like Wispr Flow): logo in the Dock, app menu, reopen."""
+
+    def test_is_a_regular_dock_app(self):
+        import inspect
+        src = inspect.getsource(app.main)
+        assert "NSApplicationActivationPolicyRegular" in src and "Accessory" not in src
+
+    def test_process_is_named_mispr_flow(self, monkeypatch):
+        info = {}
+
+        class Bundle:
+            @staticmethod
+            def mainBundle():
+                return Bundle()
+
+            def infoDictionary(self):
+                return info
+
+        monkeypatch.setattr(app, "NSBundle", Bundle)
+        app._brand_process()
+        assert info == {"CFBundleName": "Mispr Flow", "CFBundleDisplayName": "Mispr Flow"}
+
+    def test_app_menu(self):
+        opened = []
+        actions = app._MenuActions.alloc().init()
+        actions.open_setup = lambda: opened.append(True)
+        menu = app._main_menu(actions).itemAtIndex_(0).submenu()
+        items = [(i.title(), i.action(), i.keyEquivalent()) for i in menu.itemArray() if not i.isSeparatorItem()]
+        assert menu.title() == "Mispr Flow"
+        assert items == [
+            ("About Mispr Flow", "orderFrontStandardAboutPanel:", ""),
+            ("Setup Guide…", "openSetup:", ","),
+            ("Hide Mispr Flow", "hide:", "h"),
+            ("Quit Mispr Flow", "terminate:", "q"),
+        ]
+        menu.itemWithTitle_("Setup Guide…").target().openSetup_(None)
+        assert opened == [True]
+
+    def test_clicking_the_dock_icon_opens_the_window(self):
+        opened = []
+        delegate = app._AppDelegate.alloc().init()
+        delegate.on_reopen = lambda: opened.append(True)
+        assert delegate.applicationShouldHandleReopen_hasVisibleWindows_(None, False) is True
+        assert opened == [True]
+
+
 class TestSetupWiring:
     def test_setup_guide_is_first_menu_item_and_opens_setup(self):
         item = app._status_item()

@@ -104,7 +104,7 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 ## Lifecycle (`app.py`)
 
 1. Single-instance lock (`$TMPDIR/Mispr_Flow.lock`); a second copy exits.
-2. Accessory activation policy (menu bar only, no Dock icon); app icon from `assets/AppIcon.icns`; menu-bar template icon.
+2. Regular activation policy (Dock icon, like Wispr Flow); the process is renamed "Mispr Flow" (`_brand_process`) and the Dock tile uses `assets/AppIcon.icns`; an app menu (About, Setup Guide…, Hide, Quit); clicking the Dock icon opens the setup window until the main window exists; menu-bar template icon.
 3. `WidgetController.start()`: builds the panel, prepares the mic engine, then either loads the models or enters SETUP.
 4. Opens the setup window (`onboarding.py`) if setup is needed: first run, a required permission missing, or a model missing. Adds **Setup Guide…** to the menu.
 5. Every second, `maintain_hotkey` installs the fn tap as soon as a permission allows it, and upgrades a listen-only tap to the active one once Accessibility is granted. No restart needed.
