@@ -11,9 +11,9 @@ import pytest
 from AppKit import NSBitmapImageRep, NSGraphicsContext, NSMakeRect, NSPNGFileType
 from PyObjCTools import AppHelper
 
-import whispr.models as models
-import whispr.settings as settings
-import whispr.storage as storage
+import mhispr.models as models
+import mhispr.settings as settings
+import mhispr.storage as storage
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -28,7 +28,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "integration: needs the real models (set WHISPR_INTEGRATION=1)")
+    config.addinivalue_line("markers", "integration: needs the real models (set MHISPR_INTEGRATION=1)")
 
 
 @pytest.fixture(autouse=True)
@@ -45,10 +45,10 @@ def inline_threads(monkeypatch):
     """Run background work synchronously (deterministic tests, no sleeps or polling).
     Records (name, target) for every daemon start; `threads.start_daemon` itself is
     tested separately with real threads."""
-    import whispr.audio
-    import whispr.cleanup
-    import whispr.setup
-    import whispr.transcribe
+    import mhispr.audio
+    import mhispr.cleanup
+    import mhispr.setup
+    import mhispr.transcribe
 
     started = []
 
@@ -56,7 +56,7 @@ def inline_threads(monkeypatch):
         started.append(name)
         target()
 
-    for module in (whispr.audio, whispr.cleanup, whispr.transcribe, whispr.setup):
+    for module in (mhispr.audio, mhispr.cleanup, mhispr.transcribe, mhispr.setup):
         monkeypatch.setattr(module, "start_daemon", start_daemon)
     return started
 
@@ -179,7 +179,7 @@ def speech():
 @pytest.fixture
 def controller(monkeypatch, clock):
     """A WidgetController wired to fakes: no mic, models, sounds, clipboard, or real apps."""
-    import whispr.widget as W
+    import mhispr.widget as W
 
     monkeypatch.setattr(W, "time", clock)
     monkeypatch.setattr(W, "Recorder", FakeRecorder)
@@ -341,7 +341,7 @@ def make_pointer():
 @pytest.fixture
 def ui(controller, monkeypatch):
     """Attach fake panel/view/screen/pointer to the controller (the UI 'humble objects')."""
-    import whispr.widget as W
+    import mhispr.widget as W
 
     screen = {"screen": FakeScreen(), "fullscreen": False}
     monkeypatch.setattr(W, "active_screen", lambda: (screen["screen"], screen["fullscreen"]))

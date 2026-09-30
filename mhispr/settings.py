@@ -5,7 +5,7 @@ import sys
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
-SETTINGS_PATH = Path.home() / "Library" / "Application Support" / "WhisprClone" / "settings.json"
+SETTINGS_PATH = Path.home() / "Library" / "Application Support" / "Mhispr_Flow" / "settings.json"
 
 
 @dataclass
@@ -23,7 +23,7 @@ def load():
     except FileNotFoundError:
         return Settings()
     except (OSError, ValueError) as e:
-        print(f"whispr: ignoring unreadable settings ({e})", file=sys.stderr)
+        print(f"mhispr: ignoring unreadable settings ({e})", file=sys.stderr)
         return Settings()
     known = {f.name for f in fields(Settings)}
     return Settings(**{k: v for k, v in data.items() if k in known})

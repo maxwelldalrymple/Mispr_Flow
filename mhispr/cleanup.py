@@ -101,7 +101,7 @@ class Cleaner:
             self._llm = llm
         except Exception as e:
             self.error = e
-            print(f"whispr: cleanup model unavailable: {e}", file=sys.stderr)
+            print(f"mhispr: cleanup model unavailable: {e}", file=sys.stderr)
         finally:
             self._ready.set()
 

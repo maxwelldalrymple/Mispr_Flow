@@ -3,8 +3,8 @@ import dataclasses
 import pytest
 from AppKit import NSFontAttributeName, NSFontWeightSemibold
 
-from whispr import draw
-from whispr.draw import Rect, srgb, white
+from mhispr import draw
+from mhispr.draw import Rect, srgb, white
 
 
 # --- Rect ---------------------------------------------------------------------

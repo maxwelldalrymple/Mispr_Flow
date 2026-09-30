@@ -1,6 +1,6 @@
 import threading
 
-from whispr.threads import start_daemon
+from mhispr.threads import start_daemon
 
 
 def test_runs_target_on_a_new_named_daemon_thread():

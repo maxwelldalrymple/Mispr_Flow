@@ -3,8 +3,8 @@ import threading
 import numpy as np
 import pytest
 
-from whispr import transcribe
-from whispr.transcribe import Transcriber, clean_text
+from mhispr import transcribe
+from mhispr.transcribe import Transcriber, clean_text
 
 
 class TestCleanText:

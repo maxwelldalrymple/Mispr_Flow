@@ -22,14 +22,36 @@ from PyObjCTools import AppHelper
 from . import hotkey
 from .widget import Ticker, WidgetController
 
+APP_NAME = "Mhispr_Flow"
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def _menubar_icon():
+    """The logo as an 18 pt template image (macOS tints it for light/dark menu bars).
+    Falls back to the SF Symbol waveform if the asset is missing."""
+    icon = NSImage.alloc().initWithContentsOfFile_(str(ASSETS / "menubar.png"))
+    if icon is None:
+        icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_("waveform", APP_NAME)
+    else:
+        retina = NSImage.alloc().initWithContentsOfFile_(str(ASSETS / "menubar@2x.png"))
+        if retina is not None:
+            for rep in retina.representations():
+                icon.addRepresentation_(rep)
+        icon.setSize_((18, 18))
+    icon.setTemplate_(True)
+    icon.setAccessibilityDescription_(APP_NAME)
+    return icon
+
+
+def _app_icon():
+    return NSImage.alloc().initWithContentsOfFile_(str(ASSETS / "AppIcon.icns"))
+
 
 def _status_item():
     item = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
-    icon = NSImage.imageWithSystemSymbolName_accessibilityDescription_("waveform", "Whispr Clone")
-    icon.setTemplate_(True)
-    item.button().setImage_(icon)
+    item.button().setImage_(_menubar_icon())
     menu = NSMenu.alloc().init()
-    menu.addItemWithTitle_action_keyEquivalent_("Quit Whispr Clone", "terminate:", "q")
+    menu.addItemWithTitle_action_keyEquivalent_(f"Quit {APP_NAME}", "terminate:", "q")
     item.setMenu_(menu)
     return item
 
@@ -37,7 +59,7 @@ def _status_item():
 _keepalive = []  # strong references for the lifetime of the app
 
 
-LOCK_PATH = Path(tempfile.gettempdir()) / "whispr-clone.lock"
+LOCK_PATH = Path(tempfile.gettempdir()) / f"{APP_NAME}.lock"
 
 
 def _single_instance_lock(path=LOCK_PATH):
@@ -47,7 +69,7 @@ def _single_instance_lock(path=LOCK_PATH):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        print("whispr: already running", file=sys.stderr)
+        print("mhispr: already running", file=sys.stderr)
         sys.exit(1)
     return lock  # the lock is held until the process exits
 
@@ -78,6 +100,9 @@ def main():
     lock = _single_instance_lock()
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    icon = _app_icon()
+    if icon is not None:
+        app.setApplicationIconImage_(icon)  # alerts and About; the .app bundle uses AppIcon.icns
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key)
     status_item = _status_item()
@@ -91,21 +116,21 @@ def main():
         hotkey.request_input_monitoring()
     if not fn.start():
         print(
-            "whispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
+            "mhispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
             " Input Monitoring, then restart. Clicking the widget still works.",
             file=sys.stderr,
         )
     elif not fn.active:
         if not hotkey.fn_key_does_nothing():
             print(
-                "whispr: fn works, but macOS will also open the emoji picker until this app is allowed"
+                "mhispr: fn works, but macOS will also open the emoji picker until this app is allowed"
                 " in System Settings > Privacy & Security > Accessibility (no restart needed).",
                 file=sys.stderr,
             )
         # Swap to swallowing fn as soon as Accessibility is granted.
         def try_upgrade():
             if fn.upgrade():
-                print("whispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
+                print("mhispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
                 upgrade_timer.invalidate()
 
         ticker = Ticker.alloc().init()

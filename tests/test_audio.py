@@ -3,8 +3,8 @@ import threading
 import numpy as np
 import pytest
 
-from whispr import audio
-from whispr.audio import Recorder, SecureAudioBuffer
+from mhispr import audio
+from mhispr.audio import Recorder, SecureAudioBuffer
 
 
 class TestSecureAudioBuffer:
@@ -248,7 +248,7 @@ class TestRecorder:
     def test_stop_never_blocks_even_if_coreaudio_hangs(self, engines, monkeypatch):
         """The regression: a deadlocked engine stop must not freeze the caller (the UI)."""
         import time
-        from whispr import threads
+        from mhispr import threads
         monkeypatch.setattr(audio, "start_daemon", threads.start_daemon)  # real background thread
         stuck = threading.Event()
         r = Recorder(engine_factory=lambda cb: FakeEngine(cb, stop_blocks=stuck),
@@ -260,7 +260,7 @@ class TestRecorder:
         stuck.set()
 
     def test_hung_stop_switches_to_fresh_engine(self, engines, monkeypatch, capsys):
-        from whispr import threads
+        from mhispr import threads
         monkeypatch.setattr(audio, "start_daemon", threads.start_daemon)
         stuck = threading.Event()
         made = []
@@ -279,7 +279,7 @@ class TestRecorder:
         stuck.set()
 
     def test_restart_waits_for_previous_stop(self, engines, monkeypatch):
-        from whispr import threads
+        from mhispr import threads
         monkeypatch.setattr(audio, "start_daemon", threads.start_daemon)
         r = recorder()
         r.start()
