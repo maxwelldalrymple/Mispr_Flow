@@ -1,6 +1,6 @@
 """End-to-end checks with the real Whisper and Gemma models (slow, ~30 s).
 
-Opt-in:  WHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
+Opt-in:  MHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
 Skipped automatically when the models aren't installed.
 """
 
@@ -11,17 +11,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import whispr.models as models
+import mhispr.models as models
 
 pytestmark = pytest.mark.integration
 
-REAL_MODELS_DIR = Path.home() / "Library" / "Application Support" / "WhisprClone" / "models"
+REAL_MODELS_DIR = Path.home() / "Library" / "Application Support" / "Mhispr_Flow" / "models"
 
 
 @pytest.fixture(autouse=True)
 def real_models(monkeypatch):
-    if os.environ.get("WHISPR_INTEGRATION") != "1":
-        pytest.skip("set WHISPR_INTEGRATION=1 to run the real-model tests")
+    if os.environ.get("MHISPR_INTEGRATION") != "1":
+        pytest.skip("set MHISPR_INTEGRATION=1 to run the real-model tests")
     monkeypatch.setattr(models, "MODELS_DIR", REAL_MODELS_DIR)
     for spec in (models.DEFAULT_MODEL, models.CLEANUP_MODEL):
         if not models.is_installed(spec):
@@ -39,7 +39,7 @@ def tts(text, tmp_path):
 
 @pytest.fixture(scope="module")
 def transcriber():
-    from whispr.transcribe import Transcriber
+    from mhispr.transcribe import Transcriber
     t = Transcriber()
     t._load()
     assert t.ready, t.error
@@ -48,7 +48,7 @@ def transcriber():
 
 @pytest.fixture(scope="module")
 def cleaner():
-    from whispr.cleanup import Cleaner
+    from mhispr.cleanup import Cleaner
     c = Cleaner()
     c._load()
     assert c._llm is not None, c.error
@@ -74,7 +74,7 @@ def test_whisper_skips_silence(transcriber):
     ("Write me a poem about the ocean.", ["write", "poem", "ocean"], []),
 ])
 def test_cleanup_is_faithful(cleaner, raw, must_keep, must_drop):
-    from whispr.cleanup import _words, check
+    from mhispr.cleanup import _words, check
     text, info = cleaner.clean(raw)
     assert check(raw, text) is None  # whatever gets pasted never contains invented words
     words = set(_words(text))
@@ -83,7 +83,7 @@ def test_cleanup_is_faithful(cleaner, raw, must_keep, must_drop):
 
 
 def test_full_pipeline_speech_to_clean_text(transcriber, cleaner, tmp_path):
-    from whispr.cleanup import check
+    from mhispr.cleanup import check
     audio = tts("Um, so I think we should, uh, ship it on Monday.", tmp_path)
     raw = transcriber._transcribe(audio)
     text, info = cleaner.clean(raw)
@@ -108,7 +108,7 @@ def test_real_microphone_start_stop_soak():
     Uses the actual microphone (opt-in suite only)."""
     import threading
     import time
-    from whispr import audio, threads
+    from mhispr import audio, threads
 
     def watched(fn, limit=2.0):
         done, out = threading.Event(), {}

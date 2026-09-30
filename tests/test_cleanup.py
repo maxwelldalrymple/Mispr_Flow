@@ -2,8 +2,8 @@ import threading
 
 import pytest
 
-from whispr import cleanup
-from whispr.cleanup import Cleaner, check, _words
+from mhispr import cleanup
+from mhispr.cleanup import Cleaner, check, _words
 
 
 # --- _words -----------------------------------------------------------------------

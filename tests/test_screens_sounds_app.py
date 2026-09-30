@@ -3,7 +3,7 @@ import signal
 import pytest
 from AppKit import NSMakeRect
 
-from whispr import app, screens, sounds
+from mhispr import app, screens, sounds
 
 
 # --- screens -----------------------------------------------------------------------
@@ -230,7 +230,7 @@ class TestSingleInstance:
 
     @pytest.fixture
     def lock_path(self, tmp_path):
-        return tmp_path / "whispr-clone.lock"
+        return tmp_path / "Mhispr_Flow.lock"
 
     @pytest.fixture
     def other_instance(self, lock_path):
@@ -240,7 +240,7 @@ class TestSingleInstance:
         lock.close()
 
     def test_default_path_is_in_temp_dir(self):
-        assert app.LOCK_PATH.name == "whispr-clone.lock"
+        assert app.LOCK_PATH.name == "Mhispr_Flow.lock"
         assert app.LOCK_PATH.parent == app.Path(app.tempfile.gettempdir())
 
     def test_first_instance_gets_lock(self, lock_path):
@@ -323,14 +323,39 @@ class TestShutdown:
         assert w.recorder.buffer.closed and w.cleaner.closed == 1
 
 
-class TestStatusItem:
+class TestBranding:
+    def test_app_name(self):
+        assert app.APP_NAME == "Mhispr_Flow"
+        assert app.LOCK_PATH.name == "Mhispr_Flow.lock"
+
     def test_menu_has_quit(self):
         item = app._status_item()
         try:
-            menu = item.menu()
-            quit_item = menu.itemAtIndex_(0)
-            assert quit_item.title() == "Quit Whispr Clone"
+            quit_item = item.menu().itemAtIndex_(0)
+            assert quit_item.title() == "Quit Mhispr_Flow"
             assert quit_item.action() == "terminate:" and quit_item.keyEquivalent() == "q"
-            assert item.button().image().isTemplate()  # adapts to light/dark menu bar
         finally:
             app.NSStatusBar.systemStatusBar().removeStatusItem_(item)
+
+    def test_menubar_icon_is_the_logo_as_template(self):
+        icon = app._menubar_icon()
+        assert icon.isTemplate()  # macOS tints it for light/dark menu bars
+        assert (icon.size().width, icon.size().height) == (18, 18)
+        widths = sorted(r.pixelsWide() for r in icon.representations())
+        assert widths == [18, 36]  # 1x and Retina
+        assert icon.accessibilityDescription() == "Mhispr_Flow"
+
+    def test_menubar_icon_falls_back_to_symbol(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(app, "ASSETS", tmp_path)  # no asset files
+        icon = app._menubar_icon()
+        assert icon is not None and icon.isTemplate()
+
+    def test_app_icon_has_every_macos_size(self):
+        icon = app._app_icon()
+        sizes = sorted({r.pixelsWide() for r in icon.representations()})
+        assert sizes == [16, 32, 64, 128, 256, 512, 1024]
+
+    def test_icon_source_is_square_1024(self):
+        from AppKit import NSImage
+        rep = NSImage.alloc().initWithContentsOfFile_(str(app.ASSETS / "icon.png")).representations()[0]
+        assert (rep.pixelsWide(), rep.pixelsHigh()) == (1024, 1024)

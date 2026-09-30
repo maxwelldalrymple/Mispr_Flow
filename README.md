@@ -1,4 +1,6 @@
-# Whispr Clone
+<p align="center"><img src="mhispr/assets/icon.png" width="160" alt="Mhispr_Flow"></p>
+
+# Mhispr_Flow
 
 A privacy-first, fully local voice dictation tool for macOS, modeled on the Wispr Flow desktop experience but with **no cloud processing and no persistent audio**.
 
@@ -34,7 +36,7 @@ This project reproduces the same workflow entirely on-device, and treats capture
 ```bash
 python3.13 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m whispr
+.venv/bin/python -m mhispr
 ```
 
 Quit from the waveform icon in the menu bar.
@@ -49,7 +51,7 @@ Quit from the waveform icon in the menu bar.
 The unit suite (500+ tests, ~2 s) covers every module and never touches the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. End-to-end tests with the real Whisper and Gemma models are opt-in:
 
 ```bash
-WHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
+MHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
 ```
 
 `tools/eval_cleanup.py` scores the cleanup model on 27 cases (invented words must be zero).

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from whispr import storage
+from mhispr import storage
 
 T0 = datetime(2026, 9, 30, 12, 28, 33, 123456)
 APP = {"app": "Notes", "bundle_id": "com.apple.Notes", "url": "ignored", "page_title": "ignored"}
@@ -48,7 +48,7 @@ class TestDataRoot:
 
     def test_packaged_app_uses_application_support(self, monkeypatch):
         monkeypatch.setattr(sys, "frozen", True, raising=False)
-        assert storage._data_root() == Path.home() / "Library" / "Application Support" / "WhisprClone"
+        assert storage._data_root() == Path.home() / "Library" / "Application Support" / "Mhispr_Flow"
 
 
 class TestSaveRecording:

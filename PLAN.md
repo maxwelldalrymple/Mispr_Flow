@@ -5,7 +5,7 @@
 | Area | Choice | Notes |
 |---|---|---|
 | Language | Python | Fast to prototype. Uses PyObjC for native macOS APIs. |
-| Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. `ggml-large-v3-turbo-q5_0` (574 MB), downloaded on first run to `~/Library/Application Support/WhisprClone/models` and SHA-256 verified. Reduced `audio_ctx` breaks turbo, so default settings are used. |
+| Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. `ggml-large-v3-turbo-q5_0` (574 MB), downloaded on first run to `~/Library/Application Support/Mhispr_Flow/models` and SHA-256 verified. Reduced `audio_ctx` breaks turbo, so default settings are used. |
 | Cleanup | Small local LLM | `llama-cpp-python` (built with Metal) running `gemma-3-4b-it-Q4_K_M.gguf` (2.5 GB) from `ggml-org/gemma-3-4b-it-GGUF`, SHA-256 verified. Gemma Terms of Use apply. |
 | v1 extras | Floating widget | See "Floating Widget" below. |
 
@@ -79,8 +79,8 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 ## Distribution
 
 - **Format:** an unsigned `.pkg` installer (optionally wrapped in a DMG for download), built from a py2app bundle. Apple Silicon (M1+) only.
-- **Models are mandatory at install:** the `.pkg` postinstall script downloads Whisper large-v3-turbo q5 (~0.57 GB) and Gemma-3-4B-it Q4_K_M (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/WhisprClone/models` (system-wide, since installer scripts run as root). Installer.app only shows an indeterminate "Running package scripts" bar during this step.
-- **Startup is the safety net:** on every launch the app checks both `/Library/...` and `~/Library/Application Support/WhisprClone/models`. If anything is missing or fails verification (offline install, failed download, deleted file), the mandatory setup screen downloads it with real progress, and dictation stays locked until done.
+- **Models are mandatory at install:** the `.pkg` postinstall script downloads Whisper large-v3-turbo q5 (~0.57 GB) and Gemma-3-4B-it Q4_K_M (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/Mhispr_Flow/models` (system-wide, since installer scripts run as root). Installer.app only shows an indeterminate "Running package scripts" bar during this step.
+- **Startup is the safety net:** on every launch the app checks both `/Library/...` and `~/Library/Application Support/Mhispr_Flow/models`. If anything is missing or fails verification (offline install, failed download, deleted file), the mandatory setup screen downloads it with real progress, and dictation stays locked until done.
 - **Signing:** unsigned for now. Users must allow it via System Settings > Privacy & Security > Open Anyway. Revisit a Developer ID and notarization before any wide release.
 - **Permissions caveat:** macOS ties Microphone, Accessibility, and Input Monitoring grants to the app's signature, so unsigned updates may require re-granting them. Ad-hoc sign with a consistent identifier to reduce this.
 - **Licensing:** ship Gemma's Terms of Use / notice (models are downloaded from `ggml-org/gemma-3-4b-it-GGUF` at install, not bundled).
@@ -110,9 +110,9 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Recording Storage
 
-- **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/WhisprClone/` once packaged as an .app, since a DMG install has no project folder), named by its start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) plus `2026-09-30_12-28-33-123.json`. The JSON holds `started_at`/`ended_at` (ms precision), duration, status (`pasted`/`cancelled`), transcript, word count, `recorded_in` (app), `pasted_into` (app, bundle id, and for browsers the page `url` and `page_title`), and the model. This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
+- **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/Mhispr_Flow/` once packaged as an .app, since a DMG install has no project folder), named by its start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) plus `2026-09-30_12-28-33-123.json`. The JSON holds `started_at`/`ended_at` (ms precision), duration, status (`pasted`/`cancelled`), transcript, word count, `recorded_in` (app), `pasted_into` (app, bundle id, and for browsers the page `url` and `page_title`), and the model. This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
 - **Browser page lookup:** via the Accessibility API (walk up from the focused element to the outermost `AXWebArea` and read `AXURL`, falling back to the window's `AXDocument`), so no per-browser Automation prompts. ~50 ms in Chrome; 0.3 s timeout.
-- **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/WhisprClone/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
+- **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/Mhispr_Flow/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, and silent clips.
 - **Possible upgrade:** encrypt recordings at rest with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
 

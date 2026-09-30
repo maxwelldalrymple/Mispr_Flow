@@ -21,7 +21,7 @@ import numpy as np
 def _data_root():
     """The project folder when running from source; Application Support once packaged as an .app."""
     if getattr(sys, "frozen", False):
-        return Path.home() / "Library" / "Application Support" / "WhisprClone"
+        return Path.home() / "Library" / "Application Support" / "Mhispr_Flow"
     return Path(__file__).resolve().parent.parent
 
 
