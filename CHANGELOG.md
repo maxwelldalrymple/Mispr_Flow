@@ -4,6 +4,9 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
+- **Original sound cues** replace the macOS system sounds: start, stop, hands-free lock, cancel, and error, plus paste, notification, alert, success, and achievement cues for the upcoming main window. All synthesized from scratch by `tools/make_sounds.py` (a test checks the shipped WAVs match the generator byte for byte).
+- **Mic name on first dictation:** "Using Built-in mic (recommended)" or "Using <device>" above the widget for 3 s.
+- **App icon** redrawn on the macOS icon grid (`tools/make_icon.py`).
 - **First-run setup window** (native macOS, light/dark): Welcome → Permissions → Models → Ready. Live permission checkmarks (Microphone and Accessibility required, Screen & System Audio optional), model download progress with Retry, and a quick fn guide. Reappears when something required is missing; reopen from the menu bar via **Setup Guide…**.
 - Permissions are no longer requested on launch; fn starts working within a second of granting Accessibility (no restart).
 - Tests: 769 unit tests; golden-image comparison now round-trips both sides through PNG (fixes false failures on text-heavy renders).

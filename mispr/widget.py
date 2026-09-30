@@ -459,6 +459,7 @@ class WidgetController:
     def _setup_failed(self, message):
         log(f"setup: failed ({message})")
         print(f"mispr: model download failed: {message}", file=sys.stderr)
+        self.sounds.play(sounds.ERROR)
         self.setup_error = message
 
     def _retry_setup(self):
@@ -476,9 +477,11 @@ class WidgetController:
         elif self.state not in (IDLE, HOVER, CANCELLED):
             pass  # busy (processing, meeting, card): ignore fn
         elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
-            # The first tap already played the start sound.
+            # The first tap already played the start sound; now confirm the lock.
             self.last_tap_at = None
             self.begin_handsfree(sound=False)
+            if self.state == HANDSFREE:
+                self.sounds.play(sounds.LOCK)
         else:
             # Start recording immediately so the first word isn't clipped; a short
             # release turns this into a tap instead.

@@ -69,7 +69,7 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 | Hover the pill above the Dock | Show the mic (dictate) and ◉ (meeting note; capture coming soon) buttons |
 | Click the mic / long-press it | Hands-free / push-to-talk with the mouse |
 
-A quick fn tap does nothing, and fn combined with another key (fn + arrow) works as normal. Soft sounds mark start, stop, and cancel.
+A quick fn tap does nothing, and fn combined with another key (fn + arrow) works as normal. Soft sounds mark start, stop, the hands-free lock (double-tap), and cancel. They're original cues synthesized by `tools/make_sounds.py` into `mispr/assets/sounds/`; edit the script or drop in your own WAVs to change them.
 
 ## Settings
 
@@ -128,7 +128,7 @@ mispr/
   draw.py, sounds.py, levels.py, threads.py
   assets/        logo, app icon (.icns), menu-bar icon, GitHub social preview
 tests/           pytest suite + golden files
-tools/           stress test, mutation test, cleanup-model eval, state renderer
+tools/           stress test, mutation test, cleanup-model eval, state renderer, icon and sound generators
 logs/            stress-test and bug-fix reports
 ```
 

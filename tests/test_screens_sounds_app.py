@@ -1,4 +1,7 @@
 import signal
+from pathlib import Path
+
+import numpy as np
 
 import pytest
 from AppKit import NSMakeRect
@@ -159,6 +162,7 @@ class TestActiveScreen:
 
 class FakeSound:
     played = []
+    loads = []
 
     def __init__(self, name):
         self.name, self.volume, self.playing = name, None, False
@@ -179,9 +183,16 @@ class FakeSound:
 
 @pytest.fixture
 def fake_nssound(monkeypatch):
-    FakeSound.played = []
+    FakeSound.played, FakeSound.loads = [], []
+
     class Sound:
-        soundNamed_ = staticmethod(lambda name: FakeSound(name) if name in ("Tink", "Pop", "Bottle") else None)
+        @staticmethod
+        def alloc():
+            return Sound()
+
+        def initWithContentsOfFile_byReference_(self, path, by_ref):
+            FakeSound.loads.append(path)
+            return FakeSound(Path(path).stem)
 
     monkeypatch.setattr(sounds, "NSSound", Sound)
     return FakeSound
@@ -191,7 +202,7 @@ class TestSounds:
     def test_plays_named_sound_at_volume(self, fake_nssound):
         s = sounds.Sounds(volume=0.4)
         s.play(sounds.START)
-        assert [(p.name, p.volume) for p in fake_nssound.played] == [("Tink", 0.4)]
+        assert [(p.name, p.volume) for p in fake_nssound.played] == [("start", 0.4)]
 
     def test_disabled_plays_nothing(self, fake_nssound):
         sounds.Sounds(enabled=False).play(sounds.START)
@@ -213,14 +224,53 @@ class TestSounds:
         s.play(sounds.START)
         fake_nssound.played[0].playing = False
         s.play(sounds.STOP)
-        assert [p.name for p in s._playing] == ["Pop"]
+        assert [p.name for p in s._playing] == ["stop"]
 
-    def test_default_volume_is_subtle(self, fake_nssound):
+    def test_default_volume_is_full_because_levels_are_in_the_files(self, fake_nssound):
         sounds.Sounds().play(sounds.START)
-        assert fake_nssound.played[0].volume == 0.3
+        assert fake_nssound.played[0].volume == 1.0
 
-    def test_cue_names_are_system_sounds(self):
-        assert (sounds.START, sounds.STOP, sounds.CANCEL) == ("Tink", "Pop", "Bottle")
+    def test_each_file_is_loaded_once(self, fake_nssound):
+        s = sounds.Sounds()
+        for _ in range(3):
+            s.play(sounds.START)
+        assert len(fake_nssound.loads) == 1 and len(fake_nssound.played) == 3
+
+    def test_missing_file_is_ignored(self, fake_nssound, monkeypatch, tmp_path):
+        monkeypatch.setattr(sounds, "SOUNDS", tmp_path)
+        sounds.Sounds().play(sounds.START)
+        assert fake_nssound.played == [] and fake_nssound.loads == []
+
+
+class TestSoundFiles:
+    """The shipped cues: every one exists, is a short mono 48 kHz WAV, and isn't clipped."""
+
+    @pytest.mark.parametrize("name", sounds.ALL)
+    def test_file_shape(self, name):
+        import wave
+        with wave.open(str(sounds.SOUNDS / f"{name}.wav")) as w:
+            assert (w.getnchannels(), w.getsampwidth(), w.getframerate()) == (1, 2, 48000)
+            assert 0.05 < w.getnframes() / 48000 < 1.2
+            pcm = np.frombuffer(w.readframes(w.getnframes()), "<i2")
+        assert np.abs(pcm).max() < 32767
+
+    def test_dictation_cues_are_quiet_and_short(self):
+        import wave
+        for name in (sounds.START, sounds.STOP, sounds.LOCK, sounds.CANCEL):
+            with wave.open(str(sounds.SOUNDS / f"{name}.wav")) as w:
+                pcm = np.frombuffer(w.readframes(w.getnframes()), "<i2") / 32768
+                assert w.getnframes() / 48000 < 0.2
+            assert 20 * np.log10(np.abs(pcm).max()) < -15  # sits under speech, never startles
+
+    def test_generator_reproduces_the_shipped_files(self, tmp_path, monkeypatch):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("make_sounds", Path(sounds.__file__).parent.parent / "tools" / "make_sounds.py")
+        mk = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mk)
+        monkeypatch.setattr(mk, "OUT", tmp_path)
+        mk.main()
+        for name in sounds.ALL:
+            assert (tmp_path / f"{name}.wav").read_bytes() == (sounds.SOUNDS / f"{name}.wav").read_bytes(), name
 
 
 # --- app -----------------------------------------------------------------------------

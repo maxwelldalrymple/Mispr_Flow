@@ -750,40 +750,51 @@ class TestSoundCues:
         controller.fn_down()
         clock.advance(1)
         controller.fn_up()
-        assert controller.sounds.played == ["Tink", "Pop"]
+        assert controller.sounds.played == ["start", "stop"]
 
-    def test_double_tap_plays_start_once(self, controller, clock):
+    def test_double_tap_plays_start_then_lock(self, controller, clock):
         controller.fn_down(); clock.advance(0.1); controller.fn_up()
         clock.advance(0.2)
         controller.fn_down()
-        assert controller.state == W.HANDSFREE and controller.sounds.played == ["Tink"]
+        assert controller.state == W.HANDSFREE and controller.sounds.played == ["start", "lock"]
+
+    def test_no_lock_sound_if_mic_fails_on_second_tap(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        clock.advance(0.2)
+        controller.recorder.start_ok = False
+        controller.fn_down()
+        assert controller.state != W.HANDSFREE and controller.sounds.played == ["start"]
+
+    def test_model_download_failure_plays_error(self, controller):
+        controller._setup_failed("offline")
+        assert controller.sounds.played == ["error"]
 
     def test_quick_tap_discard_is_silent_after_start(self, controller, clock):
         controller.fn_down(); clock.advance(0.1); controller.fn_up()
-        assert controller.sounds.played == ["Tink"]
+        assert controller.sounds.played == ["start"]
 
     def test_mouse_handsfree_then_cancel(self, controller):
         controller.set_state(W.HOVER)
         click(controller, "mic")
         click(controller, "cancel")
-        assert controller.sounds.played == ["Tink", "Bottle"]
+        assert controller.sounds.played == ["start", "cancel"]
 
     def test_undo_and_expiry_are_silent(self, controller, clock):
         controller.begin_handsfree()
         controller.cancel()
         controller.undo_cancel()
-        assert controller.sounds.played == ["Tink", "Bottle"]
+        assert controller.sounds.played == ["start", "cancel"]
 
     def test_meeting(self, controller, clock):
         controller.begin_meeting()
         clock.advance(30)
         controller.stop_meeting()
-        assert controller.sounds.played == ["Tink", "Pop"]
+        assert controller.sounds.played == ["start", "stop"]
 
     def test_short_meeting_still_confirms_stop(self, controller):
         controller.begin_meeting()
         controller.stop_meeting()
-        assert controller.sounds.played == ["Tink", "Pop"] and controller.state == W.MISTAKE
+        assert controller.sounds.played == ["start", "stop"] and controller.state == W.MISTAKE
 
     def test_mic_failure_is_silent(self, controller):
         controller.recorder.start_ok = False
