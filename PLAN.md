@@ -54,9 +54,9 @@ A transparent, non-activating panel centred just above the Dock on the screen th
 | Idle | Tiny outlined pill | App running |
 | Hover | Mic button + ◉ note button; tooltips "Dictate **fn**" / "New note **⌥M**" | Pointer over the pill |
 | Hold | Compact black pill with live waveform | Hold `fn`, or long-press the mic |
-| Hands-free | ✕ · waveform · ✓; tooltips "Cancel", "Finish and paste", "Press **fn** to finish and paste" | Double-tap `fn`, or click the mic |
-| Processing | Dim waveform + spinner | Release `fn`, press `fn`, or click ✓ |
-| Cancelled | "Transcript cancelled · Undo" toast with a 5 s draining progress bar. Undo processes the recording; otherwise the audio (held in locked RAM) is wiped when the bar runs out | Click ✕ |
+| Hands-free | ✕ · waveform · ✓; tooltips "Cancel", "Finish and paste", "**space** to paste · **fn** to cancel" | Double-tap `fn`, or click the mic |
+| Processing | Dim waveform + spinner | Release `fn` (hold), space/return (hands-free), or click ✓ |
+| Cancelled | "Transcript cancelled · Undo" toast with a 5 s draining progress bar. Undo processes the recording; otherwise the audio (held in locked RAM) is wiped when the bar runs out | Click ✕, press delete, or press `fn` during hands-free |
 | Meeting | Outlined pill: small waveform + ■ stop | Click ◉ or press ⌥M |
 | Started by mistake? | Card with Discard / Keep | Stopping a meeting that captured almost nothing |
 
@@ -88,14 +88,14 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 - **Hold** (≥ 0.3 s): push-to-talk. Recording starts on key-down so the first word isn't clipped; release finishes.
 - **Tap** (< 0.3 s): discarded silently. A second press within 1 s of the first starts hands-free.
-- **Press during hands-free:** finish and paste.
+- **Press during hands-free:** cancel (shows the Undo toast).
 - **fn + another key** (fn+arrow, fn+F-key): treated as a modifier combo, and the recording is discarded.
 - fn is ignored while processing, during a meeting, or while the "Started by mistake?" card is open.
 - The 🌐/fn key also emits its own key event (keycode 179); macOS opens Emoji & Symbols from it, so it is swallowed along with the fn flag.
 
 ## Keyboard Shortcuts
 
-- **Hands-free:** space = finish and paste, delete = cancel.
+- **Hands-free:** space, return, or keypad enter = finish and paste; delete or fn = cancel.
 - **Cancelled toast:** delete = discard immediately (skip the Undo countdown).
 - These keys are swallowed only in those states; modified presses (e.g. ⌘Space) always pass through.
 
@@ -106,3 +106,10 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - Annotations like `[BLANK_AUDIO]` and `(music)` are stripped.
 - Transcription runs on a worker thread; whisper.cpp releases the GIL, so the fn event tap and UI stay responsive.
 - Known gaps: first-run download has no progress UI yet; ⌘V uses the ANSI V keycode (non-QWERTY layouts TODO).
+
+## Recording Storage
+
+- **Default:** every finished or cancelled dictation is saved to `~/Documents/voice-recordings/YYYY-MM-DD/` as `HHMMSS-<id>.wav` (16 kHz mono PCM) plus `HHMMSS-<id>.json` (time, duration, status `pasted`/`cancelled`, transcript, word count, target app, model). This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
+- **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/WhisprClone/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
+- **Not saved:** fn taps, fn+key combos, clips under 0.3 s, and silent clips.
+- **Possible upgrade:** encrypt recordings at rest with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
