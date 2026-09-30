@@ -31,4 +31,4 @@ This project reproduces the same workflow entirely on-device, and treats capture
 
 ## Status
 
-Planning phase. See the `planning` branch for design decisions in progress.
+Planning phase. See [PLAN.md](PLAN.md) for the stack, architecture, and milestones.
