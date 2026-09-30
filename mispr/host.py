@@ -1,0 +1,53 @@
+"""Talking to the Swift app that hosts the engine (run with MISPR_HOSTED=1).
+
+One JSON object per line. Engine -> app on stdout, each line prefixed with "@mispr " (the
+debug log goes to stderr, so the two never mix). App -> engine on stdin, e.g.
+{"cmd": "open_setup"}. When stdin closes, the app is gone and the engine quits with it.
+"""
+
+import json
+import os
+import sys
+
+from PyObjCTools import AppHelper
+
+from . import threads
+
+PREFIX = "@mispr "
+
+
+def hosted():
+    return os.environ.get("MISPR_HOSTED") == "1"
+
+
+def send(event, out=None, **fields):
+    out = out or sys.stdout
+    out.write(PREFIX + json.dumps({"event": event, **fields}) + "\n")
+    out.flush()
+
+
+def parse(line):
+    """The command name in one stdin line, or None for blank or malformed lines."""
+    try:
+        message = json.loads(line)
+    except ValueError:
+        return None
+    cmd = message.get("cmd") if isinstance(message, dict) else None
+    return cmd if isinstance(cmd, str) else None
+
+
+def listen(handlers, on_eof, stream=None, call=AppHelper.callAfter, start=threads.start_daemon):
+    """Read commands on a daemon thread and run their handlers on the main thread."""
+    stream = stream or sys.stdin
+
+    def run():
+        for line in stream:
+            cmd = parse(line)
+            handler = handlers.get(cmd)
+            if handler is not None:
+                call(handler)
+            elif cmd is not None:
+                print(f"mispr: unknown host command {cmd!r}", file=sys.stderr)
+        call(on_eof)
+
+    return start(run, "host-stdin")

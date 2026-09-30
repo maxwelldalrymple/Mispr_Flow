@@ -261,6 +261,8 @@ class WidgetController:
         self.rec_recorded_in = None  # context.frontmost() when the recording started
         self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
+        self.sounds.enabled = self.settings.sounds
+        self.on_saved = lambda path: None  # the Swift app refreshes its history from this
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -368,6 +370,14 @@ class WidgetController:
             log(f"saved {status} recording -> {path.parent.name}/{path.name}")
         except OSError as e:
             print(f"mispr: could not save recording: {e}", file=sys.stderr)
+            return
+        self.on_saved(path)
+
+    def reload_settings(self):
+        """Pick up settings.json after the main window changed it."""
+        self.settings = settings.load()
+        self.sounds.enabled = self.settings.sounds
+        log(f"settings reloaded: {self.settings}")
 
     def begin_hold(self, source):
         self._drop_cancelled()

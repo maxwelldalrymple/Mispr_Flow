@@ -8,6 +8,7 @@ from pathlib import Path
 
 from AppKit import (
     NSApplication,
+    NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSApplicationWillTerminateNotification,
     NSImage,
@@ -23,7 +24,7 @@ from PyObjCTools import AppHelper
 
 from Foundation import NSObject
 
-from . import hotkey, onboarding, setup
+from . import host, hotkey, onboarding, settings, setup, storage
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -140,6 +141,16 @@ class _AppDelegate(NSObject):
         return True
 
 
+def _connect_host(app, widget, open_setup):
+    """Wire the engine to the Swift app: announce where data lives, report each saved
+    dictation, and follow its commands. Quitting the app (stdin closes) quits the engine."""
+    quit_app = lambda: app.terminate_(None)
+    widget.on_saved = lambda path: host.send("saved", path=str(path))
+    host.listen({"open_setup": open_setup, "reload_settings": widget.reload_settings, "quit": quit_app},
+                on_eof=quit_app)
+    host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH))
+
+
 def maintain_hotkey(fn):
     """Called every second: install the fn tap as soon as a permission allows it, and swap
     a listen-only tap for the active one once Accessibility is granted (no restart needed).
@@ -173,9 +184,11 @@ def _setup_flow(widget):
 
 def main():
     lock = _single_instance_lock()
+    hosted = host.hosted()  # run by the Swift app, which owns the Dock icon and main window
     _brand_process()
     app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)  # a Dock icon, like Wispr Flow
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory if hosted
+                             else NSApplicationActivationPolicyRegular)  # a Dock icon, like Wispr Flow
     icon = _app_icon()
     if icon is not None:
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
@@ -199,13 +212,16 @@ def main():
         window.show()
 
     _keepalive.append(add_setup_menu_item(status_item, open_setup))
-    menu_actions = _MenuActions.alloc().init()
-    menu_actions.open_setup = open_setup
-    app.setMainMenu_(_main_menu(menu_actions))
-    delegate = _AppDelegate.alloc().init()
-    delegate.on_reopen = open_setup  # TODO: the main window, once it exists
-    app.setDelegate_(delegate)
-    _keepalive.extend([menu_actions, delegate])
+    if hosted:
+        _connect_host(app, widget, open_setup)
+    else:
+        menu_actions = _MenuActions.alloc().init()
+        menu_actions.open_setup = open_setup
+        app.setMainMenu_(_main_menu(menu_actions))
+        delegate = _AppDelegate.alloc().init()
+        delegate.on_reopen = open_setup
+        app.setDelegate_(delegate)
+        _keepalive.extend([menu_actions, delegate])
     if _setup_flow(widget).needed():
         open_setup()
 

@@ -39,11 +39,11 @@ class TestSettings:
 
     def test_saved_file_is_human_readable(self):
         settings.save(settings.Settings())
-        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true,\n  "onboarded": false\n}'
+        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true,\n  "sounds": true,\n  "onboarded": false\n}'
 
     def test_saved_file_is_readable_json(self):
         settings.save(settings.Settings(incognito=True))
-        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True, "onboarded": False}
+        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True, "sounds": True, "onboarded": False}
 
     def test_partial_file_fills_defaults(self):
         settings.SETTINGS_PATH.parent.mkdir(parents=True)

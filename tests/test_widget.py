@@ -1366,3 +1366,32 @@ def test_copied_notice_matches_golden_image(controller, clock, golden_image):
     _prepare_render(controller, W.IDLE)
     pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
     golden_image("widget_idle_copied_notice", pixels, rep)
+
+
+class TestHostHooks:
+    def test_saved_recordings_are_reported(self, controller, monkeypatch, tmp_path, clock, speech):
+        controller.recorder.audio_data = speech
+        reported = []
+        controller.on_saved = reported.append
+        monkeypatch.setattr(W.storage, "save_recording", lambda audio, **kw: tmp_path / "a.wav")
+        controller.begin_handsfree()
+        clock.advance(2)
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert reported == [tmp_path / "a.wav"]
+
+    def test_nothing_reported_in_incognito(self, controller, monkeypatch, clock, speech):
+        controller.recorder.audio_data = speech
+        reported = []
+        controller.on_saved = reported.append
+        controller.settings.incognito = True
+        controller.begin_handsfree()
+        clock.advance(2)
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert reported == []
+
+    def test_reload_settings_applies_sounds_switch(self, controller, monkeypatch):
+        monkeypatch.setattr(W.settings, "load", lambda: W.settings.Settings(sounds=False, cleanup=False))
+        controller.reload_settings()
+        assert controller.sounds.enabled is False and controller.settings.cleanup is False
