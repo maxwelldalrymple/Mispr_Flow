@@ -9,8 +9,10 @@ from pathlib import Path
 from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSApplicationWillTerminateNotification,
     NSImage,
     NSMenu,
+    NSNotificationCenter,
     NSStatusBar,
     NSTimer,
     NSVariableStatusItemLength,
@@ -47,16 +49,25 @@ def _single_instance_lock():
 
 
 def _install_shutdown(status_item, widget):
-    """On kill/Ctrl-C, remove the menu bar icon (macOS otherwise leaves a ghost) and wipe audio."""
+    """Clean up on Quit and on kill/Ctrl-C: wipe audio, free the models (llama.cpp crashes at
+    exit otherwise), and remove the menu bar icon (macOS otherwise leaves a ghost)."""
 
-    def shutdown(signum, frame):
-        NSStatusBar.systemStatusBar().removeStatusItem_(status_item)
+    def release():
         widget.recorder.stop()
         widget.recorder.buffer.close()
+        widget.cleaner.close()
+
+    def on_signal(signum, frame):
+        release()
+        NSStatusBar.systemStatusBar().removeStatusItem_(status_item)
         AppHelper.stopEventLoop()
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(sig, shutdown)
+        signal.signal(sig, on_signal)
+    # Quit from the menu goes through -terminate:, which exits without returning to Python.
+    NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+        NSApplicationWillTerminateNotification, None, None, lambda note: release()
+    )
 
 
 def main():

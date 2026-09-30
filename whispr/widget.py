@@ -10,6 +10,7 @@ States (see README / PLAN for the full behaviour):
     CANCELLED   "Transcript cancelled · Undo" toast with a draining progress bar
     MEETING     notetaker running: outlined pill with waveform + ■ stop
     MISTAKE     "Started by mistake?" card (Discard / Keep)
+    SETUP       first-run model download with progress (mandatory; dictation is off until done)
 
 Dictation is driven by the `fn` key (hold = push-to-talk, double-tap within 1 s =
 hands-free; then space/return pastes and fn/delete cancels) or by clicking the widget. The waveform shows the
@@ -51,9 +52,10 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import context, draw, settings, sounds, storage
+from . import context, draw, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
+from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
 from .paste import paste_text
 from .transcribe import Transcriber
@@ -68,6 +70,7 @@ PROCESSING = "processing"
 CANCELLED = "cancelled"
 MEETING = "meeting"
 MISTAKE = "mistake"
+SETUP = "setup"
 
 RECORDING_STATES = (HOLD, HANDSFREE, MEETING)
 
@@ -168,6 +171,10 @@ def layout(state):
             "discard": Rect(keep.x - 10 - 84, card.y + 18, 84, 32),
         }
         return Layout(Shape(card, 20, 0.94, 0.1), elems, ("close", "discard", "keep"))
+    if state == SETUP:
+        pill = Rect.centered(CX, BASE + 6, 260, 44)
+        retry = Rect(pill.right - 8 - 62, pill.cy - 14, 62, 28)
+        return Layout(Shape(pill, 22, 0.92, 0.1), {"retry": retry}, ("retry",))
     raise ValueError(state)
 
 
@@ -235,6 +242,9 @@ class WidgetController:
         self.settings = settings.load()
         self.recorder = Recorder()
         self.transcriber = Transcriber()
+        self.cleaner = Cleaner()
+        self.setup_progress = 0.0
+        self.setup_error = None
         self.rec_started_at = self.rec_ended_at = None
         self.rec_recorded_in = None  # context.frontmost() when the recording started
         self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
@@ -274,7 +284,11 @@ class WidgetController:
         self._poll_screen(force=True)
         p.orderFrontRegardless()
         self.recorder.prepare()
-        self.transcriber.load_async()
+        if setup.missing():
+            self.set_state(SETUP)
+            self._run_setup()
+        else:
+            self._load_engines()
 
         self.ticker = Ticker.alloc().init()
         self.ticker.callback = self.tick
@@ -317,7 +331,7 @@ class WidgetController:
         self.recorder.stop()
         self.rec_ended_at = datetime.now()
 
-    def _save(self, status, text, pasted_into=None):
+    def _save(self, status, text, pasted_into=None, raw=None, cleanup=None):
         """Keep the recording on disk unless Incognito is on. Never breaks dictation."""
         if self.settings.incognito or self.rec_started_at is None:
             return
@@ -329,7 +343,7 @@ class WidgetController:
                 audio, status=status, transcript=text,
                 started_at=self.rec_started_at, ended_at=self.rec_ended_at or datetime.now(),
                 recorded_in=self.rec_recorded_in or {}, pasted_into=pasted_into,
-                model=DEFAULT_MODEL.filename,
+                model=DEFAULT_MODEL.filename, raw_transcript=raw, cleanup=cleanup,
             )
             log(f"saved {status} recording -> {path.parent.name}/{path.name}")
         except OSError as e:
@@ -365,16 +379,21 @@ class WidgetController:
     def _process(self, reason):
         self.set_state(PROCESSING)
         self.transcriber.transcribe_async(
-            self.recorder.audio(), lambda text, secs: self._on_transcribed(text, secs, reason)
+            self.recorder.audio(),
+            lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
+            post=self.cleaner.clean if self.settings.cleanup else None,
         )
 
-    def _on_transcribed(self, text, secs, reason):
-        log(f"transcribed in {secs:.2f}s -> {len(text)} chars")
+    def _on_transcribed(self, text, raw, info, secs, reason):
+        cleanup_note = ""
+        if info:
+            cleanup_note = f", cleanup {info['ms']} ms " + ("applied" if info["applied"] else f"rejected ({info['rejected']})")
+        log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         if text:
             target = context.frontmost()  # where the text is about to land
             paste_text(text)
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
-            self._save(storage.PASTED, text, pasted_into=target)
+            self._save(storage.PASTED, text, pasted_into=target, raw=raw, cleanup=info)
         self._wipe(reason)
         self.to_idle()
 
@@ -398,6 +417,35 @@ class WidgetController:
         self.recorder.stop()
         self._wipe("discarded")
         self.set_state(IDLE)
+
+    # --- First-run setup ----------------------------------------------------
+
+    def _load_engines(self):
+        self.transcriber.load_async()
+        self.cleaner.load_async()
+
+    def _run_setup(self):
+        self.setup_error = None
+        self.setup_progress = 0.0
+        log(f"setup: downloading {[m.filename for m in setup.missing()]}")
+        setup.install_async(self._setup_progress, self._setup_done, self._setup_failed)
+
+    def _setup_progress(self, fraction):
+        self.setup_progress = fraction  # called from the download thread; just store it
+
+    def _setup_done(self):
+        log("setup: models installed")
+        self._load_engines()
+        self.to_idle()
+
+    def _setup_failed(self, message):
+        log(f"setup: failed ({message})")
+        print(f"whispr: model download failed: {message}", file=sys.stderr)
+        self.setup_error = message
+
+    def _retry_setup(self):
+        if self.setup_error:
+            self._run_setup()
 
     # --- fn key -------------------------------------------------------------
 
@@ -476,6 +524,8 @@ class WidgetController:
     def hit(self, px, py):
         lay = layout(self.state)
         for name in lay.interactive:
+            if name == "retry" and not self.setup_error:
+                continue  # only clickable once a download has failed
             if lay.elems[name].contains(px, py):
                 return name
         return None
@@ -509,6 +559,7 @@ class WidgetController:
             (MISTAKE, "discard"): self.to_idle,
             (MISTAKE, "keep"): self.to_idle,  # TODO: keep -> summarise like a normal meeting
             (CANCELLED, "undo"): self.undo_cancel,
+            (SETUP, "retry"): self._retry_setup,
         }.get((self.state, pressed))
         if action:
             action()
@@ -651,6 +702,21 @@ class WidgetController:
             lit = self.hovered == "stop"
             draw.fill_circle(st.cx, st.cy, 9, white(1.0, (0.35 if lit else 0.22) * a))
             draw.symbol("stop.fill", st.cx, st.cy, 7, alpha=0.85 * a)
+
+        elif s == SETUP:
+            if self.setup_error:
+                label = draw.rich([("Model download failed", False)], 14, white(1.0, a))
+                retry = lay.elems["retry"]
+                lit = self.hovered == "retry"
+                draw.fill_round(retry, 9, white(1.0, (0.24 if lit else 0.14) * a))
+                draw.draw_text_centered(draw.rich([("Retry", False)], 13, white(1.0, a)), retry.cx, retry.cy)
+            else:
+                pct = int(self.setup_progress * 100)
+                label = draw.rich([("Downloading models ", False), (f"{pct}%", True)], 14, white(1.0, a))
+                track = Rect(r.x + 16, r.y + 3, r.w - 32, 2)
+                draw.fill_round(track, 1, white(1.0, 0.18 * a))
+                draw.fill_round(Rect(track.x, track.y, track.w * self.setup_progress, 2), 1, white(1.0, 0.85 * a))
+            draw.draw_text_left(label, r.x + 18, r.cy + 1)
 
         elif s == MISTAKE:
             self._draw_mistake_card(r, lay, a)

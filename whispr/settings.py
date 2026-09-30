@@ -13,6 +13,8 @@ class Settings:
     # Incognito: recordings are wiped from memory right after use and never written to disk.
     # Off by default so history and usage stats can be tracked.
     incognito: bool = False
+    # LLM cleanup of transcripts (fillers, self-corrections, punctuation); off = raw Whisper text.
+    cleanup: bool = True
 
 
 def load():

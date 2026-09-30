@@ -6,7 +6,7 @@
 |---|---|---|
 | Language | Python | Fast to prototype. Uses PyObjC for native macOS APIs. |
 | Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. `ggml-large-v3-turbo-q5_0` (574 MB), downloaded on first run to `~/Library/Application Support/WhisprClone/models` and SHA-256 verified. Reduced `audio_ctx` breaks turbo, so default settings are used. |
-| Cleanup | Small local LLM | `llama-cpp-python` with a ~1.5B instruct model (e.g. Qwen2.5-1.5B-Instruct, Q4). |
+| Cleanup | Small local LLM | `llama-cpp-python` (built with Metal) running `gemma-3-4b-it-Q4_K_M.gguf` (2.5 GB) from `ggml-org/gemma-3-4b-it-GGUF`, SHA-256 verified. Gemma Terms of Use apply. |
 | v1 extras | Floating widget | See "Floating Widget" below. |
 
 ## Components
@@ -41,9 +41,9 @@
 3. ✅ Record the microphone into an in-memory buffer (real waveform), then zero it.
 4. ✅ Transcribe with whisper.cpp (large-v3-turbo q5, Metal): ~1.1 s for a 5-6 s clip, ~690 MB RAM.
 5. ✅ Paste into the focused app, with clipboard restore.
-6. Add the LLM cleanup pass.
+6. ✅ LLM cleanup (Gemma-3-4B-it Q4_K_M via llama.cpp, ~550 ms) with a zero-invented-words guard, plus a mandatory first-run model setup step.
 7. Meeting notetaker: system audio capture, diarization, summary to `meeting-recordings/` (in the project folder).
-8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
+8. Package as an unsigned `.app` (py2app) inside a `.pkg` installer whose postinstall downloads and verifies the models; first-launch setup remains the fallback. Built by one script.
 
 ## Floating Widget
 
@@ -78,11 +78,12 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Distribution
 
-- **Format:** DMG built from a py2app bundle, so others can download and install it.
+- **Format:** an unsigned `.pkg` installer (optionally wrapped in a DMG for download), built from a py2app bundle. Apple Silicon (M1+) only.
+- **Models are mandatory at install:** the `.pkg` postinstall script downloads Whisper large-v3-turbo q5 (~0.57 GB) and Gemma-3-4B-it Q4_K_M (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/WhisprClone/models` (system-wide, since installer scripts run as root). Installer.app only shows an indeterminate "Running package scripts" bar during this step.
+- **Startup is the safety net:** on every launch the app checks both `/Library/...` and `~/Library/Application Support/WhisprClone/models`. If anything is missing or fails verification (offline install, failed download, deleted file), the mandatory setup screen downloads it with real progress, and dictation stays locked until done.
 - **Signing:** unsigned for now. Users must allow it via System Settings > Privacy & Security > Open Anyway. Revisit a Developer ID and notarization before any wide release.
 - **Permissions caveat:** macOS ties Microphone, Accessibility, and Input Monitoring grants to the app's signature, so unsigned updates may require re-granting them. Ad-hoc sign with a consistent identifier to reduce this.
-- **Models:** downloaded on first launch (not bundled) to keep the DMG small.
-- **Timing:** after dictation works end to end (fn, record, transcribe, paste).
+- **Licensing:** ship Gemma's Terms of Use / notice (models are downloaded from `ggml-org/gemma-3-4b-it-GGUF` at install, not bundled).
 
 ## fn Gestures
 
@@ -114,3 +115,17 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/WhisprClone/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, and silent clips.
 - **Possible upgrade:** encrypt recordings at rest with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
+
+## LLM Cleanup
+
+- **Does:** removes fillers (um, uh, like, you know), stutters and repeated words; applies explicit self-corrections ("Tuesday, no wait, Wednesday" -> "Wednesday"); fixes punctuation and capitalization.
+- **Never:** adds words, rephrases, answers, or obeys the dictation. "I mean" + detail is kept as a clarification; when unsure, the model keeps the words.
+- **Hard guarantee (code, not model):** the output is rejected and the raw transcript pasted instead if it contains *any* word the speaker didn't say (case, punctuation, apostrophes, and number words vs digits are normalized), or keeps under 60% of the speaker's non-filler words.
+- **Model choice:** `tools/eval_cleanup.py` scores 27 cases (fillers, corrections, questions/commands, prompt injection, names, code terms, numbers). Gemma-3-4B: 0 invented, 0 key words lost, most conservative on ambiguous corrections. Qwen3-4B-Instruct-2507 tied on the metrics but half-applied a correction; Qwen2.5-3B invented words; Qwen2.5-1.5B missed corrections and obeyed "Translate this...".
+- **Performance (M1 Pro):** ~550 ms average cleanup; ~1.8 s end-to-end for a 5-6 s clip. Whisper + Gemma resident use ~3.5 GB RAM.
+- **Shutdown:** the llama.cpp model must be freed before exit (Metal backend asserts otherwise), on both Quit and SIGTERM.
+- **Setting:** `cleanup` (default on). Saved JSON keeps both `raw_transcript` and the pasted `transcript`, plus `cleanup` info (model, applied, ms, rejection reason).
+
+## First-Run Setup (mandatory)
+
+On launch, if any required model (Whisper turbo q5, Qwen2.5-1.5B) is missing, the widget shows "Downloading models NN%" with a progress bar and dictation (fn and clicks) is disabled until every model is downloaded and SHA-256 verified. A failed download shows "Model download failed · Retry". Once installed, both engines load and warm up in the background (~2-3 s).

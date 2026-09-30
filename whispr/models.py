@@ -1,7 +1,7 @@
-"""Speech model storage and first-run download.
+"""Model storage and first-run download.
 
-Models are fetched once from the official whisper.cpp repository on Hugging Face,
-verified against their published SHA-256, and kept in Application Support.
+Models are fetched once from their official Hugging Face repositories, verified
+against the published SHA-256, and kept in Application Support.
 """
 
 import hashlib
@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MODELS_DIR = Path.home() / "Library" / "Application Support" / "WhisprClone" / "models"
-_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
 
 @dataclass(frozen=True)
@@ -20,6 +19,7 @@ class ModelSpec:
     filename: str
     size: int
     sha256: str
+    repo: str = "ggerganov/whisper.cpp"
 
     @property
     def path(self):
@@ -27,7 +27,7 @@ class ModelSpec:
 
     @property
     def url(self):
-        return _BASE_URL + self.filename
+        return f"https://huggingface.co/{self.repo}/resolve/main/{self.filename}"
 
 
 # Best balance of accuracy, speed, and memory on Apple Silicon.
@@ -38,6 +38,18 @@ WHISPER_TURBO_Q5 = ModelSpec(
 )
 
 DEFAULT_MODEL = WHISPER_TURBO_Q5
+
+# Text cleanup LLM. Chosen over Qwen2.5-1.5B/3B and Qwen3-4B-Instruct-2507 in a 27-case
+# eval: zero invented words, zero lost key words, and the most conservative on ambiguous
+# self-corrections (~550 ms on an M1 Pro). Gemma Terms of Use apply.
+GEMMA3_4B_Q4 = ModelSpec(
+    "gemma-3-4b-it-Q4_K_M.gguf",
+    2_489_757_856,
+    "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+    repo="ggml-org/gemma-3-4b-it-GGUF",
+)
+
+CLEANUP_MODEL = GEMMA3_4B_Q4
 
 
 def is_installed(spec=DEFAULT_MODEL):
@@ -80,4 +92,6 @@ if __name__ == "__main__":
             last[0] = pct
             print(f"{pct}% ({done / 1e6:.0f} / {total / 1e6:.0f} MB)", file=sys.stderr, flush=True)
 
-    print(ensure_model(progress=report))
+    names = {"whisper": DEFAULT_MODEL, "cleanup": CLEANUP_MODEL}
+    for name in sys.argv[1:] or ["whisper", "cleanup"]:
+        print(ensure_model(names[name], progress=report))
