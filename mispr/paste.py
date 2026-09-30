@@ -47,6 +47,14 @@ def _post_cmd_v():
         Quartz.CGEventPost(Quartz.kCGSessionEventTap, event)
 
 
+def copy_text(text):
+    """Leave `text` on the clipboard for the user to paste themselves (no ⌘V, no restore)."""
+    pb = NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    pb.setString_forType_(text, NSPasteboardTypeString)
+    pb.setData_forType_(NSData.data(), "org.nspasteboard.ConcealedType")  # keep it out of clipboard history
+
+
 def paste_text(text):
     pb = NSPasteboard.generalPasteboard()
     saved = _snapshot(pb)

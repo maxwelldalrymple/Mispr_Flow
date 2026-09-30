@@ -28,7 +28,7 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 - **Dictate anywhere with `fn`.** Hold for push-to-talk, or double-tap for hands-free.
 - **Local transcription.** whisper.cpp (large-v3-turbo) on the Mac's GPU: about 1.1 s for a 5-6 s clip.
 - **Local cleanup that never invents words.** A small LLM (Gemma-3-4B) removes "um/uh/like", repeated words, and retracted phrases ("Tuesday, no wait, Wednesday" becomes "Wednesday"), and fixes punctuation. A code-level check rejects any output containing a word you didn't say and pastes the raw transcript instead.
-- **Pastes into the focused app,** then restores your clipboard. The pasted text is marked private so clipboard managers ignore it.
+- **Pastes into the focused app,** then restores your clipboard. The pasted text is marked private so clipboard managers ignore it. If nothing you can type into is focused (Finder, the desktop, a page with no text box), it skips the paste, plays the error sound, and leaves the text on your clipboard with a "No text box · Copied to clipboard" notice.
 - **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. It follows the screen you're working on and hides in fullscreen apps.
 - **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
 - **Menu-bar app** with no Dock icon. It captures fn itself so macOS's emoji picker doesn't open.

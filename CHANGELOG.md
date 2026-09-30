@@ -4,6 +4,7 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
+- **No text box, no paste:** if nothing typeable is focused, the text is left on the clipboard with an error sound and a "No text box · Copied to clipboard" notice instead of a ⌘V that goes nowhere. Saved with status `copied`.
 - **Original sound cues** replace the macOS system sounds: start, stop, hands-free lock, cancel, and error, plus paste, notification, alert, success, and achievement cues for the upcoming main window. All synthesized from scratch by `tools/make_sounds.py` (a test checks the shipped WAVs match the generator byte for byte).
 - **Mic name on first dictation:** "Using Built-in mic (recommended)" or "Using <device>" above the widget for 3 s.
 - **App icon** redrawn on the macOS icon grid (`tools/make_icon.py`).

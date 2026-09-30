@@ -161,6 +161,109 @@ class TestFrontmost:
         assert bundle in context.BROWSERS
 
 
+class TextTargetNode:
+    def __init__(self, role=None, editable=False, settable=False, selection=False):
+        self.attrs = {"AXRole": role, "AXEditableAncestor": object() if editable else None,
+                      "AXSelectedTextRange": object() if selection else None}
+        self.settable = settable
+
+
+@pytest.fixture
+def focus(monkeypatch):
+    """Fake the frontmost app's focused element: state["focused"] (or an AX error code)."""
+    state = {"focused": None, "err": 0, "manual": []}
+    app = object()
+
+    def copy_attr(element, name, _):
+        if element is app:
+            if state["err"]:
+                return state["err"], None
+            return (0, state["focused"]) if state["focused"] is not None else (-25212, None)
+        value = element.attrs.get(name)
+        return (0, value) if value is not None else (-25212, None)
+
+    monkeypatch.setattr(context.AS, "AXUIElementCreateApplication", lambda pid: app)
+    monkeypatch.setattr(context.AS, "AXUIElementSetMessagingTimeout", lambda el, t: None)
+    monkeypatch.setattr(context.AS, "AXUIElementSetAttributeValue", lambda el, name, v: state["manual"].append((name, v)))
+    monkeypatch.setattr(context.AS, "AXUIElementCopyAttributeValue", copy_attr)
+    monkeypatch.setattr(context.AS, "AXUIElementIsAttributeSettable",
+                        lambda el, name, _: (0, el.settable) if name == "AXValue" else (-25205, False))
+    return state
+
+
+class TestTextTarget:
+    @pytest.mark.parametrize("role", sorted(context.TEXT_ROLES))
+    def test_text_roles(self, focus, role):
+        focus["focused"] = TextTargetNode(role)
+        assert context.text_target(1) == context.YES
+
+    def test_contenteditable_in_a_browser(self, focus):
+        focus["focused"] = TextTargetNode("AXGroup", editable=True)
+        assert context.text_target(1) == context.YES
+
+    def test_custom_view_with_editable_value_and_caret(self, focus):
+        focus["focused"] = TextTargetNode("AXGroup", settable=True, selection=True)
+        assert context.text_target(1) == context.YES
+
+    @pytest.mark.parametrize("role", ["AXOutline", "AXWebArea", "AXList", "AXButton", "AXWindow"])
+    def test_known_non_text_focus(self, focus, role):
+        focus["focused"] = TextTargetNode(role)
+        assert context.text_target(1) == context.NO
+
+    def test_unfamiliar_role_gets_the_benefit_of_the_doubt(self, focus):
+        focus["focused"] = TextTargetNode("AXGroup")
+        assert context.text_target(1) == context.UNKNOWN
+
+    def test_nothing_focused(self, focus):
+        assert context.text_target(1) == context.NO
+
+    def test_nothing_focused_in_electron_is_unknown(self, focus):
+        assert context.text_target(1, electron=True) == context.UNKNOWN
+
+    @pytest.mark.parametrize("err", [-25204, -25211, -25200])  # cannot complete, API disabled, failure
+    def test_app_that_wont_answer(self, focus, err):
+        focus["err"] = err
+        assert context.text_target(1) == context.UNKNOWN
+
+    def test_asks_electron_apps_to_build_their_tree(self, focus):
+        context.text_target(1)
+        assert focus["manual"] == [("AXManualAccessibility", True)]
+
+    def test_exceptions_mean_unknown(self, focus, monkeypatch):
+        monkeypatch.setattr(context.AS, "AXUIElementCreateApplication", lambda pid: 1 / 0)
+        assert context.text_target(1) == context.UNKNOWN
+
+
+class TestFocusedTextTarget:
+    def test_no_frontmost_app(self, monkeypatch):
+        set_frontmost(monkeypatch, None)
+        assert context.focused_text_target() == context.NO
+
+    @pytest.mark.parametrize("has_framework", [True, False])
+    def test_detects_electron_from_the_bundle(self, monkeypatch, tmp_path, has_framework):
+        bundle = tmp_path / "Some.app"
+        (bundle / "Contents/Frameworks").mkdir(parents=True)
+        if has_framework:
+            (bundle / "Contents/Frameworks/Electron Framework.framework").mkdir()
+
+        class App(FakeApp):
+            def bundleURL(self):
+                return NSURL.fileURLWithPath_(str(bundle))
+
+        set_frontmost(monkeypatch, App())
+        seen = []
+        monkeypatch.setattr(context, "text_target", lambda pid, electron: seen.append((pid, electron)) or "x")
+        assert context.focused_text_target() == "x" and seen == [(42, has_framework)]
+
+
+class TestCopyText:
+    def test_leaves_text_on_clipboard_without_cmd_v(self, board):
+        board, posted = board
+        paste.copy_text("Hi.")
+        assert board.stringForType_(NSPasteboardTypeString) == "Hi." and posted == []
+        assert "org.nspasteboard.ConcealedType" in board.types()
+
+
 # --- paste -------------------------------------------------------------------------
 
 @pytest.fixture

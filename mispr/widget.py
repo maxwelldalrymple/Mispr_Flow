@@ -57,7 +57,7 @@ from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import paste_text
+from .paste import copy_text, paste_text
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -95,6 +95,8 @@ MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
 
 MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation after launch
+COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
+COPIED_NOTICE = "No text box · Copied to clipboard"
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -265,8 +267,8 @@ class WidgetController:
         self.fn_consumed = False  # this fn press already did something; ignore its release
         self.last_tap_at = None  # start time of a recent short fn tap (double-tap detection)
 
-        self.mic_notice = None  # (text, shown_at): which mic is in use, once per launch
-        self.mic_notice_done = False
+        self.notice = None  # (text, shown_at, seconds, states): a pill above the widget
+        self.mic_notice_done = False  # which mic is in use: once per launch
 
     # --- Setup --------------------------------------------------------------
 
@@ -341,7 +343,7 @@ class WidgetController:
             self.mic_notice_done = True
             text = mic_notice_text(*audio.input_device())
             if text:
-                self.mic_notice = (text, time.monotonic())
+                self.show_notice(text, MIC_NOTICE_SECONDS, (HOLD, HANDSFREE))
         # App only (cheap); the browser page is looked up at paste time.
         self.rec_recorded_in = context.frontmost(include_page=False)
 
@@ -411,10 +413,18 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         if text:
             target = context.frontmost()  # where the text is about to land
-            paste_text(text)
-            self.sounds.play(sounds.PASTE)
+            if context.focused_text_target() == context.NO:
+                # ⌘V would do nothing (or paste something odd, like files in Finder).
+                copy_text(text)
+                self.sounds.play(sounds.ERROR)
+                self.show_notice(COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+                status = storage.COPIED
+            else:
+                paste_text(text)
+                self.sounds.play(sounds.PASTE)
+                status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
-            self._save(storage.PASTED, text, pasted_into=target, raw=raw, cleanup=info)
+            self._save(status, text, pasted_into=target, raw=raw, cleanup=info)
         else:
             self.sounds.play(sounds.ALERT)  # recorded, but no words came out: nothing to paste
         self._wipe(reason)
@@ -780,16 +790,20 @@ class WidgetController:
             draw.fill_round(b, 9, white(fill.whiteComponent(), min(1.0, fill.alphaComponent() + (0.08 if lit else 0)) * a))
             draw.draw_text_centered(draw.rich([(name.capitalize(), bold)], 14, fg), b.cx, b.cy)
 
-    def _mic_notice_alpha(self):
-        """Opacity of the mic notice: shown while recording for MIC_NOTICE_SECONDS, fading
-        out over the last 0.4 s."""
-        if self.mic_notice is None or self.state not in (HOLD, HANDSFREE):
+    def show_notice(self, text, seconds, states):
+        """Show `text` in a pill above the widget for `seconds`, only while in `states`."""
+        self.notice = (text, time.monotonic(), seconds, states)
+
+    def _notice_alpha(self):
+        """Opacity of the notice: full while shown, fading out over its last 0.4 s."""
+        if self.notice is None or self.state not in self.notice[3]:
             return 0.0
-        remaining = MIC_NOTICE_SECONDS - (time.monotonic() - self.mic_notice[1])
+        _, shown_at, seconds, _ = self.notice
+        remaining = seconds - (time.monotonic() - shown_at)
         return max(0.0, min(1.0, remaining / 0.4))
 
-    def _draw_mic_notice(self, bg, a):
-        label = draw.rich([(self.mic_notice[0], False)], 13, white(1.0, a))
+    def _draw_notice(self, bg, a):
+        label = draw.rich([(self.notice[0], False)], 13, white(1.0, a))
         sz = label.size()
         box = Rect.centered(bg.cx, bg.top + 8 + 14, sz.width + 32, 28)
         draw.fill_round(box, 14, white(0.0, 0.92 * a))
@@ -797,9 +811,9 @@ class WidgetController:
         draw.draw_text_centered(label, box.cx, box.cy)
 
     def _draw_tooltip(self, bg):
-        notice_a = self._mic_notice_alpha()
+        notice_a = self._notice_alpha()
         if notice_a > 0.01:
-            self._draw_mic_notice(bg, notice_a)  # takes the tooltip's spot while visible
+            self._draw_notice(bg, notice_a)  # takes the tooltip's spot while visible
             return
         if self.tip is None or self.tip_a < 0.01:
             return

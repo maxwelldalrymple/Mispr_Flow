@@ -808,6 +808,30 @@ class TestSoundCues:
         controller._on_transcribed("Hello there.", "hello there", None, 1.0, "finished")
         assert controller.pasted == ["Hello there."] and controller.sounds.played == ["start", "stop", "paste"]
 
+    @pytest.mark.parametrize("target", ["yes", "unknown"])
+    def test_pastes_unless_sure_there_is_no_text_box(self, controller, monkeypatch, target):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: target)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and controller.copied == [] and controller.sounds.played[-1] == "paste"
+
+    def test_no_text_box_copies_instead_with_error_sound(self, controller, monkeypatch, clock):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: W.context.NO)
+        saved = []
+        monkeypatch.setattr(controller, "_save", lambda status, text, **kw: saved.append((status, text)))
+        controller.begin_handsfree()
+        clock.advance(10)  # the first-dictation mic notice is long gone
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == [] and controller.copied == ["Hi."]
+        assert controller.sounds.played == ["start", "stop", "error"]
+        assert saved == [(W.storage.COPIED, "Hi.")]
+        assert controller.state == W.IDLE and controller.notice[0] == "No text box · Copied to clipboard"
+        assert controller._notice_alpha() == 1.0
+        clock.advance(4.0)
+        assert controller._notice_alpha() == 0.0
+
     def test_alert_when_nothing_was_heard(self, controller):
         controller.begin_handsfree()
         controller.finish()
@@ -1291,39 +1315,39 @@ class TestMicNotice:
 
     def test_shown_on_first_dictation_only(self, controller, clock):
         controller.fn_down()
-        assert controller.mic_notice == ("Using Built-in mic (recommended)", clock.now)
+        assert controller.notice == ("Using Built-in mic (recommended)", clock.now, 3.0, (W.HOLD, W.HANDSFREE))
         clock.advance(1)
         controller.fn_up()
         clock.advance(10)
         controller.state = W.IDLE
-        first = controller.mic_notice
+        first = controller.notice
         controller.fn_down()
-        assert controller.mic_notice == first  # not re-armed for the second dictation
+        assert controller.notice == first  # not re-armed for the second dictation
 
     def test_also_on_first_handsfree_or_mouse_recording(self, controller, clock):
         controller.begin_handsfree()
-        assert controller.mic_notice is not None
+        assert controller.notice is not None
 
     def test_skipped_when_there_is_no_mic_name(self, controller, monkeypatch):
         monkeypatch.setattr(W.audio, "input_device", lambda: (None, False))
         controller.begin_hold("fn")
-        assert controller.mic_notice is None
+        assert controller.notice is None
 
     @pytest.mark.parametrize("elapsed,alpha", [(0.0, 1.0), (2.6, 1.0), (2.8, 0.5), (3.0, 0.0), (9.0, 0.0)])
     def test_visible_for_three_seconds_then_fades(self, controller, clock, elapsed, alpha):
         controller.begin_hold("fn")
         clock.advance(elapsed)
-        assert controller._mic_notice_alpha() == pytest.approx(alpha)
+        assert controller._notice_alpha() == pytest.approx(alpha)
 
     @pytest.mark.parametrize("state", [W.IDLE, W.HOVER, W.PROCESSING, W.CANCELLED, W.MEETING])
     def test_only_while_recording(self, controller, state):
         controller.begin_hold("fn")
         controller.state = state
-        assert controller._mic_notice_alpha() == 0.0
+        assert controller._notice_alpha() == 0.0
 
     def test_takes_priority_over_tooltips(self, controller, bitmap_context, monkeypatch):
         drawn = []
-        monkeypatch.setattr(controller, "_draw_mic_notice", lambda bg, a: drawn.append(a))
+        monkeypatch.setattr(controller, "_draw_notice", lambda bg, a: drawn.append(a))
         controller.begin_handsfree()
         controller.tip, controller.tip_a = (W.TOOLTIPS[(W.HANDSFREE, "wave")], W.layout(W.HANDSFREE).elems["wave"]), 1.0
         controller._draw_tooltip(W.layout(W.HANDSFREE).bg.rect)
@@ -1335,3 +1359,10 @@ def test_mic_notice_matches_golden_image(controller, clock, golden_image):
     _prepare_render(controller, W.HOLD)
     pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
     golden_image("widget_hold_mic_notice", pixels, rep)
+
+
+def test_copied_notice_matches_golden_image(controller, clock, golden_image):
+    controller.show_notice(W.COPIED_NOTICE, W.COPIED_NOTICE_SECONDS, (W.IDLE, W.HOVER))
+    _prepare_render(controller, W.IDLE)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_idle_copied_notice", pixels, rep)
