@@ -51,7 +51,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import draw, settings, sounds, storage
+from . import context, draw, settings, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .models import DEFAULT_MODEL
@@ -235,7 +235,8 @@ class WidgetController:
         self.settings = settings.load()
         self.recorder = Recorder()
         self.transcriber = Transcriber()
-        self.rec_context = None  # (started_at, app name, bundle id) of the current recording
+        self.rec_started_at = self.rec_ended_at = None
+        self.rec_recorded_in = None  # context.frontmost() when the recording started
         self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
 
@@ -308,20 +309,27 @@ class WidgetController:
             self._wipe("cancelled (superseded)")
 
     def _note_context(self):
-        self.rec_context = (datetime.now(), *storage.frontmost_app())
+        self.rec_started_at, self.rec_ended_at = datetime.now(), None
+        # App only (cheap); the browser page is looked up at paste time.
+        self.rec_recorded_in = context.frontmost(include_page=False)
 
-    def _save(self, status, text):
+    def _stop_recording(self):
+        self.recorder.stop()
+        self.rec_ended_at = datetime.now()
+
+    def _save(self, status, text, pasted_into=None):
         """Keep the recording on disk unless Incognito is on. Never breaks dictation."""
-        if self.settings.incognito or self.rec_context is None:
+        if self.settings.incognito or self.rec_started_at is None:
             return
         audio = self.recorder.audio()
         if len(audio) < 0.3 * storage.SAMPLE_RATE:
             return
-        started_at, app_name, bundle_id = self.rec_context
         try:
             path = storage.save_recording(
-                audio, status=status, transcript=text, started_at=started_at,
-                app_name=app_name, bundle_id=bundle_id, model=DEFAULT_MODEL.filename,
+                audio, status=status, transcript=text,
+                started_at=self.rec_started_at, ended_at=self.rec_ended_at or datetime.now(),
+                recorded_in=self.rec_recorded_in or {}, pasted_into=pasted_into,
+                model=DEFAULT_MODEL.filename,
             )
             log(f"saved {status} recording -> {path.parent.name}/{path.name}")
         except OSError as e:
@@ -350,7 +358,7 @@ class WidgetController:
         log(f"{reason}: {secs:.2f}s captured, peak {peak:.3f}, wiped={'ok' if ok else 'FAILED'}")
 
     def finish(self):
-        self.recorder.stop()
+        self._stop_recording()
         self.sounds.play(sounds.STOP)
         self._process("finished")
 
@@ -361,18 +369,18 @@ class WidgetController:
         )
 
     def _on_transcribed(self, text, secs, reason):
-        # The worker is done with the audio view: save it (unless Incognito), then wipe memory.
-        if text:
-            self._save(storage.PASTED, text)
-        self._wipe(reason)
         log(f"transcribed in {secs:.2f}s -> {len(text)} chars")
         if text:
+            target = context.frontmost()  # where the text is about to land
             paste_text(text)
+            # The worker is done with the audio view: save it (unless Incognito), then wipe.
+            self._save(storage.PASTED, text, pasted_into=target)
+        self._wipe(reason)
         self.to_idle()
 
     def cancel(self):
         """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
-        self.recorder.stop()
+        self._stop_recording()
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
         self.after(TOAST_SECONDS, self._expire_cancel)

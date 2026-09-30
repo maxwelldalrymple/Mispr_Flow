@@ -109,7 +109,8 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Recording Storage
 
-- **Default:** every finished or cancelled dictation is saved to `~/Documents/voice-recordings/YYYY-MM-DD/` as `HHMMSS-<id>.wav` (16 kHz mono PCM) plus `HHMMSS-<id>.json` (time, duration, status `pasted`/`cancelled`, transcript, word count, target app, model). This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
+- **Default:** every finished or cancelled dictation is saved to `~/Documents/voice-recordings/YYYY-MM-DD/`, named by its start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) plus `2026-09-30_12-28-33-123.json`. The JSON holds `started_at`/`ended_at` (ms precision), duration, status (`pasted`/`cancelled`), transcript, word count, `recorded_in` (app), `pasted_into` (app, bundle id, and for browsers the page `url` and `page_title`), and the model. This feeds the future history and stats UI (and a "Recover" action for cancelled clips).
+- **Browser page lookup:** via the Accessibility API (walk up from the focused element to the outermost `AXWebArea` and read `AXURL`, falling back to the window's `AXDocument`), so no per-browser Automation prompts. ~50 ms in Chrome; 0.3 s timeout.
 - **Incognito toggle (future settings UI):** `incognito` in `~/Library/Application Support/WhisprClone/settings.json`. When on, nothing is written; audio is wiped from RAM immediately.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, and silent clips.
 - **Possible upgrade:** encrypt recordings at rest with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).

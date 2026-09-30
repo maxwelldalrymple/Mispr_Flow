@@ -1,19 +1,18 @@
 """Saving recordings locally (when Incognito is off) for history and usage stats.
 
-Each recording becomes two files in ~/Documents/voice-recordings/YYYY-MM-DD/:
-    HHMMSS-<id>.wav   16 kHz mono 16-bit PCM
-    HHMMSS-<id>.json  metadata: time, duration, status, transcript, word count, target app
+Each recording becomes two files in ~/Documents/voice-recordings/YYYY-MM-DD/, named by
+the recording's start time down to the millisecond:
+    2026-09-30_12-28-33-123.wav   16 kHz mono 16-bit PCM
+    2026-09-30_12-28-33-123.json  metadata: times, duration, status, transcript, words,
+                                  app recorded in, app (and browser page) pasted into
 Nothing here is ever uploaded.
 """
 
 import json
-import uuid
 import wave
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from AppKit import NSWorkspace
 
 RECORDINGS_DIR = Path.home() / "Documents" / "voice-recordings"
 SAMPLE_RATE = 16_000
@@ -23,12 +22,19 @@ PASTED = "pasted"
 CANCELLED = "cancelled"
 
 
-def save_recording(audio, *, status, transcript, started_at, app_name, bundle_id, model):
-    """Write the audio and its metadata; returns the .wav path. `audio` is float32 in [-1, 1]."""
-    day_dir = RECORDINGS_DIR / started_at.strftime("%Y-%m-%d")
+def _stem(t):
+    return f"{t:%Y-%m-%d_%H-%M-%S}-{t.microsecond // 1000:03d}"
+
+
+def save_recording(audio, *, status, transcript, started_at, ended_at, recorded_in, pasted_into, model):
+    """Write the audio and its metadata; returns the .wav path. `audio` is float32 in [-1, 1].
+
+    `recorded_in` / `pasted_into` are context dicts (app, bundle_id, url, page_title);
+    `pasted_into` is None for recordings that were never pasted.
+    """
+    day_dir = RECORDINGS_DIR / f"{started_at:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
-    rec_id = uuid.uuid4().hex[:8]
-    stem = f"{started_at.strftime('%H%M%S')}-{rec_id}"
+    stem = _stem(started_at)
     wav_path = day_dir / f"{stem}.wav"
 
     pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
@@ -39,24 +45,17 @@ def save_recording(audio, *, status, transcript, started_at, app_name, bundle_id
         w.writeframes(pcm.tobytes())
 
     meta = {
-        "id": rec_id,
-        "created_at": started_at.astimezone().isoformat(timespec="seconds"),
-        "duration_s": round(len(audio) / SAMPLE_RATE, 2),
+        "id": stem,
+        "started_at": started_at.astimezone().isoformat(timespec="milliseconds"),
+        "ended_at": ended_at.astimezone().isoformat(timespec="milliseconds"),
+        "duration_s": round(len(audio) / SAMPLE_RATE, 3),
         "status": status,
         "transcript": transcript,
         "words": len(transcript.split()),
-        "app": app_name,
-        "bundle_id": bundle_id,
+        "recorded_in": {k: recorded_in.get(k) for k in ("app", "bundle_id")},
+        "pasted_into": pasted_into,
         "model": model,
         "audio_file": wav_path.name,
     }
     (day_dir / f"{stem}.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     return wav_path
-
-
-def frontmost_app():
-    """(name, bundle id) of the app being dictated into."""
-    app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    if app is None:
-        return None, None
-    return app.localizedName(), app.bundleIdentifier()
