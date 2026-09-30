@@ -3,8 +3,8 @@ import subprocess
 import pytest
 import Quartz
 
-from mhispr import hotkey
-from mhispr.hotkey import FN_MASK, GLOBE_KEYCODE, FnMonitor
+from mispr import hotkey
+from mispr.hotkey import FN_MASK, GLOBE_KEYCODE, FnMonitor
 
 FLAGS_CHANGED, KEY_DOWN, KEY_UP = Quartz.kCGEventFlagsChanged, Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp
 CMD = Quartz.kCGEventFlagMaskCommand

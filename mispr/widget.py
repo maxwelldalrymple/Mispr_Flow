@@ -97,11 +97,11 @@ SCREEN_POLL_SECONDS = 0.5
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
 
-DEBUG = os.environ.get("MHISPR_DEBUG") == "1"
+DEBUG = os.environ.get("MISPR_DEBUG") == "1"
 
 
 def log(msg):
-    """Debug trace (MHISPR_DEBUG=1). Never logs audio content, only timings and stats."""
+    """Debug trace (MISPR_DEBUG=1). Never logs audio content, only timings and stats."""
     if DEBUG:
         now = time.time()
         print(f"[{time.strftime('%H:%M:%S', time.localtime(now))}.{int(now % 1 * 1000):03d}] {msg}", file=sys.stderr, flush=True)
@@ -347,7 +347,7 @@ class WidgetController:
             )
             log(f"saved {status} recording -> {path.parent.name}/{path.name}")
         except OSError as e:
-            print(f"mhispr: could not save recording: {e}", file=sys.stderr)
+            print(f"mispr: could not save recording: {e}", file=sys.stderr)
 
     def begin_hold(self, source):
         self._drop_cancelled()
@@ -440,7 +440,7 @@ class WidgetController:
 
     def _setup_failed(self, message):
         log(f"setup: failed ({message})")
-        print(f"mhispr: model download failed: {message}", file=sys.stderr)
+        print(f"mispr: model download failed: {message}", file=sys.stderr)
         self.setup_error = message
 
     def _retry_setup(self):

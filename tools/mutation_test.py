@@ -181,7 +181,7 @@ class Replacer(ast.NodeTransformer):
 
 
 def mutants_for(module):
-    path = ROOT / "mhispr" / f"{module}.py"
+    path = ROOT / "mispr" / f"{module}.py"
     src = path.read_text()
     lines = src.splitlines()
     collector = Collector()
@@ -216,7 +216,7 @@ def _changed_line(a, b):
 
 def _make_worktree(base):
     d = Path(tempfile.mkdtemp(prefix="mut-", dir=base))
-    for name in ("mhispr", "tests"):
+    for name in ("mispr", "tests"):
         shutil.copytree(ROOT / name, d / name, ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copy(ROOT / "pyproject.toml", d / "pyproject.toml")
     return d
@@ -224,8 +224,8 @@ def _make_worktree(base):
 
 def run_mutant(worktrees, m):
     wt = worktrees.get()
-    target = wt / "mhispr" / f"{m.module}.py"
-    original = (ROOT / "mhispr" / f"{m.module}.py").read_text()
+    target = wt / "mispr" / f"{m.module}.py"
+    original = (ROOT / "mispr" / f"{m.module}.py").read_text()
     try:
         target.write_text(m.source)
         cmd = [sys.executable, "-m", "pytest", "-o", "addopts=", "-q", "-x", "-p", "no:randomly",
@@ -267,7 +267,7 @@ def write_report(log, results, secs, modules):
     with open(raw, "a") as f:
         f.write(f"\n{'=' * 100}\nMUTATION TESTING — every mutant\n{'=' * 100}\n")
         for m, killed, how in results:
-            f.write(f"{how:<17} mhispr/{m.module}.py:{m.line:<4} [{m.kind}]  {m.before}  -->  {m.after}\n")
+            f.write(f"{how:<17} mispr/{m.module}.py:{m.line:<4} [{m.kind}]  {m.before}  -->  {m.after}\n")
     with open(log, "a") as f:
         total = len(results)
         killed = sum(k for _, k, _ in results)
@@ -283,7 +283,7 @@ def write_report(log, results, secs, modules):
         if survivors:
             f.write("\n**Surviving mutants** (a planted bug no test caught):\n\n| Location | Kind | Original | Mutated |\n|---|---|---|---|\n")
             for m in survivors:
-                f.write(f"| `mhispr/{m.module}.py:{m.line}` | {m.kind} | `{m.before.replace('|', '\\|')}` | `{m.after.replace('|', '\\|')}` |\n")
+                f.write(f"| `mispr/{m.module}.py:{m.line}` | {m.kind} | `{m.before.replace('|', '\\|')}` | `{m.after.replace('|', '\\|')}` |\n")
         f.write("\n")
 
 

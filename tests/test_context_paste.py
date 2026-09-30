@@ -2,7 +2,7 @@ import pytest
 import Quartz
 from AppKit import NSData, NSPasteboard, NSPasteboardTypeString, NSURL
 
-from mhispr import context, paste
+from mispr import context, paste
 
 
 # --- context -----------------------------------------------------------------------

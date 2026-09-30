@@ -22,7 +22,8 @@ from PyObjCTools import AppHelper
 from . import hotkey
 from .widget import Ticker, WidgetController
 
-APP_NAME = "Mhispr_Flow"
+APP_NAME = "Mispr Flow"  # shown to the user
+APP_ID = "Mispr_Flow"  # used in file names
 ASSETS = Path(__file__).resolve().parent / "assets"
 
 
@@ -59,7 +60,7 @@ def _status_item():
 _keepalive = []  # strong references for the lifetime of the app
 
 
-LOCK_PATH = Path(tempfile.gettempdir()) / f"{APP_NAME}.lock"
+LOCK_PATH = Path(tempfile.gettempdir()) / f"{APP_ID}.lock"
 
 
 def _single_instance_lock(path=LOCK_PATH):
@@ -69,7 +70,7 @@ def _single_instance_lock(path=LOCK_PATH):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close()
-        print("mhispr: already running", file=sys.stderr)
+        print("mispr: already running", file=sys.stderr)
         sys.exit(1)
     return lock  # the lock is held until the process exits
 
@@ -116,21 +117,21 @@ def main():
         hotkey.request_input_monitoring()
     if not fn.start():
         print(
-            "mhispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
+            "mispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
             " Input Monitoring, then restart. Clicking the widget still works.",
             file=sys.stderr,
         )
     elif not fn.active:
         if not hotkey.fn_key_does_nothing():
             print(
-                "mhispr: fn works, but macOS will also open the emoji picker until this app is allowed"
+                "mispr: fn works, but macOS will also open the emoji picker until this app is allowed"
                 " in System Settings > Privacy & Security > Accessibility (no restart needed).",
                 file=sys.stderr,
             )
         # Swap to swallowing fn as soon as Accessibility is granted.
         def try_upgrade():
             if fn.upgrade():
-                print("mhispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
+                print("mispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
                 upgrade_timer.invalidate()
 
         ticker = Ticker.alloc().init()
