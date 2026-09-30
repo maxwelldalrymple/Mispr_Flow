@@ -19,11 +19,11 @@ This project reproduces the same workflow entirely on-device, and treats capture
 
 ## Privacy Principles
 
-- **Local-only processing.** No audio or transcript is sent over the network. The app should work with networking disabled.
-- **Audio never touches disk.** Recordings live only in RAM. This matters because on SSDs and APFS, overwriting a file "in place" does not guarantee the original blocks are destroyed: copy-on-write, wear leveling, and snapshots can all leave the old data physically recoverable. Keeping audio in memory avoids that problem entirely.
-- **Explicit zeroization.** Once transcription completes, the audio buffer is overwritten with zeros before it is released, and where possible it is locked in memory so it cannot be paged out to swap.
-- **Minimal retention.** Transcripts are not logged or stored unless the user explicitly opts in.
-- **Clipboard hygiene.** If the clipboard is used to paste, its previous contents are restored afterward so dictated text does not linger.
+- **Local-only processing.** No audio or transcript is sent over the network. The app works with networking disabled (after the one-time model download).
+- **Local-only storage, by default.** Recordings and their transcripts are saved to `voice-recordings/` in the project folder (Application Support once packaged) so the app can show history and usage stats. They never leave the machine.
+- **Incognito mode.** When on, audio never touches disk: it lives only in locked RAM and is zeroed right after transcription. This is the only mode that guarantees a recording is unrecoverable, because on SSDs and APFS, deleting or overwriting a saved file does not reliably destroy the original blocks (copy-on-write, wear leveling, snapshots).
+- **Explicit zeroization.** In every mode, the in-memory audio buffer is locked so it cannot be paged out to swap, and zeroed once it has been used.
+- **Clipboard hygiene.** Pasted text is marked transient/concealed so clipboard managers skip it, and the previous clipboard is restored afterward.
 
 ## Target Platform
 

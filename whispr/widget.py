@@ -12,13 +12,14 @@ States (see README / PLAN for the full behaviour):
     MISTAKE     "Started by mistake?" card (Discard / Keep)
 
 Dictation is driven by the `fn` key (hold = push-to-talk, double-tap within 1 s =
-hands-free, press again to finish) or by clicking the widget. The waveform shows the
-live microphone level. Transcription/paste after PROCESSING and the meeting notetaker
-are still stubs; the meeting pill uses a simulated waveform.
+hands-free; then space/return pastes and fn/delete cancels) or by clicking the widget. The waveform shows the
+live microphone level. PROCESSING transcribes locally with whisper.cpp and pastes into
+the focused app. The meeting notetaker is still a stub with a simulated waveform.
 """
 
 import math
 import os
+from datetime import datetime
 import random
 import sys
 import time
@@ -50,9 +51,12 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import draw, sounds
+from . import context, draw, settings, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
+from .models import DEFAULT_MODEL
+from .paste import paste_text
+from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -80,8 +84,9 @@ DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands
 
 # Hands-free keyboard shortcuts (macOS virtual keycodes).
 KEY_SPACE = 49  # finish and paste
+KEY_RETURN = 36  # finish and paste
+KEY_KEYPAD_ENTER = 76  # finish and paste
 KEY_DELETE = 51  # cancel
-PROCESSING_STUB_SECONDS = 1.2
 TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
@@ -171,7 +176,7 @@ TOOLTIPS = {
     (HOVER, "note"): [("New note ", False), ("⌥M", True)],
     (HANDSFREE, "cancel"): [("Cancel", False)],
     (HANDSFREE, "finish"): [("Finish and paste", False)],
-    (HANDSFREE, "wave"): [("Press ", False), ("fn", True), (" to finish and paste", False)],
+    (HANDSFREE, "wave"): [("space", True), (" to paste · ", False), ("fn", True), (" to cancel", False)],
 }
 
 
@@ -227,7 +232,11 @@ class WidgetController:
         self.tip = None  # (parts, anchor Rect) — kept while fading out
         self.bar_levels = {11: [0.0] * 11, 5: [0.0] * 5}
 
+        self.settings = settings.load()
         self.recorder = Recorder()
+        self.transcriber = Transcriber()
+        self.rec_started_at = self.rec_ended_at = None
+        self.rec_recorded_in = None  # context.frontmost() when the recording started
         self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
 
@@ -265,6 +274,7 @@ class WidgetController:
         self._poll_screen(force=True)
         p.orderFrontRegardless()
         self.recorder.prepare()
+        self.transcriber.load_async()
 
         self.ticker = Ticker.alloc().init()
         self.ticker.callback = self.tick
@@ -295,12 +305,41 @@ class WidgetController:
     def _drop_cancelled(self):
         # A new recording replaces one still waiting in the Undo toast.
         if self.state == CANCELLED:
+            self._save(storage.CANCELLED, "")
             self._wipe("cancelled (superseded)")
+
+    def _note_context(self):
+        self.rec_started_at, self.rec_ended_at = datetime.now(), None
+        # App only (cheap); the browser page is looked up at paste time.
+        self.rec_recorded_in = context.frontmost(include_page=False)
+
+    def _stop_recording(self):
+        self.recorder.stop()
+        self.rec_ended_at = datetime.now()
+
+    def _save(self, status, text, pasted_into=None):
+        """Keep the recording on disk unless Incognito is on. Never breaks dictation."""
+        if self.settings.incognito or self.rec_started_at is None:
+            return
+        audio = self.recorder.audio()
+        if len(audio) < 0.3 * storage.SAMPLE_RATE:
+            return
+        try:
+            path = storage.save_recording(
+                audio, status=status, transcript=text,
+                started_at=self.rec_started_at, ended_at=self.rec_ended_at or datetime.now(),
+                recorded_in=self.rec_recorded_in or {}, pasted_into=pasted_into,
+                model=DEFAULT_MODEL.filename,
+            )
+            log(f"saved {status} recording -> {path.parent.name}/{path.name}")
+        except OSError as e:
+            print(f"whispr: could not save recording: {e}", file=sys.stderr)
 
     def begin_hold(self, source):
         self._drop_cancelled()
         if not self.recorder.start():
             return
+        self._note_context()
         self.sounds.play(sounds.START)
         self.hold_source = source
         self.set_state(HOLD)
@@ -309,6 +348,7 @@ class WidgetController:
         self._drop_cancelled()
         if not self.recorder.start():
             return
+        self._note_context()
         if sound:
             self.sounds.play(sounds.START)
         self.set_state(HANDSFREE)
@@ -318,24 +358,35 @@ class WidgetController:
         log(f"{reason}: {secs:.2f}s captured, peak {peak:.3f}, wiped={'ok' if ok else 'FAILED'}")
 
     def finish(self):
-        self.recorder.stop()
+        self._stop_recording()
         self.sounds.play(sounds.STOP)
         self._process("finished")
 
     def _process(self, reason):
         self.set_state(PROCESSING)
-        # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
+        self.transcriber.transcribe_async(
+            self.recorder.audio(), lambda text, secs: self._on_transcribed(text, secs, reason)
+        )
+
+    def _on_transcribed(self, text, secs, reason):
+        log(f"transcribed in {secs:.2f}s -> {len(text)} chars")
+        if text:
+            target = context.frontmost()  # where the text is about to land
+            paste_text(text)
+            # The worker is done with the audio view: save it (unless Incognito), then wipe.
+            self._save(storage.PASTED, text, pasted_into=target)
         self._wipe(reason)
-        self.after(PROCESSING_STUB_SECONDS, self.to_idle)
+        self.to_idle()
 
     def cancel(self):
         """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
-        self.recorder.stop()
+        self._stop_recording()
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
         self.after(TOAST_SECONDS, self._expire_cancel)
 
     def _expire_cancel(self):
+        self._save(storage.CANCELLED, "")
         self._wipe("cancelled")
         self.to_idle()
 
@@ -355,7 +406,7 @@ class WidgetController:
         log(f"fn down (state {self.state})")
         self.fn_consumed = True
         if self.state == HANDSFREE:
-            self.finish()
+            self.cancel()
         elif self.state not in (IDLE, HOVER, CANCELLED):
             pass  # busy (processing, meeting, card): ignore fn
         elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
@@ -382,12 +433,14 @@ class WidgetController:
     def handle_key(self, keycode):
         """Called from inside the event tap: decide fast, act on the next run-loop pass.
 
-        Hands-free: space = finish and paste, delete = cancel.
+        Hands-free: space / return / enter = finish and paste, delete = cancel.
         Cancelled toast: delete = discard now (skip the Undo countdown).
         """
         state = self.state
         action = {
             (HANDSFREE, KEY_SPACE): self.finish,
+            (HANDSFREE, KEY_RETURN): self.finish,
+            (HANDSFREE, KEY_KEYPAD_ENTER): self.finish,
             (HANDSFREE, KEY_DELETE): self.cancel,
             (CANCELLED, KEY_DELETE): self._expire_cancel,
         }.get((state, keycode))
