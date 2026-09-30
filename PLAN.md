@@ -43,7 +43,7 @@
 5. ✅ Paste into the focused app, with clipboard restore.
 6. ✅ LLM cleanup (Gemma-3-4B-it Q4_K_M via llama.cpp, ~550 ms) with a zero-invented-words guard, plus a mandatory first-run model setup step.
 7. Meeting notetaker: system audio capture, diarization, summary to `meeting-recordings/` (in the project folder).
-8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
+8. Package as an unsigned `.app` (py2app) inside a `.pkg` installer whose postinstall downloads and verifies the models; first-launch setup remains the fallback. Built by one script.
 
 ## Floating Widget
 
@@ -78,11 +78,12 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Distribution
 
-- **Format:** DMG built from a py2app bundle, so others can download and install it.
+- **Format:** an unsigned `.pkg` installer (optionally wrapped in a DMG for download), built from a py2app bundle. Apple Silicon (M1+) only.
+- **Models are mandatory at install:** the `.pkg` postinstall script downloads Whisper large-v3-turbo q5 (~0.57 GB) and Gemma-3-4B-it Q4_K_M (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/WhisprClone/models` (system-wide, since installer scripts run as root). Installer.app only shows an indeterminate "Running package scripts" bar during this step.
+- **Startup is the safety net:** on every launch the app checks both `/Library/...` and `~/Library/Application Support/WhisprClone/models`. If anything is missing or fails verification (offline install, failed download, deleted file), the mandatory setup screen downloads it with real progress, and dictation stays locked until done.
 - **Signing:** unsigned for now. Users must allow it via System Settings > Privacy & Security > Open Anyway. Revisit a Developer ID and notarization before any wide release.
 - **Permissions caveat:** macOS ties Microphone, Accessibility, and Input Monitoring grants to the app's signature, so unsigned updates may require re-granting them. Ad-hoc sign with a consistent identifier to reduce this.
-- **Models:** downloaded on first launch (not bundled) to keep the DMG small.
-- **Timing:** after dictation works end to end (fn, record, transcribe, paste).
+- **Licensing:** ship Gemma's Terms of Use / notice (models are downloaded from `ggml-org/gemma-3-4b-it-GGUF` at install, not bundled).
 
 ## fn Gestures
 
