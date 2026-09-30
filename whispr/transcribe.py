@@ -63,16 +63,19 @@ class Transcriber:
         finally:
             self._ready.set()
 
-    def transcribe_async(self, audio, on_done):
-        """Transcribe on a worker thread; `on_done(text, seconds)` runs on the main thread.
+    def transcribe_async(self, audio, on_done, post=None):
+        """Transcribe on a worker thread; `on_done(text, raw, info, seconds)` runs on the main thread.
 
-        `audio` must stay untouched until on_done fires (it is a view of the live buffer).
+        `post(raw) -> (text, info)` optionally refines the transcript on the same worker
+        (LLM cleanup). `audio` must stay untouched until on_done fires (it is a view of the
+        live buffer).
         """
 
         def work():
             started = time.monotonic()
-            text = self._transcribe(audio)
-            AppHelper.callAfter(on_done, text, time.monotonic() - started)
+            raw = self._transcribe(audio)
+            text, info = post(raw) if (post and raw) else (raw, None)
+            AppHelper.callAfter(on_done, text, raw, info, time.monotonic() - started)
 
         threading.Thread(target=work, name="whisper-run", daemon=True).start()
 

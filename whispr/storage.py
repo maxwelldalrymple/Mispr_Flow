@@ -3,8 +3,9 @@
 Each recording becomes two files in <project>/voice-recordings/YYYY-MM-DD/, named by
 the recording's start time down to the millisecond:
     2026-09-30_12-28-33-123.wav   16 kHz mono 16-bit PCM
-    2026-09-30_12-28-33-123.json  metadata: times, duration, status, transcript, words,
-                                  app recorded in, app (and browser page) pasted into
+    2026-09-30_12-28-33-123.json  metadata: times, duration, status, transcript (raw and
+                                  cleaned), words, app recorded in, app (and browser page)
+                                  pasted into, models used
 Nothing here is ever uploaded.
 """
 
@@ -36,11 +37,13 @@ def _stem(t):
     return f"{t:%Y-%m-%d_%H-%M-%S}-{t.microsecond // 1000:03d}"
 
 
-def save_recording(audio, *, status, transcript, started_at, ended_at, recorded_in, pasted_into, model):
+def save_recording(audio, *, status, transcript, started_at, ended_at, recorded_in, pasted_into, model,
+                   raw_transcript=None, cleanup=None):
     """Write the audio and its metadata; returns the .wav path. `audio` is float32 in [-1, 1].
 
     `recorded_in` / `pasted_into` are context dicts (app, bundle_id, url, page_title);
-    `pasted_into` is None for recordings that were never pasted.
+    `pasted_into` is None for recordings that were never pasted. `transcript` is the text that
+    was pasted; `raw_transcript` is Whisper's output before LLM `cleanup` (info dict or None).
     """
     day_dir = RECORDINGS_DIR / f"{started_at:%Y-%m-%d}"
     day_dir.mkdir(parents=True, exist_ok=True)
@@ -61,10 +64,12 @@ def save_recording(audio, *, status, transcript, started_at, ended_at, recorded_
         "duration_s": round(len(audio) / SAMPLE_RATE, 3),
         "status": status,
         "transcript": transcript,
+        "raw_transcript": raw_transcript if raw_transcript is not None else transcript,
         "words": len(transcript.split()),
         "recorded_in": {k: recorded_in.get(k) for k in ("app", "bundle_id")},
         "pasted_into": pasted_into,
         "model": model,
+        "cleanup": cleanup,
         "audio_file": wav_path.name,
     }
     (day_dir / f"{stem}.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))

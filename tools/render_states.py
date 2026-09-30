@@ -10,6 +10,7 @@ states = [
     (W.IDLE, None), (W.HOVER, "mic"), (W.HOVER, "note"), (W.HOLD, None),
     (W.HANDSFREE, "cancel"), (W.HANDSFREE, "finish"), (W.HANDSFREE, "wave"),
     (W.PROCESSING, None), (W.CANCELLED, None), (W.MEETING, None), (W.MISTAKE, "keep"),
+    (W.SETUP, None), (W.SETUP, "retry"),
 ]
 out = sys.argv[1]
 SC = 2
@@ -20,6 +21,8 @@ for i, (st, hov) in enumerate(states):
     c.shape = W.layout(st).bg.values()
     c.content_a = 1.0
     c.hovered = hov
+    c.setup_progress = 0.42
+    c.setup_error = "network unreachable" if (st == W.SETUP and hov == "retry") else None
     tip = W.TOOLTIPS.get((st, hov))
     if tip:
         c.tip = (tip, W.layout(st).elems[hov]); c.tip_a = 1.0

@@ -5,3 +5,4 @@ pyobjc-framework-ApplicationServices
 sounddevice
 numpy
 pywhispercpp
+llama-cpp-python
