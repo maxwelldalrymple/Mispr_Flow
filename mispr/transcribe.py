@@ -61,7 +61,7 @@ class Transcriber:
             self._model = model
         except Exception as e:
             self.error = e
-            print(f"mhispr: speech model unavailable: {e}", file=sys.stderr)
+            print(f"mispr: speech model unavailable: {e}", file=sys.stderr)
         finally:
             self._ready.set()
 

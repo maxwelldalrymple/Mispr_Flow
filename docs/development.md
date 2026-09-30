@@ -11,17 +11,17 @@ Follow [getting-started.md](getting-started.md), then add the test tools:
 ## Running
 
 ```bash
-MHISPR_DEBUG=1 .venv/bin/python -m mhispr
+MISPR_DEBUG=1 .venv/bin/python -m mispr
 ```
 
-Restart after code changes: Python modules and the models load once at startup. Stop with `kill $(pgrep -f "m mhispr")` (SIGTERM runs the clean shutdown).
+Restart after code changes: Python modules and the models load once at startup. Stop with `kill $(pgrep -f "m mispr")` (SIGTERM runs the clean shutdown).
 
 ## Tests
 
 ```bash
 .venv/bin/python -m pytest                                    # all unit tests (~8 s)
 .venv/bin/python -m pytest tests/test_audio.py                # just what you changed
-MHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py   # real models + mic
+MISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py   # real models + mic
 ```
 
 Run the test file that covers the module you changed. Run the full suite when a change is cross-cutting (renames, `conftest.py`, shared helpers) or before merging.
@@ -83,6 +83,6 @@ Save reports in `logs/` as `YYYY-MM-DD_HH-MM-SS_<topic>.md`.
 ## Changing models
 
 1. Get the file's size and SHA-256 from the Hugging Face API: `https://huggingface.co/api/models/<repo>/tree/main` (`size`, `lfs.oid`).
-2. Add a `ModelSpec` in `mhispr/models.py` and point `DEFAULT_MODEL` or `CLEANUP_MODEL` at it.
+2. Add a `ModelSpec` in `mispr/models.py` and point `DEFAULT_MODEL` or `CLEANUP_MODEL` at it.
 3. For cleanup models, run `tools/eval_cleanup.py` and require **0 invented words**.
 4. Update `test_configured_models` and the integration checksum test.

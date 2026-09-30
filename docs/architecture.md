@@ -1,6 +1,6 @@
 # Architecture
 
-How Mhispr_Flow turns a press of fn into pasted text. For decisions and roadmap, see [plan.md](../plan.md).
+How Mispr Flow turns a press of fn into pasted text. For decisions and roadmap, see [plan.md](../plan.md).
 
 ## The pipeline
 
@@ -96,7 +96,7 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 
 ## Lifecycle (`app.py`)
 
-1. Single-instance lock (`$TMPDIR/Mhispr_Flow.lock`); a second copy exits.
+1. Single-instance lock (`$TMPDIR/Mispr_Flow.lock`); a second copy exits.
 2. Accessory activation policy (menu bar only, no Dock icon); app icon from `assets/AppIcon.icns`; menu-bar template icon.
 3. `WidgetController.start()`: builds the panel, prepares the mic engine, then either loads the models or enters SETUP.
 4. Requests permissions and installs the event tap.

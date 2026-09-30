@@ -6,8 +6,8 @@ import threading
 
 import pytest
 
-from mhispr import levels, models, settings, setup
-from mhispr.models import ModelSpec
+from mispr import levels, models, settings, setup
+from mispr.models import ModelSpec
 
 
 # --- settings ----------------------------------------------------------------------

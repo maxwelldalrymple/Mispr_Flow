@@ -3,14 +3,14 @@
 Run with the debug trace to see what's happening:
 
 ```bash
-MHISPR_DEBUG=1 .venv/bin/python -m mhispr
+MISPR_DEBUG=1 .venv/bin/python -m mispr
 ```
 
 It logs every fn press, state change, transcription and cleanup timing, and each recording's length, peak, and wipe check (never audio content).
 
 ## fn opens the Emoji & Symbols window
 
-Mhispr_Flow swallows fn and the 🌐 key's own key event, but only with **Accessibility** permission. Without it, it can only listen, so macOS acts on fn too.
+Mispr Flow swallows fn and the 🌐 key's own key event, but only with **Accessibility** permission. Without it, it can only listen, so macOS acts on fn too.
 
 - Allow the launching app in **System Settings → Privacy & Security → Accessibility**. If fn is already working in listen-only mode, it takes effect within about 2 s (the log prints `Accessibility granted`); otherwise restart the app.
 - Or set **Keyboard → "Press 🌐 key to" → Do Nothing**.
@@ -37,8 +37,8 @@ The cleanup model's output is rejected whenever it contains a word you didn't sa
 
 Fixed on 2026-09-30. It was a PortAudio/CoreAudio deadlock; the microphone now uses AVAudioEngine and stopping can't block (see `logs/2026-09-30_14-34-34_mic-deadlock-fix.md`). If a freeze ever happens:
 
-1. Capture evidence first: `sample $(pgrep -f "m mhispr") 3 -file ~/Desktop/mhispr-hang.txt`.
-2. Force-quit: `kill -9 $(pgrep -f "m mhispr")`. A frozen app can't run its normal quit handler.
+1. Capture evidence first: `sample $(pgrep -f "m mispr") 3 -file ~/Desktop/mispr-hang.txt`.
+2. Force-quit: `kill -9 $(pgrep -f "m mispr")`. A frozen app can't run its normal quit handler.
 3. Relaunch.
 
 ## Two logo icons in the menu bar
@@ -51,9 +51,9 @@ A force-killed copy leaves a "ghost" icon until you hover over it; hovering clea
 - A download that fails the SHA-256 check is deleted automatically and never used.
 - Check free disk space (3.1 GB needed).
 
-## "mhispr: already running"
+## "mispr: already running"
 
-Only one copy may run (two would both react to fn). Quit the other one from the menu bar, or `kill $(pgrep -f "m mhispr")`.
+Only one copy may run (two would both react to fn). Quit the other one from the menu bar, or `kill $(pgrep -f "m mispr")`.
 
 ## The mic is slow to start or clips the first word
 
@@ -70,8 +70,8 @@ macOS ties permissions to the app's code signature. When running from source, gr
 ## Resetting everything
 
 ```bash
-kill $(pgrep -f "m mhispr")
-rm ~/Library/Application\ Support/Mhispr_Flow/settings.json   # settings back to defaults
+kill $(pgrep -f "m mispr")
+rm ~/Library/Application\ Support/Mispr_Flow/settings.json   # settings back to defaults
 rm -rf voice-recordings/                                         # saved dictations (see privacy note)
 ```
 

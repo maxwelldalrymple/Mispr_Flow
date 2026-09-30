@@ -11,7 +11,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-MODELS_DIR = Path.home() / "Library" / "Application Support" / "Mhispr_Flow" / "models"
+MODELS_DIR = Path.home() / "Library" / "Application Support" / "Mispr_Flow" / "models"
 
 
 @dataclass(frozen=True)

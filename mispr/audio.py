@@ -44,7 +44,7 @@ class SecureAudioBuffer:
         self._nbytes = ctypes.c_size_t(self.data.nbytes)
         self.locked = _libc.mlock(self._ptr, self._nbytes) == 0
         if not self.locked:
-            print(f"mhispr: mlock failed (errno {ctypes.get_errno()}); audio may be swappable", file=sys.stderr)
+            print(f"mispr: mlock failed (errno {ctypes.get_errno()}); audio may be swappable", file=sys.stderr)
 
     def append(self, samples):
         n = min(len(samples), len(self.data) - self.length)
@@ -168,7 +168,7 @@ class Recorder:
                     self._resampler = None
                 self._engine = None
                 if attempt == 1:
-                    print(f"mhispr: could not open microphone: {e}", file=sys.stderr)
+                    print(f"mispr: could not open microphone: {e}", file=sys.stderr)
         return False
 
     def stop(self):
@@ -197,7 +197,7 @@ class Recorder:
         """Before reusing the engine, wait for its previous stop; abandon it if that hung."""
         done, self._stopping = self._stopping, None
         if done is not None and not done.wait(self._stop_timeout):
-            print("mhispr: microphone stop hung; switching to a fresh audio engine", file=sys.stderr)
+            print("mispr: microphone stop hung; switching to a fresh audio engine", file=sys.stderr)
             self._engine = None
 
     def audio(self):

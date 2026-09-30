@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from PyObjCTools import AppHelper
 
-import mhispr.widget as W
-from mhispr import storage
-from mhispr.draw import Rect
+import mispr.widget as W
+from mispr import storage
+from mispr.draw import Rect
 
 ALL_STATES = [W.IDLE, W.HOVER, W.HOLD, W.HANDSFREE, W.PROCESSING, W.CANCELLED, W.MEETING, W.MISTAKE, W.SETUP]
 
@@ -1218,11 +1218,11 @@ class TestDebugLog:
         import os
         import subprocess
         import sys
-        code = "import mhispr.widget as W; print(W.DEBUG)"
+        code = "import mispr.widget as W; print(W.DEBUG)"
         def debug_with(value):
-            env = {k: v for k, v in os.environ.items() if k != "MHISPR_DEBUG"}
+            env = {k: v for k, v in os.environ.items() if k != "MISPR_DEBUG"}
             if value is not None:
-                env["MHISPR_DEBUG"] = value
+                env["MISPR_DEBUG"] = value
             out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
             return out.stdout.strip().splitlines()[-1]
         assert debug_with("1") == "True"

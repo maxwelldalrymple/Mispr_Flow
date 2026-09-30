@@ -1,10 +1,10 @@
 # Plan
 
-The engineering record for Mhispr_Flow: decisions, architecture, what's done, and what's next. For how to install and use the app, see the [README](README.md) and [docs/](docs/).
+The engineering record for Mispr Flow: decisions, architecture, what's done, and what's next. For how to install and use the app, see the [README](README.md) and [docs/](docs/).
 
 ## Goals
 
-Mhispr_Flow is a Wispr Flow clone built to be:
+Mispr Flow is a Wispr Flow clone built to be:
 
 1. **Open source.** Every part is readable and changeable. *To do: choose and add a license.*
 2. **Free.** No subscription or account; free models running locally.
@@ -23,7 +23,7 @@ Mhispr_Flow is a Wispr Flow clone built to be:
 | Paste | Clipboard + synthetic ⌘V, then restore | Works in every app. Text is marked transient/concealed for clipboard managers. |
 | Storage | Save recordings by default; Incognito turns it off | Needed for the future history and stats UI. |
 | Distribution | Unsigned `.pkg` whose postinstall downloads the models; first-launch setup as fallback | Keeps the download small, fits GitHub Releases' 2 GB limit, and updates don't re-download 3 GB of models. |
-| Branding | Mhispr_Flow, package `mhispr`, logo in `mhispr/assets/` | Renamed from "Whispr Clone". "Wispr Flow" refers only to the product this is modeled on. |
+| Branding | Mispr Flow, package `mispr`, logo in `mispr/assets/` | Renamed from "Whispr Clone". "Wispr Flow" refers only to the product this is modeled on. |
 
 ## Architecture
 
@@ -50,7 +50,7 @@ fn key ──► hotkey.FnMonitor (HID event tap) ──► widget.WidgetControl
 | Paste | `NSPasteboard` snapshot → set text + private types → post ⌘V (flags = ⌘ only) → restore after 0.5 s unless the user copied something new. |
 | Context | Accessibility API: walks up from the focused element to the outermost `AXWebArea` for the page URL; falls back to the window's `AXDocument`. 0.3 s timeout. |
 | Widget | Borderless, non-activating `NSPanel` at status-bar level, redrawn at 60 fps by an `NSTimer` in common run-loop modes. Click-through except over buttons. |
-| Menu bar | `NSStatusItem` with the logo as an 18 pt template image (tints for light/dark); "Quit Mhispr_Flow". |
+| Menu bar | `NSStatusItem` with the logo as an 18 pt template image (tints for light/dark); "Quit Mispr Flow". |
 | Threads | `threads.start_daemon()` for model loads, transcription, downloads, and mic stops, so nothing can block quitting. |
 
 See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
@@ -66,7 +66,7 @@ See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
 7. ✅ Recording storage (WAV + JSON with app and page context) and the Incognito setting.
 8. ✅ Test suite (709 unit + 10 integration tests), stress-tested and mutation-tested (97.6%).
 9. ✅ Mic freeze fix: AVAudioEngine replaced PortAudio; non-blocking stop.
-10. ✅ Rebrand to Mhispr_Flow (package, data folder, logo, app and menu-bar icons, GitHub repo).
+10. ✅ Rebrand to Mispr Flow (package, data folder, logo, app and menu-bar icons, GitHub repo).
 11. ⬜ First-run onboarding: permissions checklist with live checkmarks, then the model download.
 12. ⬜ Main window: history (from the saved JSON), stats (words, WPM, streak, apps), settings (Incognito, cleanup).
 13. ⬜ Meeting notetaker (◉): mic + system audio, diarization, LLM summary to `meeting-recordings/`.
@@ -143,7 +143,7 @@ On launch, if either required model (Whisper large-v3-turbo q5, Gemma-3-4B-it Q4
 
 ## Recording Storage
 
-- **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/Mhispr_Flow/voice-recordings` once packaged), named by start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) + `.json`.
+- **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/Mispr_Flow/voice-recordings` once packaged), named by start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) + `.json`.
 - **JSON fields:** `id`, `started_at` / `ended_at` (ms precision, with timezone), `duration_s`, `status` (`pasted` / `cancelled`), `transcript`, `raw_transcript`, `words`, `recorded_in` (app, bundle id), `pasted_into` (app, bundle id, and for browsers `url` and `page_title`; `null` if cancelled), `model`, `cleanup` (model, applied, ms, rejection reason), `audio_file`.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, silent clips, and anything in Incognito mode.
 - **Possible upgrade:** encrypt recordings with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
@@ -162,7 +162,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 ## Distribution
 
 - **Format:** an unsigned `.pkg` (optionally wrapped in a DMG), built from a py2app bundle. Apple Silicon (M1+) only.
-- **Models at install:** the postinstall script downloads Whisper (~0.57 GB) and Gemma (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/Mhispr_Flow/models` (installer scripts run as root). Installer.app shows only an indeterminate "Running package scripts" bar during this.
+- **Models at install:** the postinstall script downloads Whisper (~0.57 GB) and Gemma (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/Mispr_Flow/models` (installer scripts run as root). Installer.app shows only an indeterminate "Running package scripts" bar during this.
 - **Startup safety net:** the app must check both `/Library/...` and `~/Library/...` for models (today it checks only `~/Library`: to do with the installer). Anything missing triggers the setup screen.
 - **Signing:** unsigned for now (users choose "Open Anyway" in System Settings > Privacy & Security). Revisit Developer ID + notarization before a wide release.
 - **Permissions caveat:** macOS ties Microphone/Accessibility/Input Monitoring grants to the signature; unsigned updates may need re-granting. Ad-hoc sign with a stable identifier to reduce this.

@@ -8,7 +8,7 @@ import re, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from llama_cpp import Llama
-import mhispr.cleanup as C
+import mispr.cleanup as C
 
 CASES = [
     # (whisper-style input, words that must survive, words that should be removed)
@@ -86,6 +86,6 @@ def score(model_path, prompt=None, examples=None, label=None):
     del llm
 
 if __name__ == "__main__":
-    from mhispr.models import CLEANUP_MODEL
+    from mispr.models import CLEANUP_MODEL
     for p in sys.argv[1:] or [str(CLEANUP_MODEL.path)]:
         score(p)

@@ -1,6 +1,6 @@
-<p align="center"><img src="mhispr/assets/icon.png" width="160" alt="Mhispr_Flow"></p>
+<p align="center"><img src="mispr/assets/icon.png" width="160" alt="Mispr Flow"></p>
 
-# Mhispr_Flow
+# Mispr Flow
 
 Private, fully local voice dictation for macOS. Hold **fn**, speak, and clean, punctuated text appears in whatever app you're typing in. Speech recognition and text cleanup both run on your Mac: your voice never leaves it.
 
@@ -8,12 +8,12 @@ Modeled on the Wispr Flow desktop experience, without the cloud.
 
 ## Why
 
-Mhispr_Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for four reasons:
+Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for four reasons:
 
 1. **Open source.** Every line (the hotkey, the audio pipeline, the prompts, the safety checks) is readable, auditable, and changeable. *(A license still needs to be chosen and added; until then the code is visible but not yet formally open source.)*
 2. **Free.** No subscription and no account. The models are free downloads that run on your own Mac.
-3. **Your voice stays on your Mac.** Wispr Flow sends your audio to its servers for transcription and cleanup, where it may be retained by a third party. For code, credentials in context, or personal and business conversations, that's an unacceptable risk. Mhispr_Flow transcribes and cleans up entirely on-device.
-4. **Full control and customization.** The icons, sounds, widget look, shortcuts, models, and cleanup prompt are all yours to change (see `mhispr/assets/`, `settings.json`, and [plan.md](plan.md)). It's also multilingual by design: the Whisper model understands about 99 languages. Today the app transcribes English; a language setting is on the roadmap.
+3. **Your voice stays on your Mac.** Wispr Flow sends your audio to its servers for transcription and cleanup, where it may be retained by a third party. For code, credentials in context, or personal and business conversations, that's an unacceptable risk. Mispr Flow transcribes and cleans up entirely on-device.
+4. **Full control and customization.** The icons, sounds, widget look, shortcuts, models, and cleanup prompt are all yours to change (see `mispr/assets/`, `settings.json`, and [plan.md](plan.md)). It's also multilingual by design: the Whisper model understands about 99 languages. Today the app transcribes English; a language setting is on the roadmap.
 
 ## What it does
 
@@ -43,7 +43,7 @@ End to end, text appears about 1.8 s after you stop talking.
 python3.13 -m venv .venv
 .venv/bin/pip install cmake
 CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m mhispr
+.venv/bin/python -m mispr
 ```
 
 `llama-cpp-python` builds from source with Metal (GPU) support, which takes a few minutes. On first launch the widget shows **"Downloading models NN%"**. Dictation unlocks once both models are downloaded and verified. Quit from the logo in the menu bar.
@@ -64,7 +64,7 @@ A quick fn tap does nothing, and fn combined with another key (fn + arrow) works
 
 ## Settings
 
-`~/Library/Application Support/Mhispr_Flow/settings.json` (a settings screen is planned):
+`~/Library/Application Support/Mispr_Flow/settings.json` (a settings screen is planned):
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -75,8 +75,8 @@ A quick fn tap does nothing, and fn combined with another key (fn + arrow) works
 
 | What | Where |
 |---|---|
-| Models | `~/Library/Application Support/Mhispr_Flow/models/` |
-| Settings | `~/Library/Application Support/Mhispr_Flow/settings.json` |
+| Models | `~/Library/Application Support/Mispr_Flow/models/` |
+| Settings | `~/Library/Application Support/Mispr_Flow/settings.json` |
 | Saved dictations | `voice-recordings/YYYY-MM-DD/` in the project folder (gitignored). Files are named by start time to the millisecond: `2026-09-30_12-28-33-123.wav` + `.json` |
 | Meeting notes (planned) | `meeting-recordings/` in the project folder (gitignored) |
 | Test and stress-test reports | `logs/` |
@@ -92,7 +92,7 @@ A quick fn tap does nothing, and fn combined with another key (fn + arrow) works
 ## Debugging
 
 ```bash
-MHISPR_DEBUG=1 .venv/bin/python -m mhispr
+MISPR_DEBUG=1 .venv/bin/python -m mispr
 ```
 
 Prints a timestamped trace of fn events, state changes, transcription and cleanup timings, and each recording's length, peak, and wipe check. It never prints audio content.
@@ -100,7 +100,7 @@ Prints a timestamped trace of fn events, state changes, transcription and cleanu
 ## Project layout
 
 ```
-mhispr/
+mispr/
   app.py         entry point: menu bar, single-instance lock, permissions, clean shutdown
   widget.py      floating widget: state machine, layout, rendering, mouse/keyboard handling
   hotkey.py      fn / globe-key event tap and hands-free shortcuts
@@ -131,7 +131,7 @@ logs/            stress-test and bug-fix reports
 - **709 unit tests, about 8 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
 - **Integration tests (opt-in).** Real Whisper, Gemma, and microphone:
   ```bash
-  MHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
+  MISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
   ```
 - **Golden files** (`tests/golden/`) pin the widget's layout and the rendered look of every state. After an intentional visual change, regenerate them, then review the new files:
   ```bash

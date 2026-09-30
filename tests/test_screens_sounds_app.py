@@ -3,7 +3,7 @@ import signal
 import pytest
 from AppKit import NSMakeRect
 
-from mhispr import app, screens, sounds
+from mispr import app, screens, sounds
 
 
 # --- screens -----------------------------------------------------------------------
@@ -230,7 +230,7 @@ class TestSingleInstance:
 
     @pytest.fixture
     def lock_path(self, tmp_path):
-        return tmp_path / "Mhispr_Flow.lock"
+        return tmp_path / "Mispr_Flow.lock"
 
     @pytest.fixture
     def other_instance(self, lock_path):
@@ -240,7 +240,7 @@ class TestSingleInstance:
         lock.close()
 
     def test_default_path_is_in_temp_dir(self):
-        assert app.LOCK_PATH.name == "Mhispr_Flow.lock"
+        assert app.LOCK_PATH.name == "Mispr_Flow.lock"
         assert app.LOCK_PATH.parent == app.Path(app.tempfile.gettempdir())
 
     def test_first_instance_gets_lock(self, lock_path):
@@ -325,14 +325,14 @@ class TestShutdown:
 
 class TestBranding:
     def test_app_name(self):
-        assert app.APP_NAME == "Mhispr_Flow"
-        assert app.LOCK_PATH.name == "Mhispr_Flow.lock"
+        assert app.APP_NAME == "Mispr Flow" and app.APP_ID == "Mispr_Flow"
+        assert app.LOCK_PATH.name == "Mispr_Flow.lock"
 
     def test_menu_has_quit(self):
         item = app._status_item()
         try:
             quit_item = item.menu().itemAtIndex_(0)
-            assert quit_item.title() == "Quit Mhispr_Flow"
+            assert quit_item.title() == "Quit Mispr Flow"
             assert quit_item.action() == "terminate:" and quit_item.keyEquivalent() == "q"
         finally:
             app.NSStatusBar.systemStatusBar().removeStatusItem_(item)
@@ -343,7 +343,7 @@ class TestBranding:
         assert (icon.size().width, icon.size().height) == (18, 18)
         widths = sorted(r.pixelsWide() for r in icon.representations())
         assert widths == [18, 36]  # 1x and Retina
-        assert icon.accessibilityDescription() == "Mhispr_Flow"
+        assert icon.accessibilityDescription() == "Mispr Flow"
 
     def test_menubar_icon_falls_back_to_symbol(self, monkeypatch, tmp_path):
         monkeypatch.setattr(app, "ASSETS", tmp_path)  # no asset files

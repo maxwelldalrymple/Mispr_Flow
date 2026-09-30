@@ -12,8 +12,8 @@ This guide takes you from a fresh clone to dictating. It takes about 10 minutes 
 ## 2. Install
 
 ```bash
-git clone git@github.com:maxwelldalrymple/Mhispr_Flow.git
-cd Mhispr_Flow
+git clone git@github.com:maxwelldalrymple/Mispr_Flow.git
+cd Mispr_Flow
 python3.13 -m venv .venv
 .venv/bin/pip install cmake
 CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
@@ -23,20 +23,20 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 
 ## 3. Set the fn key (optional)
 
-Mhispr_Flow captures the fn/🌐 key itself once Accessibility is allowed (next step), so macOS won't open the emoji picker. If you ever run it without Accessibility, set **System Settings → Keyboard → "Press 🌐 key to" → Do Nothing** so fn doesn't trigger both.
+Mispr Flow captures the fn/🌐 key itself once Accessibility is allowed (next step), so macOS won't open the emoji picker. If you ever run it without Accessibility, set **System Settings → Keyboard → "Press 🌐 key to" → Do Nothing** so fn doesn't trigger both.
 
 ## 4. First launch
 
 ```bash
-.venv/bin/python -m mhispr
+.venv/bin/python -m mispr
 ```
 
-1. **Models download.** The widget above the Dock shows **"Downloading models NN%"** for the Whisper model (0.57 GB) and Gemma (2.5 GB). Both are verified with SHA-256 and stored in `~/Library/Application Support/Mhispr_Flow/models/`. Dictation stays locked until they're ready. If it fails, click **Retry**.
-2. **Permissions.** macOS asks for each one; allow them. They're granted to the app that launched Mhispr_Flow (Terminal, or Claude if started from a Claude session).
+1. **Models download.** The widget above the Dock shows **"Downloading models NN%"** for the Whisper model (0.57 GB) and Gemma (2.5 GB). Both are verified with SHA-256 and stored in `~/Library/Application Support/Mispr_Flow/models/`. Dictation stays locked until they're ready. If it fails, click **Retry**.
+2. **Permissions.** macOS asks for each one; allow them. They're granted to the app that launched Mispr Flow (Terminal, or Claude if started from a Claude session).
    - **Accessibility** (System Settings → Privacy & Security → Accessibility): captures fn, pastes text, reads the browser URL. If the app is already running with Input Monitoring, this takes effect within about 2 s; otherwise restart the app.
    - **Input Monitoring:** fallback fn detection without Accessibility. Needs a restart after granting.
    - **Microphone:** asked the first time you dictate.
-3. The Mhispr_Flow logo appears in the menu bar, and a small pill sits above the Dock.
+3. The Mispr Flow logo appears in the menu bar, and a small pill sits above the Dock.
 
 ## 5. Dictate
 
@@ -49,7 +49,7 @@ Your previous clipboard is restored automatically after each paste.
 
 ## 6. Choose what gets saved
 
-By default each dictation is saved to `voice-recordings/` in the project folder (audio plus a JSON record). To keep nothing, set Incognito in `~/Library/Application Support/Mhispr_Flow/settings.json`:
+By default each dictation is saved to `voice-recordings/` in the project folder (audio plus a JSON record). To keep nothing, set Incognito in `~/Library/Application Support/Mispr_Flow/settings.json`:
 
 ```json
 {
@@ -62,6 +62,6 @@ Restart the app after editing. Set `"cleanup": false` to paste Whisper's raw tex
 
 ## 7. Quit
 
-Menu-bar logo → **Quit Mhispr_Flow**. Only one copy can run at a time; a second launch prints `mhispr: already running` and exits.
+Menu-bar logo → **Quit Mispr Flow**. Only one copy can run at a time; a second launch prints `mispr: already running` and exits.
 
 Something not working? See [troubleshooting.md](troubleshooting.md).

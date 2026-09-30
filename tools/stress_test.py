@@ -86,8 +86,8 @@ def round_warnings(log):
 
 
 def round_coverage(log):
-    r = run(["-p", "no:randomly", "--cov=mhispr", "--cov-branch", "--cov-report=term-missing"])
-    table = [l for l in r["out"].splitlines() if l.startswith(("Name", "mhispr/", "TOTAL", "---"))]
+    r = run(["-p", "no:randomly", "--cov=mispr", "--cov-branch", "--cov-report=term-missing"])
+    table = [l for l in r["out"].splitlines() if l.startswith(("Name", "mispr/", "TOTAL", "---"))]
     with open(log, "a") as f:
         f.write("### Round 5 — Branch coverage\n\n```\n" + "\n".join(table) + "\n```\n\n")
     return Counter(r["failures"])

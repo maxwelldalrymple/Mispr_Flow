@@ -3,8 +3,8 @@ import sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from AppKit import NSImage, NSBitmapImageRep, NSPNGFileType, NSColor, NSMakeRect, NSRectFill, NSGraphicsContext
-from mhispr import widget as W
-from mhispr.draw import Rect
+from mispr import widget as W
+from mispr.draw import Rect
 
 states = [
     (W.IDLE, None), (W.HOVER, "mic"), (W.HOVER, "note"), (W.HOLD, None),
