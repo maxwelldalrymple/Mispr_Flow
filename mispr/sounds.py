@@ -10,12 +10,12 @@ START = "start"        # recording began
 STOP = "stop"          # recording finished, transcribing
 LOCK = "lock"          # double-tap locked hands-free on
 CANCEL = "cancel"      # recording cancelled
-ERROR = "error"        # something failed (e.g. the model download)
-PASTE = "paste"        # reserved for the main window: re-paste from history
-NOTIFICATION = "notification"
-ALERT = "alert"
-SUCCESS = "success"
-ACHIEVEMENT = "achievement"
+ERROR = "error"        # the mic didn't open, or the model download failed
+PASTE = "paste"        # dictated text landed in the app
+ALERT = "alert"        # recorded, but nothing usable was heard
+SUCCESS = "success"    # models installed; a permission was granted in setup
+ACHIEVEMENT = "achievement"  # finished the setup guide
+NOTIFICATION = "notification"  # reserved for the main window
 ALL = (START, STOP, LOCK, CANCEL, ERROR, PASTE, NOTIFICATION, ALERT, SUCCESS, ACHIEVEMENT)
 
 

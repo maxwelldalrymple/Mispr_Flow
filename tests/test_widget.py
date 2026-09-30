@@ -763,7 +763,7 @@ class TestSoundCues:
         clock.advance(0.2)
         controller.recorder.start_ok = False
         controller.fn_down()
-        assert controller.state != W.HANDSFREE and controller.sounds.played == ["start"]
+        assert controller.state != W.HANDSFREE and controller.sounds.played == ["start", "error"]
 
     def test_model_download_failure_plays_error(self, controller):
         controller._setup_failed("offline")
@@ -796,11 +796,32 @@ class TestSoundCues:
         controller.stop_meeting()
         assert controller.sounds.played == ["start", "stop"] and controller.state == W.MISTAKE
 
-    def test_mic_failure_is_silent(self, controller):
+    def test_mic_failure_plays_error(self, controller):
         controller.recorder.start_ok = False
         controller.fn_down()
         controller.begin_handsfree()
-        assert controller.sounds.played == []
+        assert controller.sounds.played == ["error", "error"]
+
+    def test_paste_sound_when_text_lands(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hello there.", "hello there", None, 1.0, "finished")
+        assert controller.pasted == ["Hello there."] and controller.sounds.played == ["start", "stop", "paste"]
+
+    def test_alert_when_nothing_was_heard(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("", "", None, 1.0, "finished")
+        assert controller.pasted == [] and controller.sounds.played == ["start", "stop", "alert"]
+
+    def test_quick_tap_does_not_alert(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        clock.advance(5)
+        assert "alert" not in controller.sounds.played
+
+    def test_models_installed_plays_success(self, controller):
+        controller._setup_done()
+        assert controller.sounds.played == ["success"]
 
 
 class TestStateMachineDetails:

@@ -370,6 +370,7 @@ class WidgetController:
     def begin_hold(self, source):
         self._drop_cancelled()
         if not self.recorder.start():
+            self.sounds.play(sounds.ERROR)  # the mic didn't open: don't fail silently
             return
         self._note_context()
         self.sounds.play(sounds.START)
@@ -379,6 +380,7 @@ class WidgetController:
     def begin_handsfree(self, sound=True):
         self._drop_cancelled()
         if not self.recorder.start():
+            self.sounds.play(sounds.ERROR)
             return
         self._note_context()
         if sound:
@@ -410,8 +412,11 @@ class WidgetController:
         if text:
             target = context.frontmost()  # where the text is about to land
             paste_text(text)
+            self.sounds.play(sounds.PASTE)
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
             self._save(storage.PASTED, text, pasted_into=target, raw=raw, cleanup=info)
+        else:
+            self.sounds.play(sounds.ALERT)  # recorded, but no words came out: nothing to paste
         self._wipe(reason)
         self.to_idle()
 
@@ -453,6 +458,7 @@ class WidgetController:
 
     def _setup_done(self):
         log("setup: models installed")
+        self.sounds.play(sounds.SUCCESS)
         self._load_engines()
         self.to_idle()
 
