@@ -13,8 +13,8 @@ States (see README / PLAN for the full behaviour):
 
 Dictation is driven by the `fn` key (hold = push-to-talk, double-tap within 1 s =
 hands-free, press again to finish) or by clicking the widget. The waveform shows the
-live microphone level. Transcription/paste after PROCESSING and the meeting notetaker
-are still stubs; the meeting pill uses a simulated waveform.
+live microphone level. PROCESSING transcribes locally with whisper.cpp and pastes into
+the focused app. The meeting notetaker is still a stub with a simulated waveform.
 """
 
 import math
@@ -53,6 +53,8 @@ from PyObjCTools import AppHelper
 from . import draw, sounds
 from .draw import Rect, white
 from .audio import Recorder
+from .paste import paste_text
+from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -81,7 +83,6 @@ DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands
 # Hands-free keyboard shortcuts (macOS virtual keycodes).
 KEY_SPACE = 49  # finish and paste
 KEY_DELETE = 51  # cancel
-PROCESSING_STUB_SECONDS = 1.2
 TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
@@ -228,6 +229,7 @@ class WidgetController:
         self.bar_levels = {11: [0.0] * 11, 5: [0.0] * 5}
 
         self.recorder = Recorder()
+        self.transcriber = Transcriber()
         self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
 
@@ -265,6 +267,7 @@ class WidgetController:
         self._poll_screen(force=True)
         p.orderFrontRegardless()
         self.recorder.prepare()
+        self.transcriber.load_async()
 
         self.ticker = Ticker.alloc().init()
         self.ticker.callback = self.tick
@@ -324,9 +327,17 @@ class WidgetController:
 
     def _process(self, reason):
         self.set_state(PROCESSING)
-        # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
+        self.transcriber.transcribe_async(
+            self.recorder.audio(), lambda text, secs: self._on_transcribed(text, secs, reason)
+        )
+
+    def _on_transcribed(self, text, secs, reason):
+        # The worker is done with the audio view, so the recording can be destroyed now.
         self._wipe(reason)
-        self.after(PROCESSING_STUB_SECONDS, self.to_idle)
+        log(f"transcribed in {secs:.2f}s -> {len(text)} chars")
+        if text:
+            paste_text(text)
+        self.to_idle()
 
     def cancel(self):
         """Stop and offer Undo. The audio stays in locked memory until the toast expires."""

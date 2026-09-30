@@ -5,7 +5,7 @@
 | Area | Choice | Notes |
 |---|---|---|
 | Language | Python | Fast to prototype. Uses PyObjC for native macOS APIs. |
-| Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. Start with `large-v3-turbo` and fall back to `small.en` if latency is too high. |
+| Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. `ggml-large-v3-turbo-q5_0` (574 MB), downloaded on first run to `~/Library/Application Support/WhisprClone/models` and SHA-256 verified. Reduced `audio_ctx` breaks turbo, so default settings are used. |
 | Cleanup | Small local LLM | `llama-cpp-python` with a ~1.5B instruct model (e.g. Qwen2.5-1.5B-Instruct, Q4). |
 | v1 extras | Floating widget | See "Floating Widget" below. |
 
@@ -17,7 +17,7 @@
 | Audio | `sounddevice` capturing 16 kHz mono float32 into a preallocated NumPy buffer. |
 | STT | whisper.cpp reads the NumPy buffer directly, so no WAV file is ever written. |
 | Cleanup | A local LLM with a strict "fix, don't rewrite" system prompt. |
-| Paste | Save the clipboard, set the text on `NSPasteboard`, post Cmd+V via `CGEvent`, then restore the clipboard. |
+| Paste | Save the clipboard, set the text on `NSPasteboard` (marked transient/concealed so clipboard managers skip it), post ⌘V via `CGEvent`, restore the clipboard 0.5 s later unless the user copied something new. |
 | Widget | Borderless, non-activating `NSPanel` drawn with AppKit (PyObjC), so it never steals focus. |
 | Menu bar | `NSStatusItem` for status and quit. |
 
@@ -39,8 +39,8 @@
 1. ✅ Floating widget, all states, UI only (fake waveform, click-driven).
 2. ✅ Detect the `fn` key (hold and double-tap) and drive the widget from it.
 3. ✅ Record the microphone into an in-memory buffer (real waveform), then zero it.
-4. Transcribe with whisper.cpp.
-5. Paste into the focused app, with clipboard restore.
+4. ✅ Transcribe with whisper.cpp (large-v3-turbo q5, Metal): ~1.1 s for a 5-6 s clip, ~690 MB RAM.
+5. ✅ Paste into the focused app, with clipboard restore.
 6. Add the LLM cleanup pass.
 7. Meeting notetaker: system audio capture, diarization, summary to `~/Documents/meeting-recordings`.
 8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
@@ -98,3 +98,11 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - **Hands-free:** space = finish and paste, delete = cancel.
 - **Cancelled toast:** delete = discard immediately (skip the Undo countdown).
 - These keys are swallowed only in those states; modified presses (e.g. ⌘Space) always pass through.
+
+## Transcription Notes
+
+- The model loads and warms up (Metal pipeline compile) in the background at launch, so the first dictation isn't slow.
+- Clips under 0.3 s or with peak level under 0.01 are skipped, since Whisper hallucinates text ("Thank you.") on silence.
+- Annotations like `[BLANK_AUDIO]` and `(music)` are stripped.
+- Transcription runs on a worker thread; whisper.cpp releases the GIL, so the fn event tap and UI stay responsive.
+- Known gaps: first-run download has no progress UI yet; ⌘V uses the ANSI V keycode (non-QWERTY layouts TODO).
