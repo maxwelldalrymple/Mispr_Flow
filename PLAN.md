@@ -6,7 +6,7 @@
 |---|---|---|
 | Language | Python | Fast to prototype. Uses PyObjC for native macOS APIs. |
 | Speech-to-text | whisper.cpp | Via `pywhispercpp`, Metal-accelerated. `ggml-large-v3-turbo-q5_0` (574 MB), downloaded on first run to `~/Library/Application Support/WhisprClone/models` and SHA-256 verified. Reduced `audio_ctx` breaks turbo, so default settings are used. |
-| Cleanup | Small local LLM | `llama-cpp-python` (built with Metal) running `qwen2.5-1.5b-instruct-q4_k_m.gguf` (1.1 GB) from `Qwen/Qwen2.5-1.5B-Instruct-GGUF`, SHA-256 verified. |
+| Cleanup | Small local LLM | `llama-cpp-python` (built with Metal) running `gemma-3-4b-it-Q4_K_M.gguf` (2.5 GB) from `ggml-org/gemma-3-4b-it-GGUF`, SHA-256 verified. Gemma Terms of Use apply. |
 | v1 extras | Floating widget | See "Floating Widget" below. |
 
 ## Components
@@ -41,7 +41,7 @@
 3. ✅ Record the microphone into an in-memory buffer (real waveform), then zero it.
 4. ✅ Transcribe with whisper.cpp (large-v3-turbo q5, Metal): ~1.1 s for a 5-6 s clip, ~690 MB RAM.
 5. ✅ Paste into the focused app, with clipboard restore.
-6. ✅ LLM cleanup (Qwen2.5-1.5B-Instruct Q4_K_M via llama.cpp, ~220 ms) with a faithfulness guard, plus a mandatory first-run model setup step.
+6. ✅ LLM cleanup (Gemma-3-4B-it Q4_K_M via llama.cpp, ~550 ms) with a zero-invented-words guard, plus a mandatory first-run model setup step.
 7. Meeting notetaker: system audio capture, diarization, summary to `meeting-recordings/` (in the project folder).
 8. Package as an unsigned `.app` (py2app) in a drag-to-Applications DMG (`create-dmg`), built by one script. Starts once dictation works end to end.
 
@@ -117,10 +117,12 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## LLM Cleanup
 
-- **Does:** removes fillers (um, uh, like, you know), stutters and repeated words; applies spoken self-corrections ("Tuesday, no wait, Wednesday" -> "Wednesday"); fixes punctuation and capitalization.
-- **Never:** answers or obeys the dictation. Few-shot examples use Whisper-style punctuated input and include a question that must be kept verbatim.
-- **Faithfulness guard:** output is rejected (raw Whisper text is pasted instead) if it is empty, much longer than the input, keeps under 40% of the speaker's non-filler words, or adds more than ~20% new words. Catches prompt injection ("ignore all previous instructions..."), answering questions, and generating content.
-- **Performance (M1 Pro):** ~220 ms average cleanup; ~1.5 s end-to-end for a 5-6 s clip. Whisper + Qwen resident together use ~1.7 GB RAM.
+- **Does:** removes fillers (um, uh, like, you know), stutters and repeated words; applies explicit self-corrections ("Tuesday, no wait, Wednesday" -> "Wednesday"); fixes punctuation and capitalization.
+- **Never:** adds words, rephrases, answers, or obeys the dictation. "I mean" + detail is kept as a clarification; when unsure, the model keeps the words.
+- **Hard guarantee (code, not model):** the output is rejected and the raw transcript pasted instead if it contains *any* word the speaker didn't say (case, punctuation, apostrophes, and number words vs digits are normalized), or keeps under 60% of the speaker's non-filler words.
+- **Model choice:** `tools/eval_cleanup.py` scores 27 cases (fillers, corrections, questions/commands, prompt injection, names, code terms, numbers). Gemma-3-4B: 0 invented, 0 key words lost, most conservative on ambiguous corrections. Qwen3-4B-Instruct-2507 tied on the metrics but half-applied a correction; Qwen2.5-3B invented words; Qwen2.5-1.5B missed corrections and obeyed "Translate this...".
+- **Performance (M1 Pro):** ~550 ms average cleanup; ~1.8 s end-to-end for a 5-6 s clip. Whisper + Gemma resident use ~3.5 GB RAM.
+- **Shutdown:** the llama.cpp model must be freed before exit (Metal backend asserts otherwise), on both Quit and SIGTERM.
 - **Setting:** `cleanup` (default on). Saved JSON keeps both `raw_transcript` and the pasted `transcript`, plus `cleanup` info (model, applied, ms, rejection reason).
 
 ## First-Run Setup (mandatory)

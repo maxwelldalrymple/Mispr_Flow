@@ -39,15 +39,17 @@ WHISPER_TURBO_Q5 = ModelSpec(
 
 DEFAULT_MODEL = WHISPER_TURBO_Q5
 
-# Text cleanup LLM: small, instruction-following, fast on Metal.
-QWEN25_1_5B_Q4 = ModelSpec(
-    "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-    1_117_320_736,
-    "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
-    repo="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+# Text cleanup LLM. Chosen over Qwen2.5-1.5B/3B and Qwen3-4B-Instruct-2507 in a 27-case
+# eval: zero invented words, zero lost key words, and the most conservative on ambiguous
+# self-corrections (~550 ms on an M1 Pro). Gemma Terms of Use apply.
+GEMMA3_4B_Q4 = ModelSpec(
+    "gemma-3-4b-it-Q4_K_M.gguf",
+    2_489_757_856,
+    "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+    repo="ggml-org/gemma-3-4b-it-GGUF",
 )
 
-CLEANUP_MODEL = QWEN25_1_5B_Q4
+CLEANUP_MODEL = GEMMA3_4B_Q4
 
 
 def is_installed(spec=DEFAULT_MODEL):
