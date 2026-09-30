@@ -602,14 +602,17 @@ class WidgetController:
 
     # --- Frame loop ---------------------------------------------------------
 
-    def tick(self):
-        now = time.monotonic()
-
+    def _run_due(self, now):
+        """Run scheduled callbacks that are due, skipping any from an earlier state."""
         due = [p for p in self.pending if p[0] <= now]
         self.pending = [p for p in self.pending if p[0] > now]
         for _, seq, fn in due:
             if seq == self.seq:
                 fn()
+
+    def tick(self):
+        now = time.monotonic()
+        self._run_due(now)
 
         if now >= self.next_screen_poll:
             self.next_screen_poll = now + SCREEN_POLL_SECONDS

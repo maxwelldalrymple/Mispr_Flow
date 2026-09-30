@@ -39,6 +39,21 @@ python3.13 -m venv .venv
 
 Quit from the waveform icon in the menu bar.
 
+## Testing
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+The unit suite (500+ tests, ~2 s) covers every module and never touches the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. End-to-end tests with the real Whisper and Gemma models are opt-in:
+
+```bash
+WHISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
+```
+
+`tools/eval_cleanup.py` scores the cleanup model on 27 cases (invented words must be zero).
+
 ## Status
 
 The floating widget is built (UI only: clicks drive it and the waveform is simulated). See [PLAN.md](PLAN.md) for the stack, architecture, and milestones.
