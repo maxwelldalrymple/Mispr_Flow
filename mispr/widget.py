@@ -52,7 +52,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import context, draw, settings, setup, sounds, storage
+from . import audio, context, draw, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -93,6 +93,8 @@ KEY_DELETE = 51  # cancel
 TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
+
+MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation after launch
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -187,6 +189,14 @@ TOOLTIPS = {
 }
 
 
+def mic_notice_text(name, built_in):
+    """Built-in mics are recommended: Bluetooth headsets drop to low-quality audio while
+    their mic is in use."""
+    if built_in:
+        return "Using Built-in mic (recommended)"
+    return f"Using {name}" if name else None
+
+
 class WidgetView(NSView):
     def isFlipped(self):
         return False
@@ -254,6 +264,9 @@ class WidgetController:
         self.fn_press_at = 0.0
         self.fn_consumed = False  # this fn press already did something; ignore its release
         self.last_tap_at = None  # start time of a recent short fn tap (double-tap detection)
+
+        self.mic_notice = None  # (text, shown_at): which mic is in use, once per launch
+        self.mic_notice_done = False
 
     # --- Setup --------------------------------------------------------------
 
@@ -324,6 +337,11 @@ class WidgetController:
 
     def _note_context(self):
         self.rec_started_at, self.rec_ended_at = datetime.now(), None
+        if not self.mic_notice_done:
+            self.mic_notice_done = True
+            text = mic_notice_text(*audio.input_device())
+            if text:
+                self.mic_notice = (text, time.monotonic())
         # App only (cheap); the browser page is looked up at paste time.
         self.rec_recorded_in = context.frontmost(include_page=False)
 
@@ -753,7 +771,27 @@ class WidgetController:
             draw.fill_round(b, 9, white(fill.whiteComponent(), min(1.0, fill.alphaComponent() + (0.08 if lit else 0)) * a))
             draw.draw_text_centered(draw.rich([(name.capitalize(), bold)], 14, fg), b.cx, b.cy)
 
+    def _mic_notice_alpha(self):
+        """Opacity of the mic notice: shown while recording for MIC_NOTICE_SECONDS, fading
+        out over the last 0.4 s."""
+        if self.mic_notice is None or self.state not in (HOLD, HANDSFREE):
+            return 0.0
+        remaining = MIC_NOTICE_SECONDS - (time.monotonic() - self.mic_notice[1])
+        return max(0.0, min(1.0, remaining / 0.4))
+
+    def _draw_mic_notice(self, bg, a):
+        label = draw.rich([(self.mic_notice[0], False)], 13, white(1.0, a))
+        sz = label.size()
+        box = Rect.centered(bg.cx, bg.top + 8 + 14, sz.width + 32, 28)
+        draw.fill_round(box, 14, white(0.0, 0.92 * a))
+        draw.stroke_round(box, 14, white(1.0, 0.1 * a))
+        draw.draw_text_centered(label, box.cx, box.cy)
+
     def _draw_tooltip(self, bg):
+        notice_a = self._mic_notice_alpha()
+        if notice_a > 0.01:
+            self._draw_mic_notice(bg, notice_a)  # takes the tooltip's spot while visible
+            return
         if self.tip is None or self.tip_a < 0.01:
             return
         parts, anchor = self.tip

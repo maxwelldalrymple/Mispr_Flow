@@ -406,6 +406,45 @@ class TestLevel:
         assert r.level() == 0.0
 
 
+class FakeCaptureDevice:
+    """Stands in for AVCaptureDevice's default-device lookup."""
+
+    device = None
+
+    @classmethod
+    def defaultDeviceWithMediaType_(cls, kind):
+        return cls.device
+
+
+class Device:
+    def __init__(self, name, transport):
+        self._name, self._transport = name, transport
+
+    def localizedName(self):
+        return self._name
+
+    def transportType(self):
+        return self._transport
+
+
+class TestInputDevice:
+    def test_built_in_mic(self):
+        FakeCaptureDevice.device = Device("MacBook Pro Microphone", int.from_bytes(b"bltn", "big"))
+        assert audio.input_device(FakeCaptureDevice) == ("MacBook Pro Microphone", True)
+
+    def test_bluetooth_headset_is_not_built_in(self):
+        FakeCaptureDevice.device = Device("AirPods Pro", int.from_bytes(b"blue", "big"))
+        assert audio.input_device(FakeCaptureDevice) == ("AirPods Pro", False)
+
+    def test_no_microphone(self):
+        FakeCaptureDevice.device = None
+        assert audio.input_device(FakeCaptureDevice) == (None, False)
+
+    def test_real_lookup_returns_a_pair(self):
+        name, built_in = audio.input_device()  # metadata only; the mic is not opened
+        assert (name is None or isinstance(name, str)) and isinstance(built_in, bool)
+
+
 class TestResampling:
     def test_real_resampler_converts_44k1_to_16k(self):
         stream = audio._soxr_stream(44100)

@@ -1241,3 +1241,65 @@ class TestDebugLog:
         controller.fn_down()  # cancels; this press is consumed
         controller.fn_up()
         assert "fn up\n" in capsys.readouterr().err
+
+
+# --- Mic notice (first dictation after launch) ------------------------------------------------
+
+class TestMicNotice:
+    @pytest.mark.parametrize("name,built_in,text", [
+        ("MacBook Pro Microphone", True, "Using Built-in mic (recommended)"),
+        ("AirPods Pro", False, "Using AirPods Pro"),
+        (None, False, None),
+    ])
+    def test_wording(self, name, built_in, text):
+        assert W.mic_notice_text(name, built_in) == text
+
+    def test_duration_spec(self):
+        assert W.MIC_NOTICE_SECONDS == 3.0
+
+    def test_shown_on_first_dictation_only(self, controller, clock):
+        controller.fn_down()
+        assert controller.mic_notice == ("Using Built-in mic (recommended)", clock.now)
+        clock.advance(1)
+        controller.fn_up()
+        clock.advance(10)
+        controller.state = W.IDLE
+        first = controller.mic_notice
+        controller.fn_down()
+        assert controller.mic_notice == first  # not re-armed for the second dictation
+
+    def test_also_on_first_handsfree_or_mouse_recording(self, controller, clock):
+        controller.begin_handsfree()
+        assert controller.mic_notice is not None
+
+    def test_skipped_when_there_is_no_mic_name(self, controller, monkeypatch):
+        monkeypatch.setattr(W.audio, "input_device", lambda: (None, False))
+        controller.begin_hold("fn")
+        assert controller.mic_notice is None
+
+    @pytest.mark.parametrize("elapsed,alpha", [(0.0, 1.0), (2.6, 1.0), (2.8, 0.5), (3.0, 0.0), (9.0, 0.0)])
+    def test_visible_for_three_seconds_then_fades(self, controller, clock, elapsed, alpha):
+        controller.begin_hold("fn")
+        clock.advance(elapsed)
+        assert controller._mic_notice_alpha() == pytest.approx(alpha)
+
+    @pytest.mark.parametrize("state", [W.IDLE, W.HOVER, W.PROCESSING, W.CANCELLED, W.MEETING])
+    def test_only_while_recording(self, controller, state):
+        controller.begin_hold("fn")
+        controller.state = state
+        assert controller._mic_notice_alpha() == 0.0
+
+    def test_takes_priority_over_tooltips(self, controller, bitmap_context, monkeypatch):
+        drawn = []
+        monkeypatch.setattr(controller, "_draw_mic_notice", lambda bg, a: drawn.append(a))
+        controller.begin_handsfree()
+        controller.tip, controller.tip_a = (W.TOOLTIPS[(W.HANDSFREE, "wave")], W.layout(W.HANDSFREE).elems["wave"]), 1.0
+        controller._draw_tooltip(W.layout(W.HANDSFREE).bg.rect)
+        assert drawn == [1.0]
+
+
+def test_mic_notice_matches_golden_image(controller, clock, golden_image):
+    controller.begin_hold("fn")
+    _prepare_render(controller, W.HOLD)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_hold_mic_notice", pixels, rep)

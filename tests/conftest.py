@@ -193,6 +193,7 @@ def controller(monkeypatch, clock):
         "page_title": "Example" if include_page else None,
     })
     monkeypatch.setattr(W.sounds, "Sounds", SpySounds)
+    monkeypatch.setattr(W.audio, "input_device", lambda: ("MacBook Pro Microphone", True))
     c = W.WidgetController()
     c.pasted = pasted
     return c
