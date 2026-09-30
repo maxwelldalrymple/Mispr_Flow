@@ -48,6 +48,7 @@ from AppKit import (
     NSWindowStyleMaskNonactivatingPanel,
 )
 from Foundation import NSObject
+from PyObjCTools import AppHelper
 
 from . import draw, sounds
 from .draw import Rect, white
@@ -76,6 +77,10 @@ MORPH = 0.3  # per-frame easing factor toward the target shape
 HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
 FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
 DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
+
+# Hands-free keyboard shortcuts (macOS virtual keycodes).
+KEY_SPACE = 49  # finish and paste
+KEY_DELETE = 51  # cancel
 PROCESSING_STUB_SECONDS = 1.2
 TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
@@ -373,6 +378,24 @@ class WidgetController:
             self.discard_quietly()
         else:
             self.finish()
+
+    def handle_key(self, keycode):
+        """Called from inside the event tap: decide fast, act on the next run-loop pass.
+
+        Hands-free: space = finish and paste, delete = cancel.
+        Cancelled toast: delete = discard now (skip the Undo countdown).
+        """
+        state = self.state
+        action = {
+            (HANDSFREE, KEY_SPACE): self.finish,
+            (HANDSFREE, KEY_DELETE): self.cancel,
+            (CANCELLED, KEY_DELETE): self._expire_cancel,
+        }.get((state, keycode))
+        if action is None:
+            return False
+        log(f"key {keycode} -> {action.__name__}")
+        AppHelper.callAfter(lambda: self.state == state and action())
+        return True
 
     def fn_combo(self):
         """Another key was pressed with fn held (fn+arrow, fn+F-key...): not dictation."""

@@ -91,3 +91,10 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - **Press during hands-free:** finish and paste.
 - **fn + another key** (fn+arrow, fn+F-key): treated as a modifier combo, and the recording is discarded.
 - fn is ignored while processing, during a meeting, or while the "Started by mistake?" card is open.
+- The 🌐/fn key also emits its own key event (keycode 179); macOS opens Emoji & Symbols from it, so it is swallowed along with the fn flag.
+
+## Keyboard Shortcuts
+
+- **Hands-free:** space = finish and paste, delete = cancel.
+- **Cancelled toast:** delete = discard immediately (skip the Undo countdown).
+- These keys are swallowed only in those states; modified presses (e.g. ⌘Space) always pass through.
