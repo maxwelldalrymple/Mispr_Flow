@@ -68,6 +68,21 @@ class SecureAudioBuffer:
             self.locked = False
 
 
+_BUILT_IN = int.from_bytes(b"bltn", "big")  # CoreAudio kAudioDeviceTransportTypeBuiltIn
+
+
+def input_device(device_cls=None):
+    """(name, is_built_in) of the default microphone, or (None, False) if there is none."""
+    if device_cls is None:
+        from AVFoundation import AVCaptureDevice as device_cls
+    from AVFoundation import AVMediaTypeAudio
+
+    device = device_cls.defaultDeviceWithMediaType_(AVMediaTypeAudio)
+    if device is None:
+        return None, False
+    return str(device.localizedName()), device.transportType() == _BUILT_IN
+
+
 class MicEngine:
     """Thin adapter over AVAudioEngine: the only code that touches AVFoundation.
 

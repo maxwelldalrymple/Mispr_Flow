@@ -750,46 +750,102 @@ class TestSoundCues:
         controller.fn_down()
         clock.advance(1)
         controller.fn_up()
-        assert controller.sounds.played == ["Tink", "Pop"]
+        assert controller.sounds.played == ["start", "stop"]
 
-    def test_double_tap_plays_start_once(self, controller, clock):
+    def test_double_tap_plays_start_then_lock(self, controller, clock):
         controller.fn_down(); clock.advance(0.1); controller.fn_up()
         clock.advance(0.2)
         controller.fn_down()
-        assert controller.state == W.HANDSFREE and controller.sounds.played == ["Tink"]
+        assert controller.state == W.HANDSFREE and controller.sounds.played == ["start", "lock"]
+
+    def test_no_lock_sound_if_mic_fails_on_second_tap(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        clock.advance(0.2)
+        controller.recorder.start_ok = False
+        controller.fn_down()
+        assert controller.state != W.HANDSFREE and controller.sounds.played == ["start", "error"]
+
+    def test_model_download_failure_plays_error(self, controller):
+        controller._setup_failed("offline")
+        assert controller.sounds.played == ["error"]
 
     def test_quick_tap_discard_is_silent_after_start(self, controller, clock):
         controller.fn_down(); clock.advance(0.1); controller.fn_up()
-        assert controller.sounds.played == ["Tink"]
+        assert controller.sounds.played == ["start"]
 
     def test_mouse_handsfree_then_cancel(self, controller):
         controller.set_state(W.HOVER)
         click(controller, "mic")
         click(controller, "cancel")
-        assert controller.sounds.played == ["Tink", "Bottle"]
+        assert controller.sounds.played == ["start", "cancel"]
 
     def test_undo_and_expiry_are_silent(self, controller, clock):
         controller.begin_handsfree()
         controller.cancel()
         controller.undo_cancel()
-        assert controller.sounds.played == ["Tink", "Bottle"]
+        assert controller.sounds.played == ["start", "cancel"]
 
     def test_meeting(self, controller, clock):
         controller.begin_meeting()
         clock.advance(30)
         controller.stop_meeting()
-        assert controller.sounds.played == ["Tink", "Pop"]
+        assert controller.sounds.played == ["start", "stop"]
 
     def test_short_meeting_still_confirms_stop(self, controller):
         controller.begin_meeting()
         controller.stop_meeting()
-        assert controller.sounds.played == ["Tink", "Pop"] and controller.state == W.MISTAKE
+        assert controller.sounds.played == ["start", "stop"] and controller.state == W.MISTAKE
 
-    def test_mic_failure_is_silent(self, controller):
+    def test_mic_failure_plays_error(self, controller):
         controller.recorder.start_ok = False
         controller.fn_down()
         controller.begin_handsfree()
-        assert controller.sounds.played == []
+        assert controller.sounds.played == ["error", "error"]
+
+    def test_paste_sound_when_text_lands(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hello there.", "hello there", None, 1.0, "finished")
+        assert controller.pasted == ["Hello there."] and controller.sounds.played == ["start", "stop", "paste"]
+
+    @pytest.mark.parametrize("target", ["yes", "unknown"])
+    def test_pastes_unless_sure_there_is_no_text_box(self, controller, monkeypatch, target):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: target)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and controller.copied == [] and controller.sounds.played[-1] == "paste"
+
+    def test_no_text_box_copies_instead_with_error_sound(self, controller, monkeypatch, clock):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: W.context.NO)
+        saved = []
+        monkeypatch.setattr(controller, "_save", lambda status, text, **kw: saved.append((status, text)))
+        controller.begin_handsfree()
+        clock.advance(10)  # the first-dictation mic notice is long gone
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == [] and controller.copied == ["Hi."]
+        assert controller.sounds.played == ["start", "stop", "error"]
+        assert saved == [(W.storage.COPIED, "Hi.")]
+        assert controller.state == W.IDLE and controller.notice[0] == "No text box · Copied to clipboard"
+        assert controller._notice_alpha() == 1.0
+        clock.advance(4.0)
+        assert controller._notice_alpha() == 0.0
+
+    def test_alert_when_nothing_was_heard(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("", "", None, 1.0, "finished")
+        assert controller.pasted == [] and controller.sounds.played == ["start", "stop", "alert"]
+
+    def test_quick_tap_does_not_alert(self, controller, clock):
+        controller.fn_down(); clock.advance(0.1); controller.fn_up()
+        clock.advance(5)
+        assert "alert" not in controller.sounds.played
+
+    def test_models_installed_plays_success(self, controller):
+        controller._setup_done()
+        assert controller.sounds.played == ["success"]
 
 
 class TestStateMachineDetails:
@@ -1241,3 +1297,72 @@ class TestDebugLog:
         controller.fn_down()  # cancels; this press is consumed
         controller.fn_up()
         assert "fn up\n" in capsys.readouterr().err
+
+
+# --- Mic notice (first dictation after launch) ------------------------------------------------
+
+class TestMicNotice:
+    @pytest.mark.parametrize("name,built_in,text", [
+        ("MacBook Pro Microphone", True, "Using Built-in mic (recommended)"),
+        ("AirPods Pro", False, "Using AirPods Pro"),
+        (None, False, None),
+    ])
+    def test_wording(self, name, built_in, text):
+        assert W.mic_notice_text(name, built_in) == text
+
+    def test_duration_spec(self):
+        assert W.MIC_NOTICE_SECONDS == 3.0
+
+    def test_shown_on_first_dictation_only(self, controller, clock):
+        controller.fn_down()
+        assert controller.notice == ("Using Built-in mic (recommended)", clock.now, 3.0, (W.HOLD, W.HANDSFREE))
+        clock.advance(1)
+        controller.fn_up()
+        clock.advance(10)
+        controller.state = W.IDLE
+        first = controller.notice
+        controller.fn_down()
+        assert controller.notice == first  # not re-armed for the second dictation
+
+    def test_also_on_first_handsfree_or_mouse_recording(self, controller, clock):
+        controller.begin_handsfree()
+        assert controller.notice is not None
+
+    def test_skipped_when_there_is_no_mic_name(self, controller, monkeypatch):
+        monkeypatch.setattr(W.audio, "input_device", lambda: (None, False))
+        controller.begin_hold("fn")
+        assert controller.notice is None
+
+    @pytest.mark.parametrize("elapsed,alpha", [(0.0, 1.0), (2.6, 1.0), (2.8, 0.5), (3.0, 0.0), (9.0, 0.0)])
+    def test_visible_for_three_seconds_then_fades(self, controller, clock, elapsed, alpha):
+        controller.begin_hold("fn")
+        clock.advance(elapsed)
+        assert controller._notice_alpha() == pytest.approx(alpha)
+
+    @pytest.mark.parametrize("state", [W.IDLE, W.HOVER, W.PROCESSING, W.CANCELLED, W.MEETING])
+    def test_only_while_recording(self, controller, state):
+        controller.begin_hold("fn")
+        controller.state = state
+        assert controller._notice_alpha() == 0.0
+
+    def test_takes_priority_over_tooltips(self, controller, bitmap_context, monkeypatch):
+        drawn = []
+        monkeypatch.setattr(controller, "_draw_notice", lambda bg, a: drawn.append(a))
+        controller.begin_handsfree()
+        controller.tip, controller.tip_a = (W.TOOLTIPS[(W.HANDSFREE, "wave")], W.layout(W.HANDSFREE).elems["wave"]), 1.0
+        controller._draw_tooltip(W.layout(W.HANDSFREE).bg.rect)
+        assert drawn == [1.0]
+
+
+def test_mic_notice_matches_golden_image(controller, clock, golden_image):
+    controller.begin_hold("fn")
+    _prepare_render(controller, W.HOLD)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_hold_mic_notice", pixels, rep)
+
+
+def test_copied_notice_matches_golden_image(controller, clock, golden_image):
+    controller.show_notice(W.COPIED_NOTICE, W.COPIED_NOTICE_SECONDS, (W.IDLE, W.HOVER))
+    _prepare_render(controller, W.IDLE)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_idle_copied_notice", pixels, rep)

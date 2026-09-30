@@ -40,7 +40,7 @@ from AppKit import (
 )
 from Foundation import NSObject
 
-from . import hotkey, settings as settings_mod
+from . import hotkey, settings as settings_mod, sounds
 
 WELCOME, PERMISSIONS, MODELS, READY = range(4)
 STEP_NAMES = ("Welcome", "Permissions", "Models", "Ready")
@@ -271,9 +271,11 @@ class SetupWindow:
     WIDTH, HEIGHT = 560, 520
     CONTENT_W = 480
 
-    def __init__(self, flow, on_finish=lambda: None):
+    def __init__(self, flow, on_finish=lambda: None, play=lambda name: None):
         self.flow = flow
         self.on_finish = on_finish
+        self.play = play  # sound cue player (sounds.Sounds.play)
+        self.was_granted = flow.granted()
         self.actions = _Actions.alloc().init()
         self.actions.owner = self
         self.timer = None
@@ -306,6 +308,7 @@ class SetupWindow:
     # Events
     def on_continue(self):
         if self.flow.step == READY:
+            self.play(sounds.ACHIEVEMENT)
             self.flow.finish()
             self.close()
             self.on_finish()
@@ -444,6 +447,9 @@ class SetupWindow:
     def refresh(self):
         """Poll permissions and model progress; update checkmarks, progress, and Continue."""
         granted = self.flow.granted()
+        if any(granted[k] and not self.was_granted.get(k) for k in granted):
+            self.play(sounds.SUCCESS)  # a checkmark just turned on
+        self.was_granted = granted
         for key, (status, button) in self.rows.items():
             status.setHidden_(not granted[key])
             button.setHidden_(granted[key])

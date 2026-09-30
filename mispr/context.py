@@ -4,6 +4,8 @@ Uses the Accessibility API (already granted for the fn tap and paste), so no ext
 per-browser Automation prompts are needed, unlike AppleScript.
 """
 
+from pathlib import Path
+
 import ApplicationServices as AS
 from AppKit import NSWorkspace
 
@@ -58,6 +60,74 @@ def _browser_page(pid):
         url = _url_string(_attr(window, "AXDocument"))
         title = _attr(window, "AXTitle")
     return url, (str(title) if title else None)
+
+
+# --- Is there somewhere to paste? ------------------------------------------------------------
+
+YES, NO, UNKNOWN = "yes", "no", "unknown"
+TEXT_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"}
+_NO_VALUE = -25212  # kAXErrorNoValue: the app answered, and nothing has keyboard focus
+
+
+def _is_text_input(element):
+    if _attr(element, "AXRole") in TEXT_ROLES:
+        return True
+    if _attr(element, "AXEditableAncestor") is not None:  # contenteditable in WebKit/Chromium
+        return True
+    err, settable = AS.AXUIElementIsAttributeSettable(element, "AXValue", None)
+    return err == 0 and bool(settable) and _attr(element, "AXSelectedTextRange") is not None
+
+
+def text_target(pid, electron=False):
+    """YES if app `pid` has a focused text input, NO if it clearly has none (e.g. Finder,
+    the desktop, a web page with nothing focused), UNKNOWN if the app won't say.
+
+    Callers paste on UNKNOWN, so this only ever skips a paste that had nowhere to go.
+    Electron apps (VS Code, Slack...) can report "nothing focused" while their editor has
+    the caret, so for them that answer is UNKNOWN rather than NO.
+    """
+    try:
+        app = AS.AXUIElementCreateApplication(pid)
+        AS.AXUIElementSetMessagingTimeout(app, _AX_TIMEOUT)
+        # Electron apps only build their accessibility tree when asked to.
+        AS.AXUIElementSetAttributeValue(app, "AXManualAccessibility", True)
+        err, focused = AS.AXUIElementCopyAttributeValue(app, "AXFocusedUIElement", None)
+        if err == _NO_VALUE:
+            return UNKNOWN if electron else NO
+        if err != 0 or focused is None:
+            return UNKNOWN
+        if _is_text_input(focused):
+            return YES
+        role = _attr(focused, "AXRole")
+        # Only say NO for roles we know aren't typing surfaces; anything unexpected
+        # (a custom editor, a terminal emulator's own view) gets the benefit of the doubt.
+        return NO if role in NOT_TEXT_ROLES else UNKNOWN
+    except Exception:
+        return UNKNOWN
+
+
+NOT_TEXT_ROLES = {
+    "AXWebArea", "AXList", "AXOutline", "AXTable", "AXBrowser", "AXButton", "AXWindow",
+    "AXApplication", "AXImage", "AXStaticText", "AXLink", "AXCheckBox", "AXRadioButton",
+    "AXPopUpButton", "AXMenuButton", "AXTabGroup", "AXSlider", "AXCell", "AXRow", "AXToolbar",
+}
+
+
+def _is_electron(app):
+    url = app.bundleURL()
+    return url is not None and (Path(str(url.path())) / "Contents/Frameworks/Electron Framework.framework").exists()
+
+
+def focused_text_target():
+    """text_target() for the frontmost app."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return NO
+    try:
+        electron = _is_electron(app)
+    except Exception:
+        electron = True  # can't tell: take the cautious answer
+    return text_target(app.processIdentifier(), electron)
 
 
 def frontmost(include_page=True):

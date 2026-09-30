@@ -159,7 +159,7 @@ def main():
     def open_setup():
         window = setup_window.get("w")
         if window is None or not window.window.isVisible():
-            window = onboarding.SetupWindow(_setup_flow(widget))
+            window = onboarding.SetupWindow(_setup_flow(widget), play=widget.sounds.play)
             setup_window["w"] = window
         window.show()
 

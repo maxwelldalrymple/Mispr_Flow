@@ -52,12 +52,12 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import context, draw, settings, setup, sounds, storage
+from . import audio, context, draw, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import paste_text
+from .paste import copy_text, paste_text
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -93,6 +93,10 @@ KEY_DELETE = 51  # cancel
 TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
+
+MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation after launch
+COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
+COPIED_NOTICE = "No text box · Copied to clipboard"
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -187,6 +191,14 @@ TOOLTIPS = {
 }
 
 
+def mic_notice_text(name, built_in):
+    """Built-in mics are recommended: Bluetooth headsets drop to low-quality audio while
+    their mic is in use."""
+    if built_in:
+        return "Using Built-in mic (recommended)"
+    return f"Using {name}" if name else None
+
+
 class WidgetView(NSView):
     def isFlipped(self):
         return False
@@ -254,6 +266,9 @@ class WidgetController:
         self.fn_press_at = 0.0
         self.fn_consumed = False  # this fn press already did something; ignore its release
         self.last_tap_at = None  # start time of a recent short fn tap (double-tap detection)
+
+        self.notice = None  # (text, shown_at, seconds, states): a pill above the widget
+        self.mic_notice_done = False  # which mic is in use: once per launch
 
     # --- Setup --------------------------------------------------------------
 
@@ -324,6 +339,11 @@ class WidgetController:
 
     def _note_context(self):
         self.rec_started_at, self.rec_ended_at = datetime.now(), None
+        if not self.mic_notice_done:
+            self.mic_notice_done = True
+            text = mic_notice_text(*audio.input_device())
+            if text:
+                self.show_notice(text, MIC_NOTICE_SECONDS, (HOLD, HANDSFREE))
         # App only (cheap); the browser page is looked up at paste time.
         self.rec_recorded_in = context.frontmost(include_page=False)
 
@@ -352,6 +372,7 @@ class WidgetController:
     def begin_hold(self, source):
         self._drop_cancelled()
         if not self.recorder.start():
+            self.sounds.play(sounds.ERROR)  # the mic didn't open: don't fail silently
             return
         self._note_context()
         self.sounds.play(sounds.START)
@@ -361,6 +382,7 @@ class WidgetController:
     def begin_handsfree(self, sound=True):
         self._drop_cancelled()
         if not self.recorder.start():
+            self.sounds.play(sounds.ERROR)
             return
         self._note_context()
         if sound:
@@ -391,9 +413,20 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         if text:
             target = context.frontmost()  # where the text is about to land
-            paste_text(text)
+            if context.focused_text_target() == context.NO:
+                # ⌘V would do nothing (or paste something odd, like files in Finder).
+                copy_text(text)
+                self.sounds.play(sounds.ERROR)
+                self.show_notice(COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+                status = storage.COPIED
+            else:
+                paste_text(text)
+                self.sounds.play(sounds.PASTE)
+                status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
-            self._save(storage.PASTED, text, pasted_into=target, raw=raw, cleanup=info)
+            self._save(status, text, pasted_into=target, raw=raw, cleanup=info)
+        else:
+            self.sounds.play(sounds.ALERT)  # recorded, but no words came out: nothing to paste
         self._wipe(reason)
         self.to_idle()
 
@@ -435,12 +468,14 @@ class WidgetController:
 
     def _setup_done(self):
         log("setup: models installed")
+        self.sounds.play(sounds.SUCCESS)
         self._load_engines()
         self.to_idle()
 
     def _setup_failed(self, message):
         log(f"setup: failed ({message})")
         print(f"mispr: model download failed: {message}", file=sys.stderr)
+        self.sounds.play(sounds.ERROR)
         self.setup_error = message
 
     def _retry_setup(self):
@@ -458,9 +493,11 @@ class WidgetController:
         elif self.state not in (IDLE, HOVER, CANCELLED):
             pass  # busy (processing, meeting, card): ignore fn
         elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
-            # The first tap already played the start sound.
+            # The first tap already played the start sound; now confirm the lock.
             self.last_tap_at = None
             self.begin_handsfree(sound=False)
+            if self.state == HANDSFREE:
+                self.sounds.play(sounds.LOCK)
         else:
             # Start recording immediately so the first word isn't clipped; a short
             # release turns this into a tap instead.
@@ -753,7 +790,31 @@ class WidgetController:
             draw.fill_round(b, 9, white(fill.whiteComponent(), min(1.0, fill.alphaComponent() + (0.08 if lit else 0)) * a))
             draw.draw_text_centered(draw.rich([(name.capitalize(), bold)], 14, fg), b.cx, b.cy)
 
+    def show_notice(self, text, seconds, states):
+        """Show `text` in a pill above the widget for `seconds`, only while in `states`."""
+        self.notice = (text, time.monotonic(), seconds, states)
+
+    def _notice_alpha(self):
+        """Opacity of the notice: full while shown, fading out over its last 0.4 s."""
+        if self.notice is None or self.state not in self.notice[3]:
+            return 0.0
+        _, shown_at, seconds, _ = self.notice
+        remaining = seconds - (time.monotonic() - shown_at)
+        return max(0.0, min(1.0, remaining / 0.4))
+
+    def _draw_notice(self, bg, a):
+        label = draw.rich([(self.notice[0], False)], 13, white(1.0, a))
+        sz = label.size()
+        box = Rect.centered(bg.cx, bg.top + 8 + 14, sz.width + 32, 28)
+        draw.fill_round(box, 14, white(0.0, 0.92 * a))
+        draw.stroke_round(box, 14, white(1.0, 0.1 * a))
+        draw.draw_text_centered(label, box.cx, box.cy)
+
     def _draw_tooltip(self, bg):
+        notice_a = self._notice_alpha()
+        if notice_a > 0.01:
+            self._draw_notice(bg, notice_a)  # takes the tooltip's spot while visible
+            return
         if self.tip is None or self.tip_a < 0.01:
             return
         parts, anchor = self.tip

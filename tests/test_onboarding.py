@@ -254,11 +254,15 @@ class TestModelStatus:
 
 # --- Window ------------------------------------------------------------------------------------
 
+played = []
+
+
 @pytest.fixture
 def window():
+    played.clear()
     flow, perms, models = make_flow()
     finished = []
-    w = SetupWindow(flow, on_finish=lambda: finished.append(True))
+    w = SetupWindow(flow, on_finish=lambda: finished.append(True), play=played.append)
     w.window.setAppearance_(NSAppearance.appearanceNamed_("NSAppearanceNameAqua"))
     yield w, flow, perms, models, finished
     w.window.orderOut_(None)
@@ -327,6 +331,30 @@ class TestWindow:
         go(w, READY)
         w.continue_button.performClick_(None)
         assert finished == [True] and flow.settings.onboarded is True and not w.window.isVisible()
+
+    def test_granting_a_permission_plays_success_once(self, window):
+        w, flow, perms, _, _ = window
+        go(w, PERMISSIONS)
+        w.refresh()
+        assert played == []
+        perms.grant_required()
+        w.refresh()
+        w.refresh()
+        assert played == ["success"]
+
+    def test_already_granted_permissions_are_silent(self, window):
+        w, flow, perms, _, _ = window
+        perms.grant_required()
+        quiet = SetupWindow(flow, play=played.append)
+        quiet.refresh()
+        quiet.window.orderOut_(None)
+        assert played == []
+
+    def test_finishing_setup_plays_achievement(self, window):
+        w = window[0]
+        go(w, READY)
+        w.continue_button.performClick_(None)
+        assert played == ["achievement"]
 
     def test_close_stops_refresh_timer(self, window):
         w = window[0]

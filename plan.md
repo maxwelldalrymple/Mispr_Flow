@@ -20,7 +20,8 @@ Mispr Flow is a Wispr Flow clone built to be:
 | Text cleanup | `llama-cpp-python` (Metal) with `gemma-3-4b-it-Q4_K_M` (2.5 GB, `ggml-org/gemma-3-4b-it-GGUF`) | Won a 27-case eval: 0 invented words, 0 key words lost, most conservative on ambiguous corrections (~550 ms). Gemma Terms of Use apply. |
 | Microphone | AVAudioEngine (PyObjC) + `soxr` resampling to 16 kHz | Replaced PortAudio (`sounddevice`), whose macOS backend deadlocked in `Pa_StopStream` and froze the widget. See [logs](logs/2026-09-30_14-34-34_mic-deadlock-fix.md). |
 | Hotkey | Active Quartz event tap at the HID level | Swallows fn and the globe key (keycode 179) so macOS doesn't open Emoji & Symbols, as Wispr Flow does. Falls back to a listen-only tap without Accessibility. |
-| Paste | Clipboard + synthetic ⌘V, then restore | Works in every app. Text is marked transient/concealed for clipboard managers. |
+| Paste | Clipboard + synthetic ⌘V, then restore; skipped when no text box is focused | Works in every app. Text is marked transient/concealed for clipboard managers. With no text input focused, ⌘V would do nothing (or paste files in Finder), so the text is left on the clipboard instead. |
+| Sounds | Original WAVs synthesized by `tools/make_sounds.py` | Matches the feel of Wispr Flow's cues (length, pitch range, envelope, loudness were measured as targets) without using their audio, which is theirs. Copies, noise-altered copies, and waveform reconstructions were ruled out for the same reason. |
 | Storage | Save recordings by default; Incognito turns it off | Needed for the future history and stats UI. |
 | Distribution | Unsigned `.pkg` whose postinstall downloads the models; first-launch setup as fallback | Keeps the download small, fits GitHub Releases' 2 GB limit, and updates don't re-download 3 GB of models. |
 | Branding | Mispr Flow, package `mispr`, logo in `mispr/assets/` | Renamed from "Whispr Clone". "Wispr Flow" refers only to the product this is modeled on. |
@@ -47,10 +48,11 @@ fn key ──► hotkey.FnMonitor (HID event tap) ──► widget.WidgetControl
 | Audio | `MicEngine` (the only AVFoundation code) taps input bus 0 at the native rate (44.1 kHz). `Recorder` resamples to 16 kHz into a preallocated, `mlock`ed NumPy buffer. |
 | STT | whisper.cpp reads the buffer view directly (no copy, no WAV file). Runs on a daemon worker. |
 | Cleanup | Gemma with a strict "minimal edit, never add words" prompt and few-shot examples; every output is checked by `cleanup.check()`. |
-| Paste | `NSPasteboard` snapshot → set text + private types → post ⌘V (flags = ⌘ only) → restore after 0.5 s unless the user copied something new. |
+| Paste | `context.focused_text_target()` first: YES (text field/area, combo/search box, contenteditable, or an editable value with a caret), NO (nothing focused, or a known non-text role like a Finder list or bare web page), UNKNOWN (anything else; Electron apps reporting no focus). On YES/UNKNOWN: `NSPasteboard` snapshot → set text + private types → post ⌘V (flags = ⌘ only) → restore after 0.5 s unless the user copied something new. On NO: `copy_text` leaves it on the clipboard. |
 | Context | Accessibility API: walks up from the focused element to the outermost `AXWebArea` for the page URL; falls back to the window's `AXDocument`. 0.3 s timeout. |
 | Widget | Borderless, non-activating `NSPanel` at status-bar level, redrawn at 60 fps by an `NSTimer` in common run-loop modes. Click-through except over buttons. |
-| Menu bar | `NSStatusItem` with the logo as an 18 pt template image (tints for light/dark); "Quit Mispr Flow". |
+| Menu bar | `NSStatusItem` with the logo as an 18 pt template image (tints for light/dark); "Setup Guide…" and "Quit Mispr Flow". |
+| Sounds | `sounds.Sounds` loads each WAV once with `NSSound` and plays a copy per cue so overlapping cues don't cut each other off. |
 | Threads | `threads.start_daemon()` for model loads, transcription, downloads, and mic stops, so nothing can block quitting. |
 
 See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
@@ -77,13 +79,15 @@ Requested from the setup window (`onboarding.py`), never on launch:
 9. ✅ Mic freeze fix: AVAudioEngine replaced PortAudio; non-blocking stop.
 10. ✅ Rebrand to Mispr Flow (package, data folder, logo, app and menu-bar icons, GitHub repo).
 11. ✅ First-run setup window: Welcome → Permissions (live checkmarks; Microphone + Accessibility required, Screen & System Audio optional) → Models (progress, Retry) → Ready. Reopens when something required is missing; "Setup Guide…" in the menu; no launch-time permission prompts.
-12. ⬜ Main window: history (from the saved JSON), stats (words, WPM, streak, apps), settings (Incognito, cleanup).
+12. ⬜ **Next.** Main window: history (from the saved JSON), stats (words, WPM, streak, apps), settings (Incognito, cleanup). Modeled on Wispr Flow's screens (the user is recording a video of each); light and dark; the widget stays always visible. Must be a real downloadable Mac app, not a web app; native AppKit vs SwiftUI is still to decide.
 13. ⬜ Meeting notetaker (◉): mic + system audio, diarization, LLM summary to `meeting-recordings/`.
 14. ⬜ `.pkg` installer (py2app bundle, postinstall model download, Gemma terms), plus a DMG wrapper.
 15. ⬜ Wispr-style extras: custom dictionary, snippets, app-aware style.
 16. ⬜ Languages (French and Spanish at minimum; ideally every language Whisper supports): a `language` setting (explicit code or `auto`), multilingual cleanup prompt and examples, the detected language in the JSON record, and eval cases per language. See "Languages" below for test results.
 17. ⬜ Customization in the UI: choose icon, sounds, widget position/size, and shortcuts from the settings window.
 18. ✅ MIT license, CONTRIBUTING guide, and CHANGELOG.
+19. ✅ Original sound cues hooked to every current event; paste only when a text box is focused (otherwise copy + error sound + notice).
+20. ✅ First-dictation mic-name notice; app icon on the macOS icon grid.
 
 ## Floating Widget
 
@@ -101,7 +105,26 @@ A transparent, non-activating panel centred just above the Dock on the screen wi
 | Started by mistake? | Card with Discard / Keep | Stopping a meeting shorter than 10 s |
 | Setup | "Downloading models NN%" with progress bar; "Model download failed · Retry" | Launch with a model missing |
 
-Behaviour: soft system sounds (Tink / Pop / Bottle) on start, stop, and cancel; follows the focused window's screen (or the pointer's); the idle pill hides in fullscreen apps but recording states always show. SF Symbols for all icons.
+Behaviour: original sound cues (see Sounds); a notice pill above the widget ("Using Built-in mic (recommended)" for 3 s on the first recording after launch, "No text box · Copied to clipboard" for 4 s after a copy), which takes the tooltip's place and fades over its last 0.4 s; follows the focused window's screen (or the pointer's); the idle pill hides in fullscreen apps but recording states always show. SF Symbols for all icons.
+
+## Sounds
+
+Ten cues in `mispr/assets/sounds/` (48 kHz mono WAV), synthesized from sine partials, pitch glides, envelopes, and seeded noise by `tools/make_sounds.py`. Wispr Flow's default cues were measured (duration, attack, pitch trajectory, spectral centroid, peak and RMS level) and used only as targets for the feel.
+
+| Cue | Event | Character |
+|---|---|---|
+| start | Recording begins (fn, mouse, meeting) | ~65 ms soft wooden tock, ~440 Hz, -16.5 dBFS |
+| stop | Recording finished (also meeting stop) | ~130 ms bloop, swells in, falls 460 → 290 Hz |
+| lock | Double-tap locks hands-free | Two bubbly pops, ~105 ms, -21 dBFS |
+| paste | Text pasted into a text box | Rising three-note chime, ~480 ms |
+| cancel | Recording cancelled | Lower, shorter stop |
+| alert | Recording produced no words | Gentle two-step rise that swells in |
+| error | Mic failed to open; no text box; model download failed | Low-high-low |
+| success | Models installed; a setup permission granted | High note resolving down |
+| achievement | Setup guide finished | Ringing bell with octave shimmer |
+| notification | Reserved for the main window | Bright tick settling downward |
+
+Dictation cues stay under 200 ms and below -15 dBFS so they never startle or cover speech (tested).
 
 ## fn Gestures and Shortcuts
 
@@ -153,7 +176,7 @@ On launch, if either required model (Whisper large-v3-turbo q5, Gemma-3-4B-it Q4
 ## Recording Storage
 
 - **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/Mispr_Flow/voice-recordings` once packaged), named by start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) + `.json`.
-- **JSON fields:** `id`, `started_at` / `ended_at` (ms precision, with timezone), `duration_s`, `status` (`pasted` / `cancelled`), `transcript`, `raw_transcript`, `words`, `recorded_in` (app, bundle id), `pasted_into` (app, bundle id, and for browsers `url` and `page_title`; `null` if cancelled), `model`, `cleanup` (model, applied, ms, rejection reason), `audio_file`.
+- **JSON fields:** `id`, `started_at` / `ended_at` (ms precision, with timezone), `duration_s`, `status` (`pasted` / `copied` (no text box; left on the clipboard) / `cancelled`), `transcript`, `raw_transcript`, `words`, `recorded_in` (app, bundle id), `pasted_into` (app, bundle id, and for browsers `url` and `page_title`; `null` if cancelled), `model`, `cleanup` (model, applied, ms, rejection reason), `audio_file`.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, silent clips, and anything in Incognito mode.
 - **Possible upgrade:** encrypt recordings with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
 
@@ -180,11 +203,11 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Testing and Quality
 
-- **Suite:** 769 unit tests (~14 s) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
-- **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (31 files, reviewed visually), and fakes for AppKit objects.
+- **Suite:** 841 unit tests (~15 s) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
+- **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (44 files, reviewed visually), and fakes for AppKit objects.
 - **Mutation score:** 97.6% overall; audio 95.5%. Remaining survivors are documented as equivalent mutants.
 - **Reports:** `logs/2026-09-30_13-25-55_stresstest.md` (suite stress test) and `logs/2026-09-30_14-34-34_mic-deadlock-fix.md` (freeze diagnosis).
-- **Tools:** `tools/stress_test.py`, `tools/mutation_test.py`, `tools/eval_cleanup.py`, `tools/render_states.py`.
+- **Tools:** `tools/stress_test.py`, `tools/mutation_test.py`, `tools/eval_cleanup.py`, `tools/render_states.py`, `tools/make_sounds.py` (sound cues), `tools/make_icon.py` (`AppIcon.icns`).
 
 ## Known Issues and Tech Debt
 
@@ -195,6 +218,9 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - The app still runs from source; an `.app` bundle and signing are pending.
 - The meeting pill's waveform is simulated until meeting capture exists.
 - Transcription is English-only today despite the multilingual model.
+- Text-box detection gives Electron apps (VS Code, Slack, Discord) the benefit of the doubt when they report no focus, so ⌘V can still go nowhere there; Chrome's focused web content often reads as an unfamiliar role (UNKNOWN), which also pastes.
+- The mutation score (97.6%) predates the sounds, notice, and text-box work; re-run `tools/mutation_test.py`.
+- The new app icon only shows in Finder/the Dock once there's an `.app` bundle; today it appears in alerts and About.
 
 ## Languages (planned)
 
@@ -218,5 +244,7 @@ Findings: detection was correct on every clip, but auto-detect roughly doubles t
 
 - `main`: merged, working code (via GitHub PRs).
 - `build`: day-to-day development; merged into `main` through PRs.
-- `planning`, `Rebranding`, `widget`, `dictation-complete`, `widgets-fn-record-complete`: milestone and feature branches (all merged).
+- `planning`, `Rebranding`, `widget`, `dictation-complete`, `widgets-fn-record-complete`, `setup-screens`: milestone and feature branches (all merged).
+- `original-sounds`: sound cues, paste-only-into-text-boxes, mic notice, app icon (on top of `build`; not merged yet).
+- `fix-setup-window-space`: opens the setup window on the active Space (not merged yet).
 - Tags: `v0.1-dictation` (end-to-end dictation), `v0.2-llm-cleanup` (LLM cleanup + guard).

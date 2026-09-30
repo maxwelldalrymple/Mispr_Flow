@@ -30,6 +30,7 @@ SAMPLE_RATE = 16_000
 
 # Status values written to the metadata.
 PASTED = "pasted"
+COPIED = "copied"  # no text box was focused: left on the clipboard instead
 CANCELLED = "cancelled"
 
 
