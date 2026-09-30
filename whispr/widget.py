@@ -213,12 +213,12 @@ class WidgetController:
             False,
         )
         p = self.panel
-        p.setLevel_(NSStatusWindowLevel)
+        p.setFloatingPanel_(True)
+        p.setLevel_(NSStatusWindowLevel)  # after setFloatingPanel_, which resets the level
         p.setOpaque_(False)
         p.setBackgroundColor_(NSColor.clearColor())
         p.setHasShadow_(False)
         p.setHidesOnDeactivate_(False)
-        p.setFloatingPanel_(True)
         p.setIgnoresMouseEvents_(True)
         p.setCollectionBehavior_(
             NSWindowCollectionBehaviorCanJoinAllSpaces
