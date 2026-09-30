@@ -7,17 +7,20 @@ States (see README / PLAN for the full behaviour):
     HOLD        push-to-talk recording: compact pill with live waveform
     HANDSFREE   toggle recording: ✕ · waveform · ✓
     PROCESSING  transcribing: dim waveform + spinner
-    CANCELLED   "Transcript cancelled" toast with a draining progress bar
+    CANCELLED   "Transcript cancelled · Undo" toast with a draining progress bar
     MEETING     notetaker running: outlined pill with waveform + ■ stop
     MISTAKE     "Started by mistake?" card (Discard / Keep)
 
-This build is UI-only: clicks drive every state, the waveform comes from a fake
-level source, and PROCESSING / meeting stop are stubs. `fn` handling, audio, STT
-and paste plug into begin_hold / begin_handsfree / finish / cancel later.
+Dictation is driven by the `fn` key (hold = push-to-talk, double-tap within 1 s =
+hands-free, press again to finish) or by clicking the widget. The waveform shows the
+live microphone level. Transcription/paste after PROCESSING and the meeting notetaker
+are still stubs; the meeting pill uses a simulated waveform.
 """
 
 import math
+import os
 import random
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -27,6 +30,8 @@ from AppKit import (
     NSColor,
     NSCompositingOperationCopy,
     NSEvent,
+    NSFontWeightBold,
+    NSFontWeightSemibold,
     NSMakeRect,
     NSPanel,
     NSRectFillUsingOperation,
@@ -43,9 +48,11 @@ from AppKit import (
     NSWindowStyleMaskNonactivatingPanel,
 )
 from Foundation import NSObject
+from PyObjCTools import AppHelper
 
 from . import draw, sounds
 from .draw import Rect, white
+from .audio import Recorder
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -68,12 +75,28 @@ BASE = 18  # centre line of the pill, in points above the bottom of the visible 
 FPS = 60
 MORPH = 0.3  # per-frame easing factor toward the target shape
 HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
+FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
+DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
+
+# Hands-free keyboard shortcuts (macOS virtual keycodes).
+KEY_SPACE = 49  # finish and paste
+KEY_DELETE = 51  # cancel
 PROCESSING_STUB_SECONDS = 1.2
-TOAST_SECONDS = 3.0
+TOAST_SECONDS = 5.0  # how long Undo stays available (the audio is held until then)
 MIN_MEETING_SECONDS = 10  # stand-in for "only a few words were captured"
 SCREEN_POLL_SECONDS = 0.5
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
+NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
+
+DEBUG = os.environ.get("WHISPR_DEBUG") == "1"
+
+
+def log(msg):
+    """Debug trace (WHISPR_DEBUG=1). Never logs audio content, only timings and stats."""
+    if DEBUG:
+        now = time.time()
+        print(f"[{time.strftime('%H:%M:%S', time.localtime(now))}.{int(now % 1 * 1000):03d}] {msg}", file=sys.stderr, flush=True)
 
 
 @dataclass
@@ -104,9 +127,11 @@ def layout(state):
     if state == IDLE:
         return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.35, 0.5))
     if state == HOVER:
-        mic = Rect.centered(CX - 16, BASE, 48, 28)
-        note = Rect.centered(CX + 26, BASE, 28, 28)
-        return Layout(Shape(mic, 14, 0.9, 0.15), {"mic": mic, "note": note}, ("mic", "note"))
+        # Taller than the recording pills and lifted off the Dock, so they're easy to hit.
+        h, bottom, gap = 36, 12, 5
+        mic = Rect(CX - 48, bottom, 56, h)
+        note = Rect(mic.right + gap, bottom, h, h)
+        return Layout(Shape(mic, h / 2, 0.9, 0.15), {"mic": mic, "note": note}, ("mic", "note"))
     if state == HOLD:
         return Layout(Shape(Rect.centered(CX, BASE, 64, 28), 14, 0.92, 0.12))
     if state in (HANDSFREE, PROCESSING):
@@ -120,7 +145,9 @@ def layout(state):
         # ✕ disappears while processing, so the pill's left edge tucks in.
         return Layout(Shape(Rect(CX - 38, BASE - 14, 90, 28), 14, 0.92, 0.12), elems)
     if state == CANCELLED:
-        return Layout(Shape(Rect.centered(CX, BASE + 6, 200, 40), 20, 0.92, 0.1))
+        toast = Rect.centered(CX, BASE + 6, 240, 44)
+        undo = Rect(toast.right - 8 - 58, toast.cy - 14, 58, 28)
+        return Layout(Shape(toast, 22, 0.92, 0.1), {"undo": undo}, ("undo",))
     if state == MEETING:
         elems = {
             "stop": Rect.centered(CX + 19, BASE, 18, 18),
@@ -172,7 +199,7 @@ class WidgetView(NSView):
         self.ctrl.mouse_up(*self._point(event))
 
 
-class _Ticker(NSObject):
+class Ticker(NSObject):
     """NSTimer needs an Objective-C target; this forwards each tick to a Python callback."""
 
     def tick_(self, timer):
@@ -200,8 +227,14 @@ class WidgetController:
         self.tip = None  # (parts, anchor Rect) — kept while fading out
         self.bar_levels = {11: [0.0] * 11, 5: [0.0] * 5}
 
-        self.levels = FakeLevelSource()
+        self.recorder = Recorder()
+        self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
         self.sounds = sounds.Sounds()
+
+        self.hold_source = None  # "fn" or "mouse"
+        self.fn_press_at = 0.0
+        self.fn_consumed = False  # this fn press already did something; ignore its release
+        self.last_tap_at = None  # start time of a recent short fn tap (double-tap detection)
 
     # --- Setup --------------------------------------------------------------
 
@@ -231,8 +264,9 @@ class WidgetController:
         p.setContentView_(self.view)
         self._poll_screen(force=True)
         p.orderFrontRegardless()
+        self.recorder.prepare()
 
-        self.ticker = _Ticker.alloc().init()
+        self.ticker = Ticker.alloc().init()
         self.ticker.callback = self.tick
         self.timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
             1.0 / FPS, self.ticker, "tick:", None, True
@@ -244,6 +278,7 @@ class WidgetController:
     def set_state(self, new):
         if new == self.state:
             return
+        log(f"state {self.state} -> {new}")
         self.state = new
         self.seq += 1
         self.state_since = time.monotonic()
@@ -257,24 +292,118 @@ class WidgetController:
         # Don't pop straight back into HOVER while the pointer is still resting on the pill.
         self.suppress_hover = True
 
-    def begin_hold(self):
+    def _drop_cancelled(self):
+        # A new recording replaces one still waiting in the Undo toast.
+        if self.state == CANCELLED:
+            self._wipe("cancelled (superseded)")
+
+    def begin_hold(self, source):
+        self._drop_cancelled()
+        if not self.recorder.start():
+            return
         self.sounds.play(sounds.START)
+        self.hold_source = source
         self.set_state(HOLD)
 
-    def begin_handsfree(self):
-        self.sounds.play(sounds.START)
+    def begin_handsfree(self, sound=True):
+        self._drop_cancelled()
+        if not self.recorder.start():
+            return
+        if sound:
+            self.sounds.play(sounds.START)
         self.set_state(HANDSFREE)
 
+    def _wipe(self, reason):
+        secs, peak, ok = self.recorder.wipe()
+        log(f"{reason}: {secs:.2f}s captured, peak {peak:.3f}, wiped={'ok' if ok else 'FAILED'}")
+
     def finish(self):
+        self.recorder.stop()
         self.sounds.play(sounds.STOP)
+        self._process("finished")
+
+    def _process(self, reason):
         self.set_state(PROCESSING)
-        # TODO: transcribe -> clean up -> paste. Stubbed for the UI-only build.
+        # TODO: transcribe self.recorder.audio() -> clean up -> paste, then wipe.
+        self._wipe(reason)
         self.after(PROCESSING_STUB_SECONDS, self.to_idle)
 
     def cancel(self):
+        """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
+        self.recorder.stop()
         self.sounds.play(sounds.CANCEL)
         self.set_state(CANCELLED)
-        self.after(TOAST_SECONDS, self.to_idle)
+        self.after(TOAST_SECONDS, self._expire_cancel)
+
+    def _expire_cancel(self):
+        self._wipe("cancelled")
+        self.to_idle()
+
+    def undo_cancel(self):
+        self._process("undo")
+
+    def discard_quietly(self):
+        """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
+        self.recorder.stop()
+        self._wipe("discarded")
+        self.set_state(IDLE)
+
+    # --- fn key -------------------------------------------------------------
+
+    def fn_down(self):
+        now = time.monotonic()
+        log(f"fn down (state {self.state})")
+        self.fn_consumed = True
+        if self.state == HANDSFREE:
+            self.finish()
+        elif self.state not in (IDLE, HOVER, CANCELLED):
+            pass  # busy (processing, meeting, card): ignore fn
+        elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
+            # The first tap already played the start sound.
+            self.last_tap_at = None
+            self.begin_handsfree(sound=False)
+        else:
+            # Start recording immediately so the first word isn't clipped; a short
+            # release turns this into a tap instead.
+            self.fn_consumed = False
+            self.fn_press_at = now
+            self.begin_hold("fn")
+
+    def fn_up(self):
+        log(f"fn up (held {time.monotonic() - self.fn_press_at:.2f}s)" if not self.fn_consumed else "fn up")
+        if self.fn_consumed or self.state != HOLD or self.hold_source != "fn":
+            return
+        if time.monotonic() - self.fn_press_at < FN_TAP_MAX:
+            self.last_tap_at = self.fn_press_at
+            self.discard_quietly()
+        else:
+            self.finish()
+
+    def handle_key(self, keycode):
+        """Called from inside the event tap: decide fast, act on the next run-loop pass.
+
+        Hands-free: space = finish and paste, delete = cancel.
+        Cancelled toast: delete = discard now (skip the Undo countdown).
+        """
+        state = self.state
+        action = {
+            (HANDSFREE, KEY_SPACE): self.finish,
+            (HANDSFREE, KEY_DELETE): self.cancel,
+            (CANCELLED, KEY_DELETE): self._expire_cancel,
+        }.get((state, keycode))
+        if action is None:
+            return False
+        log(f"key {keycode} -> {action.__name__}")
+        AppHelper.callAfter(lambda: self.state == state and action())
+        return True
+
+    def fn_combo(self):
+        """Another key was pressed with fn held (fn+arrow, fn+F-key...): not dictation."""
+        log("fn + other key")
+        self.last_tap_at = None
+        if not self.fn_consumed and self.state == HOLD and self.hold_source == "fn":
+            self.fn_consumed = True
+            self.discard_quietly()
 
     def begin_meeting(self):
         self.sounds.play(sounds.START)
@@ -305,14 +434,14 @@ class WidgetController:
 
             def maybe_hold():
                 if self.seq == seq and self.pressed == "mic":
-                    self.begin_hold()
+                    self.begin_hold("mouse")
 
             self.after(HOLD_DELAY, maybe_hold)
 
     def mouse_up(self, px, py):
         pressed, self.pressed = self.pressed, None
         released_on = self.hit(px, py)
-        if self.state == HOLD and pressed == "mic":
+        if self.state == HOLD and self.hold_source == "mouse" and pressed == "mic":
             self.finish()
             return
         if pressed is None or pressed != released_on:
@@ -326,6 +455,7 @@ class WidgetController:
             (MISTAKE, "close"): self.to_idle,
             (MISTAKE, "discard"): self.to_idle,
             (MISTAKE, "keep"): self.to_idle,  # TODO: keep -> summarise like a normal meeting
+            (CANCELLED, "undo"): self.undo_cancel,
         }.get((self.state, pressed))
         if action:
             action()
@@ -396,8 +526,12 @@ class WidgetController:
         self.view.setNeedsDisplay_(True)
 
     def _update_levels(self, now):
-        live = self.state in RECORDING_STATES
-        lvl = self.levels.level(now) if live else 0.0
+        if self.state in (HOLD, HANDSFREE):
+            lvl = self.recorder.level()
+        elif self.state == MEETING:
+            lvl = self.meeting_levels.level(now)
+        else:
+            lvl = 0.0
         for n, arr in self.bar_levels.items():
             mid = (n - 1) / 2
             for i in range(n):
@@ -420,12 +554,12 @@ class WidgetController:
         draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
 
         if s == HOVER:
-            draw.icon_mic(r.cx, r.cy, white(1.0, a))
+            draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)
             note = lay.elems["note"]
             lit = self.hovered == "note"
             draw.fill_circle(note.cx, note.cy, note.w / 2, white(0.15 if lit else 0.1, 0.92 * a))
             draw.stroke_circle(note.cx, note.cy, note.w / 2 - 0.5, white(1.0, 0.15 * a))
-            draw.icon_record(note.cx, note.cy, white(1.0, (1.0 if lit else 0.85) * a))
+            draw.symbol(NOTE_ICON, note.cx, note.cy, 17, alpha=(1.0 if lit else 0.85) * a)
 
         elif s == HOLD:
             draw.bars(r.cx, r.cy, self.bar_levels[11], 3.5, 2, 16, white(1.0, a))
@@ -439,15 +573,19 @@ class WidgetController:
                 c = lay.elems["cancel"]
                 lit = self.hovered == "cancel"
                 draw.fill_circle(c.cx, c.cy, 9, white(1.0, (0.28 if lit else 0.18) * a))
-                draw.icon_x(c.cx, c.cy, 3, white(1.0, a))
+                draw.symbol("xmark", c.cx, c.cy, 8, alpha=a, weight=NSFontWeightBold)
                 draw.fill_circle(fin.cx, fin.cy, 9, white(1.0, a))
-                draw.icon_check(fin.cx, fin.cy, white(0.0, a))
+                draw.symbol("checkmark", fin.cx, fin.cy, 9, rgb=(0.0, 0.0, 0.0), alpha=a, weight=NSFontWeightBold)
             else:
                 draw.spinner(fin.cx, fin.cy, 7, time.monotonic() * 1.2, a)
 
         elif s == CANCELLED:
             label = draw.rich([("Transcript cancelled", False)], 14, white(1.0, a))
-            draw.draw_text_centered(label, r.cx, r.cy + 1)
+            draw.draw_text_left(label, r.x + 18, r.cy + 1)
+            undo = lay.elems["undo"]
+            lit = self.hovered == "undo"
+            draw.fill_round(undo, 9, white(1.0, (0.24 if lit else 0.14) * a))
+            draw.draw_text_centered(draw.rich([("Undo", False)], 13, white(1.0, a)), undo.cx, undo.cy)
             remaining = max(0.0, 1.0 - (time.monotonic() - self.state_since) / TOAST_SECONDS)
             track = Rect(r.x + 16, r.y + 3, r.w - 32, 2)
             draw.fill_round(track, 1, white(1.0, 0.18 * a))
@@ -459,7 +597,7 @@ class WidgetController:
             st = lay.elems["stop"]
             lit = self.hovered == "stop"
             draw.fill_circle(st.cx, st.cy, 9, white(1.0, (0.35 if lit else 0.22) * a))
-            draw.icon_stop(st.cx, st.cy, white(1.0, 0.85 * a))
+            draw.symbol("stop.fill", st.cx, st.cy, 7, alpha=0.85 * a)
 
         elif s == MISTAKE:
             self._draw_mistake_card(r, lay, a)
@@ -468,14 +606,14 @@ class WidgetController:
 
     def _draw_mistake_card(self, card, lay, a):
         title_y = card.top - 28
-        draw.icon_warning(card.x + 30, title_y, draw.srgb(*WARNING_YELLOW, a))
+        draw.symbol("exclamationmark.triangle.fill", card.x + 30, title_y, 14, rgb=WARNING_YELLOW, alpha=a)
         title = draw.rich([("Started by mistake?", True)], 15, white(1.0, a))
         draw.draw_text_left(title, card.x + 46, title_y)
 
         close = lay.elems["close"]
         lit = self.hovered == "close"
         draw.stroke_circle(close.cx, close.cy, 12, white(1.0, (0.9 if lit else 0.6) * a), 1.2)
-        draw.icon_x(close.cx, close.cy, 4, white(1.0, a), 1.4)
+        draw.symbol("xmark", close.cx, close.cy, 10, alpha=a, weight=NSFontWeightSemibold)
 
         body = draw.rich(
             [("Only a few words were captured. Keep this meeting or discard it.", False)],
