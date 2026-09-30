@@ -29,6 +29,16 @@ This project reproduces the same workflow entirely on-device, and treats capture
 
 - macOS on Apple Silicon (developed on an M1 Pro with 16 GB RAM, macOS 26)
 
+## Running
+
+```bash
+python3.13 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m whispr
+```
+
+Quit from the waveform icon in the menu bar.
+
 ## Status
 
-Planning phase. See [PLAN.md](PLAN.md) for the stack, architecture, and milestones.
+The floating widget is built (UI only: clicks drive it and the waveform is simulated). See [PLAN.md](PLAN.md) for the stack, architecture, and milestones.
