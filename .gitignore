@@ -5,3 +5,6 @@ __pycache__/
 voice-recordings/
 meeting-recordings/
 .coverage
+.venv-build/
+build/
+dist/

@@ -15,7 +15,7 @@ from mispr.models import ModelSpec
 class TestSettings:
     def test_defaults_when_file_missing(self):
         s = settings.load()
-        assert s.incognito is False and s.cleanup is True
+        assert s.incognito is False and s.cleanup is True and s.onboarded is False
 
     def test_save_then_load_roundtrip(self):
         settings.save(settings.Settings(incognito=True, cleanup=False))
@@ -39,11 +39,11 @@ class TestSettings:
 
     def test_saved_file_is_human_readable(self):
         settings.save(settings.Settings())
-        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true\n}'
+        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true,\n  "onboarded": false\n}'
 
     def test_saved_file_is_readable_json(self):
         settings.save(settings.Settings(incognito=True))
-        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True}
+        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True, "onboarded": False}
 
     def test_partial_file_fills_defaults(self):
         settings.SETTINGS_PATH.parent.mkdir(parents=True)

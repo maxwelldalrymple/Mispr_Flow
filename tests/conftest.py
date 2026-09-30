@@ -259,11 +259,22 @@ def render(draw_fn, width, height):
     return data, rep
 
 
-def _read_png(path):
-    rep = NSBitmapImageRep.imageRepWithContentsOfFile_(str(path))
+def _decode(rep):
+    """Pixels of a bitmap as they'd be read back from its PNG. Both sides of a golden
+    comparison go through this same path, so colour-space and alpha conversions can't
+    make identical renderings look different."""
     w, h = rep.pixelsWide(), rep.pixelsHigh()
     out, _ = render(lambda: rep.drawInRect_(NSMakeRect(0, 0, w, h)), w, h)
     return out
+
+
+def _read_png(path):
+    return _decode(NSBitmapImageRep.imageRepWithContentsOfFile_(str(path)))
+
+
+def _png_roundtrip(rep):
+    data = rep.representationUsingType_properties_(NSPNGFileType, {})
+    return _decode(NSBitmapImageRep.imageRepWithData_(data))
 
 
 @pytest.fixture
@@ -279,8 +290,9 @@ def golden_image():
             if not UPDATE_GOLDEN:
                 pytest.fail(f"created missing golden image {path.name}; review it and re-run")
         expected = _read_png(path)
-        assert expected.shape == pixels.shape, f"{name}: size changed"
-        diff = np.abs(expected.astype(int) - pixels.astype(int)).max(axis=2)
+        actual = _png_roundtrip(rep)  # compare like with like (see _decode)
+        assert expected.shape == actual.shape, f"{name}: size changed"
+        diff = np.abs(expected.astype(int) - actual.astype(int)).max(axis=2)
         bad = (diff > 48).mean()
         assert bad <= 0.005, f"{name}: {bad:.2%} of pixels differ from the golden image"
 

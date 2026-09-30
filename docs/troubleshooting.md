@@ -8,6 +8,10 @@ MISPR_DEBUG=1 .venv/bin/python -m mispr
 
 It logs every fn press, state change, transcription and cleanup timing, and each recording's length, peak, and wipe check (never audio content).
 
+## Setup window keeps appearing
+
+It reappears on launch whenever a required permission (Microphone or Accessibility) is missing or a model isn't installed. Finish the steps it shows. Screen & System Audio is optional and never reopens it.
+
 ## fn opens the Emoji & Symbols window
 
 Mispr Flow swallows fn and the 🌐 key's own key event, but only with **Accessibility** permission. Without it, it can only listen, so macOS acts on fn too.
@@ -17,7 +21,7 @@ Mispr Flow swallows fn and the 🌐 key's own key event, but only with **Accessi
 
 ## Pressing fn does nothing
 
-- The startup log shows `fn dictation is off`: allow **Input Monitoring** (or Accessibility) and restart.
+- The startup log shows `fn is off until Accessibility is allowed`: allow **Accessibility** from the setup window (menu bar → **Setup Guide…**). fn starts within a second, with no restart.
 - The widget is in the setup state ("Downloading models"): dictation is locked until the models are installed.
 - A quick tap (under 0.3 s) is ignored on purpose. Hold fn, or double-tap.
 - fn is ignored while text is processing, during a meeting, or on the "Started by mistake?" card.

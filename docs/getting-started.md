@@ -31,12 +31,19 @@ Mispr Flow captures the fn/🌐 key itself once Accessibility is allowed (next s
 .venv/bin/python -m mispr
 ```
 
-1. **Models download.** The widget above the Dock shows **"Downloading models NN%"** for the Whisper model (0.57 GB) and Gemma (2.5 GB). Both are verified with SHA-256 and stored in `~/Library/Application Support/Mispr_Flow/models/`. Dictation stays locked until they're ready. If it fails, click **Retry**.
-2. **Permissions.** macOS asks for each one; allow them. They're granted to the app that launched Mispr Flow (Terminal, or Claude if started from a Claude session).
-   - **Accessibility** (System Settings → Privacy & Security → Accessibility): captures fn, pastes text, reads the browser URL. If the app is already running with Input Monitoring, this takes effect within about 2 s; otherwise restart the app.
-   - **Input Monitoring:** fallback fn detection without Accessibility. Needs a restart after granting.
-   - **Microphone:** asked the first time you dictate.
-3. The Mispr Flow logo appears in the menu bar, and a small pill sits above the Dock.
+The **Mispr Flow Setup** window opens and walks you through four steps:
+
+1. **Welcome.** What Mispr Flow is. Click **Get Started**.
+2. **Allow access.** Each permission shows why it's needed and an **Allow…** button. Rows turn to **✓ Allowed** as soon as you grant them (the window checks every half second).
+   - **Microphone** (required): hears you while you hold fn.
+   - **Accessibility** (required): uses the fn key and pastes into the app you're typing in. The first click shows the macOS prompt; clicking again opens the right page in System Settings.
+   - **Screen & System Audio** (optional): for meeting notes. You may need to reopen Mispr Flow after allowing it.
+
+   **Continue** unlocks once both required permissions are allowed. fn starts working within a second of granting Accessibility, with no restart.
+3. **Download speech models.** Whisper (0.57 GB) and Gemma (2.5 GB), with a progress bar. Both are verified with SHA-256 and stored in `~/Library/Application Support/Mispr_Flow/models/`. If it fails, click **Retry**.
+4. **You're all set.** A quick guide to fn. Click **Start Dictating**.
+
+When running from source, permissions are granted to the app that launched Mispr Flow (Terminal, or Claude if started from a Claude session). The logo appears in the menu bar and a small pill sits above the Dock. Reopen setup anytime from the menu bar: **Setup Guide…**
 
 ## 5. Dictate
 

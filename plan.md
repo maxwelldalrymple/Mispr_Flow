@@ -55,6 +55,15 @@ fn key ──► hotkey.FnMonitor (HID event tap) ──► widget.WidgetControl
 
 See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
 
+## macOS Permissions
+
+Requested from the setup window (`onboarding.py`), never on launch:
+
+- **Microphone** (required): dictation.
+- **Accessibility** (required): swallow fn and the globe key so macOS doesn't open the emoji picker, post the paste keystroke, and read the browser page. fn works within a second of granting it (`app.maintain_hotkey`).
+- **Screen & System Audio** (optional): the meeting notetaker's system-audio capture; may require reopening the app.
+- **Input Monitoring:** not requested. It's only a fallback for a listen-only fn tap when Accessibility is off.
+
 ## Milestones
 
 1. ✅ Floating widget with every state (UI).
@@ -67,7 +76,7 @@ See [docs/architecture.md](docs/architecture.md) for the full walkthrough.
 8. ✅ Test suite (709 unit + 10 integration tests), stress-tested and mutation-tested (97.6%).
 9. ✅ Mic freeze fix: AVAudioEngine replaced PortAudio; non-blocking stop.
 10. ✅ Rebrand to Mispr Flow (package, data folder, logo, app and menu-bar icons, GitHub repo).
-11. ⬜ First-run onboarding: permissions checklist with live checkmarks, then the model download.
+11. ✅ First-run setup window: Welcome → Permissions (live checkmarks; Microphone + Accessibility required, Screen & System Audio optional) → Models (progress, Retry) → Ready. Reopens when something required is missing; "Setup Guide…" in the menu; no launch-time permission prompts.
 12. ⬜ Main window: history (from the saved JSON), stats (words, WPM, streak, apps), settings (Incognito, cleanup).
 13. ⬜ Meeting notetaker (◉): mic + system audio, diarization, LLM summary to `meeting-recordings/`.
 14. ⬜ `.pkg` installer (py2app bundle, postinstall model download, Gemma terms), plus a DMG wrapper.
@@ -163,6 +172,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 - **Format:** an unsigned `.pkg` (optionally wrapped in a DMG), built from a py2app bundle. Apple Silicon (M1+) only.
 - **Models at install:** the postinstall script downloads Whisper (~0.57 GB) and Gemma (~2.5 GB), verifies SHA-256, and places them in `/Library/Application Support/Mispr_Flow/models` (installer scripts run as root). Installer.app shows only an indeterminate "Running package scripts" bar during this.
+- **Build environment (found 2026-09-30):** Homebrew's Python and a locally compiled llama.cpp are stamped "macOS 26 minimum", so a DMG built from the dev venv would only run on macOS 26. The DMG must be built with a portable Python (python-build-standalone via `uv`, minimum macOS 11) and llama.cpp compiled with `MACOSX_DEPLOYMENT_TARGET=14.0`; numpy's wheels set the overall floor at **macOS 14 Sonoma**. The bundle also needs `NSMicrophoneUsageDescription`, `LSUIElement`, a bundle identifier, and the icon.
 - **Startup safety net:** the app must check both `/Library/...` and `~/Library/...` for models (today it checks only `~/Library`: to do with the installer). Anything missing triggers the setup screen.
 - **Signing:** unsigned for now (users choose "Open Anyway" in System Settings > Privacy & Security). Revisit Developer ID + notarization before a wide release.
 - **Permissions caveat:** macOS ties Microphone/Accessibility/Input Monitoring grants to the signature; unsigned updates may need re-granting. Ad-hoc sign with a stable identifier to reduce this.
@@ -170,7 +180,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Testing and Quality
 
-- **Suite:** 709 unit tests (~8 s) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
+- **Suite:** 769 unit tests (~14 s) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
 - **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (31 files, reviewed visually), and fakes for AppKit objects.
 - **Mutation score:** 97.6% overall; audio 95.5%. Remaining survivors are documented as equivalent mutants.
 - **Reports:** `logs/2026-09-30_13-25-55_stresstest.md` (suite stress test) and `logs/2026-09-30_14-34-34_mic-deadlock-fix.md` (freeze diagnosis).

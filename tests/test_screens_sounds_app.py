@@ -359,3 +359,74 @@ class TestBranding:
         from AppKit import NSImage
         rep = NSImage.alloc().initWithContentsOfFile_(str(app.ASSETS / "icon.png")).representations()[0]
         assert (rep.pixelsWide(), rep.pixelsHigh()) == (1024, 1024)
+
+
+class TestHotkeyMaintenance:
+    class Fn:
+        def __init__(self, tap=None, active=False, start_ok=True, upgrade_ok=False):
+            self._tap, self.active = tap, active
+            self.start_ok, self.upgrade_ok, self.calls = start_ok, upgrade_ok, []
+
+        def start(self):
+            self.calls.append("start")
+            if self.start_ok:
+                self._tap = "TAP"
+            return self.start_ok
+
+        def upgrade(self):
+            self.calls.append("upgrade")
+            return self.upgrade_ok
+
+    def test_starts_tap_once_permission_allows(self):
+        fn = self.Fn()
+        assert app.maintain_hotkey(fn) == "started" and fn.calls == ["start"]
+
+    def test_keeps_trying_without_permission(self):
+        fn = self.Fn(start_ok=False)
+        assert app.maintain_hotkey(fn) is None and app.maintain_hotkey(fn) is None
+        assert fn.calls == ["start", "start"]
+
+    def test_upgrades_listen_only_tap(self):
+        fn = self.Fn(tap="LISTEN", active=False, upgrade_ok=True)
+        assert app.maintain_hotkey(fn) == "upgraded" and fn.calls == ["upgrade"]
+
+    def test_listen_only_waits_for_accessibility(self):
+        fn = self.Fn(tap="LISTEN", active=False, upgrade_ok=False)
+        assert app.maintain_hotkey(fn) is None
+
+    def test_active_tap_is_left_alone(self):
+        fn = self.Fn(tap="TAP", active=True)
+        assert app.maintain_hotkey(fn) is None and fn.calls == []
+
+
+class TestSetupWiring:
+    def test_setup_guide_is_first_menu_item_and_opens_setup(self):
+        item = app._status_item()
+        opened = []
+        try:
+            actions = app.add_setup_menu_item(item, lambda: opened.append(True))
+            guide = item.menu().itemAtIndex_(0)
+            assert guide.title() == "Setup Guide…" and guide.target() is actions
+            assert item.menu().itemAtIndex_(1).title() == "Quit Mispr Flow"
+            actions.openSetup_(None)
+            assert opened == [True]
+        finally:
+            app.NSStatusBar.systemStatusBar().removeStatusItem_(item)
+
+    def test_setup_flow_reads_widget_download_state(self, monkeypatch):
+        retries = []
+
+        class Widget:
+            setup_progress, setup_error = 0.25, "offline"
+            settings = app.onboarding.settings_mod.Settings(onboarded=True)
+
+            def _retry_setup(self):
+                retries.append(True)
+
+        monkeypatch.setattr(app.setup, "missing", lambda: ["model"])
+        flow = app._setup_flow(Widget())
+        assert flow.model_status() == ("error", 0.25, "Download failed: offline")
+        assert not flow.models_ready() and flow.settings.onboarded is True
+        flow.retry_models()
+        assert retries == [True]
+        assert [p.key for p in flow.permissions] == ["microphone", "accessibility", "screen_audio"]

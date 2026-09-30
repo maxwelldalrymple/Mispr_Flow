@@ -32,6 +32,7 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 - **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. It follows the screen you're working on and hides in fullscreen apps.
 - **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
 - **Menu-bar app** with no Dock icon. It captures fn itself so macOS's emoji picker doesn't open.
+- **Guided setup.** A 4-step window on first launch (Welcome → Permissions → Models → Ready) explains each permission before asking for it. Reopen it anytime from the menu bar: **Setup Guide…**
 
 End to end, text appears about 1.8 s after you stop talking.
 
@@ -40,10 +41,10 @@ End to end, text appears about 1.8 s after you stop talking.
 - A Mac with Apple Silicon (M1 or newer). Developed on an M1 Pro, 16 GB, macOS 26.
 - About 3.1 GB of disk for the two models (downloaded once, SHA-256 verified) and about 3.5 GB of RAM while running.
 - Python 3.13 (for running from source).
-- Permissions (macOS asks on first use):
-  - **Microphone.**
-  - **Accessibility:** captures fn (so the emoji picker stays closed), pastes, and reads the browser URL.
-  - **Input Monitoring:** fallback fn detection if Accessibility isn't granted.
+- Permissions (the setup window asks for each, with an explanation):
+  - **Microphone** (required).
+  - **Accessibility** (required): captures fn (so the emoji picker stays closed), pastes, and reads the browser URL.
+  - **Screen & System Audio** (optional): for the upcoming meeting notetaker.
 
 ## Install and run (from source)
 
@@ -54,7 +55,7 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m mispr
 ```
 
-`llama-cpp-python` builds from source with Metal (GPU) support, which takes a few minutes. On first launch the widget shows **"Downloading models NN%"**. Dictation unlocks once both models are downloaded and verified. Quit from the logo in the menu bar.
+`llama-cpp-python` builds from source with Metal (GPU) support, which takes a few minutes. On first launch the **setup window** walks you through allowing the Microphone and Accessibility (and optionally Screen & System Audio for meeting notes), then downloads the models with a progress bar. Dictation unlocks once both models are verified. Quit from the logo in the menu bar.
 
 ## Using it
 
@@ -78,6 +79,7 @@ A quick fn tap does nothing, and fn combined with another key (fn + arrow) works
 |---|---|---|
 | `incognito` | `false` | When `true`, nothing is written to disk: audio lives only in locked RAM and is wiped right after transcription |
 | `cleanup` | `true` | When `false`, pastes raw Whisper text with no LLM cleanup |
+| `onboarded` | `false` | Set when you finish the setup window. The window also reappears automatically if a required permission is revoked or a model goes missing |
 
 ## Where things live
 
@@ -121,6 +123,7 @@ mispr/
   models.py      model specs, download, SHA-256 verification
   setup.py       mandatory first-run model setup
   settings.py    settings file
+  onboarding.py  first-run setup window (Welcome → Permissions → Models → Ready)
   screens.py     which screen to follow; fullscreen detection
   draw.py, sounds.py, levels.py, threads.py
   assets/        logo, app icon (.icns), menu-bar icon, GitHub social preview
@@ -136,7 +139,7 @@ logs/            stress-test and bug-fix reports
 .venv/bin/python -m pytest
 ```
 
-- **709 unit tests, about 8 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
+- **769 unit tests, about 14 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
 - **Integration tests (opt-in).** Real Whisper, Gemma, and microphone:
   ```bash
   MISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
