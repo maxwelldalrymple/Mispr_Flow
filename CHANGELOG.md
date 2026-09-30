@@ -4,6 +4,10 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
+- **First-run setup window** (native macOS, light/dark): Welcome → Permissions → Models → Ready. Live permission checkmarks (Microphone and Accessibility required, Screen & System Audio optional), model download progress with Retry, and a quick fn guide. Reappears when something required is missing; reopen from the menu bar via **Setup Guide…**.
+- Permissions are no longer requested on launch; fn starts working within a second of granting Accessibility (no restart).
+- Tests: 769 unit tests; golden-image comparison now round-trips both sides through PNG (fixes false failures on text-heavy renders).
+
 - Renamed to **Mispr Flow** (package `mispr`, data folder and repo `Mispr_Flow`), after briefly being "Mhispr_Flow".
 - MIT license, CONTRIBUTING guide, this changelog.
 - Documentation rewritten: README, `plan.md` (renamed from `PLAN.md`), and `docs/` (getting started, troubleshooting, architecture, development).

@@ -15,6 +15,8 @@ class Settings:
     incognito: bool = False
     # LLM cleanup of transcripts (fillers, self-corrections, punctuation); off = raw Whisper text.
     cleanup: bool = True
+    # Set once the user finishes the first-run setup window.
+    onboarded: bool = False
 
 
 def load():

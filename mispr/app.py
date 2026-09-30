@@ -19,7 +19,9 @@ from AppKit import (
 )
 from PyObjCTools import AppHelper
 
-from . import hotkey
+from Foundation import NSObject
+
+from . import hotkey, onboarding, setup
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -97,6 +99,44 @@ def _install_shutdown(status_item, widget):
     )
 
 
+class _MenuActions(NSObject):
+    """Target for menu items (needs to be an Objective-C object)."""
+
+    def openSetup_(self, sender):
+        self.open_setup()
+
+
+def maintain_hotkey(fn):
+    """Called every second: install the fn tap as soon as a permission allows it, and swap
+    a listen-only tap for the active one once Accessibility is granted (no restart needed).
+    Returns what changed, for logging."""
+    if fn._tap is None:
+        return "started" if fn.start() else None
+    if not fn.active and fn.upgrade():
+        return "upgraded"
+    return None
+
+
+def add_setup_menu_item(status_item, open_setup):
+    """Put "Setup Guide…" at the top of the menu-bar menu; returns the target to keep alive."""
+    actions = _MenuActions.alloc().init()
+    actions.open_setup = open_setup
+    item = status_item.menu().insertItemWithTitle_action_keyEquivalent_atIndex_("Setup Guide…", "openSetup:", "", 0)
+    item.setTarget_(actions)
+    return actions
+
+
+def _setup_flow(widget):
+    return onboarding.SetupFlow(
+        onboarding.default_permissions(),
+        models_ready=lambda: not setup.missing(),
+        model_progress=lambda: widget.setup_progress,
+        model_error=lambda: widget.setup_error,
+        retry_models=widget._retry_setup,
+        settings=widget.settings,
+    )
+
+
 def main():
     lock = _single_instance_lock()
     app = NSApplication.sharedApplication()
@@ -111,33 +151,33 @@ def main():
     _install_shutdown(status_item, widget)
     widget.start()
 
-    if not hotkey.has_accessibility():
-        hotkey.request_accessibility()
-    if not hotkey.has_input_monitoring():
-        hotkey.request_input_monitoring()
-    if not fn.start():
-        print(
-            "mispr: fn dictation is off. Allow this app in System Settings > Privacy & Security >"
-            " Input Monitoring, then restart. Clicking the widget still works.",
-            file=sys.stderr,
-        )
-    elif not fn.active:
-        if not hotkey.fn_key_does_nothing():
-            print(
-                "mispr: fn works, but macOS will also open the emoji picker until this app is allowed"
-                " in System Settings > Privacy & Security > Accessibility (no restart needed).",
-                file=sys.stderr,
-            )
-        # Swap to swallowing fn as soon as Accessibility is granted.
-        def try_upgrade():
-            if fn.upgrade():
-                print("mispr: Accessibility granted; fn no longer triggers the emoji picker", file=sys.stderr)
-                upgrade_timer.invalidate()
+    # First-run setup window: shown on first launch or whenever something required is
+    # missing; also reopenable from the menu. Permissions are requested from there (with an
+    # explanation) instead of prompting on launch.
+    setup_window = {}
 
-        ticker = Ticker.alloc().init()
-        ticker.callback = try_upgrade
-        upgrade_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
-            2.0, ticker, "tick:", None, True
-        )
-        _keepalive.append(ticker)
+    def open_setup():
+        window = setup_window.get("w")
+        if window is None or not window.window.isVisible():
+            window = onboarding.SetupWindow(_setup_flow(widget))
+            setup_window["w"] = window
+        window.show()
+
+    _keepalive.append(add_setup_menu_item(status_item, open_setup))
+    if _setup_flow(widget).needed():
+        open_setup()
+
+    # Keep fn working as permissions change.
+    if maintain_hotkey(fn) is None and fn._tap is None:
+        print("mispr: fn is off until Accessibility is allowed (see the setup window).", file=sys.stderr)
+
+    def keep_fn_working():
+        change = maintain_hotkey(fn)
+        if change:
+            print(f"mispr: fn tap {change} ({'active' if fn.active else 'listen-only'})", file=sys.stderr)
+
+    ticker = Ticker.alloc().init()
+    ticker.callback = keep_fn_working
+    timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(1.0, ticker, "tick:", None, True)
+    _keepalive.extend([ticker, timer])
     AppHelper.runEventLoop(installInterrupt=False)  # our own signal handlers clean up

@@ -39,6 +39,7 @@ Run the test file that covers the module you changed. Run the full suite when a 
 | `settings.py`, `models.py`, `setup.py`, `levels.py` | `tests/test_settings_models_setup.py` |
 | `draw.py` | `tests/test_draw.py` |
 | `threads.py` | `tests/test_threads.py` |
+| `onboarding.py` | `tests/test_onboarding.py` |
 
 ### Rules the suite enforces
 
@@ -48,7 +49,7 @@ Run the test file that covers the module you changed. Run the full suite when a 
 
 ### Golden files
 
-`tests/golden/` holds the widget layout snapshot, waveform characterization data, and PNGs of every widget state and drawing primitive. When you change the widget's look on purpose:
+`tests/golden/` holds the widget layout snapshot, waveform characterization data, and PNGs of every widget state, drawing primitive, and setup-window page. New renderings are round-tripped through PNG before comparison, exactly like the stored files, so colour-space conversions can't cause false failures. When you change the widget's look on purpose:
 
 ```bash
 UPDATE_GOLDEN=1 .venv/bin/python -m pytest tests/test_widget.py tests/test_draw.py

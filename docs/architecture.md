@@ -88,6 +88,13 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 - `paste_text` snapshots the clipboard, puts the text plus transient/concealed markers on it, posts ⌘V (flags = ⌘ only, so a held fn doesn't leak in), and restores the snapshot 0.5 s later unless the user copied something in between.
 - `context.frontmost()` names the app. For browsers it walks up the Accessibility tree from the focused element to the outermost `AXWebArea` to get the page URL and title (0.3 s timeout, max 60 hops).
 
+## First-run setup (`onboarding.py`)
+
+- `SetupFlow` is pure logic: the current step, which permissions are missing, whether Continue is allowed, and when the window should show (`needed()`). Microphone and Accessibility are required; Screen & System Audio is optional.
+- `allow(key)`: the first click shows the one-time system prompt; later clicks (or a microphone that was already denied) open the matching System Settings pane.
+- `SetupWindow` draws the four pages with standard AppKit controls (so it follows light/dark mode) and refreshes every 0.5 s: checkmarks, the model progress bar (from the widget's download state), and the Continue button.
+- Finishing sets `onboarded` in `settings.json`.
+
 ## Storage and settings
 
 - `storage.save_recording` writes the 16 kHz 16-bit WAV and the JSON record (see [plan.md](../plan.md#recording-storage) for fields). The folder is the project's `voice-recordings/` from source, or Application Support when packaged.
@@ -99,5 +106,6 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 1. Single-instance lock (`$TMPDIR/Mispr_Flow.lock`); a second copy exits.
 2. Accessory activation policy (menu bar only, no Dock icon); app icon from `assets/AppIcon.icns`; menu-bar template icon.
 3. `WidgetController.start()`: builds the panel, prepares the mic engine, then either loads the models or enters SETUP.
-4. Requests permissions and installs the event tap.
-5. On Quit or SIGTERM/INT/HUP: stop the mic, zero and unlock the audio buffer, free the llama.cpp model (its Metal backend asserts otherwise), and remove the menu-bar icon.
+4. Opens the setup window (`onboarding.py`) if setup is needed: first run, a required permission missing, or a model missing. Adds **Setup Guide…** to the menu.
+5. Every second, `maintain_hotkey` installs the fn tap as soon as a permission allows it, and upgrades a listen-only tap to the active one once Accessibility is granted. No restart needed.
+6. On Quit or SIGTERM/INT/HUP: stop the mic, zero and unlock the audio buffer, free the llama.cpp model (its Metal backend asserts otherwise), and remove the menu-bar icon.
