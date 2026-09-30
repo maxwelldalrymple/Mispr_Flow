@@ -70,8 +70,12 @@ def check(raw, cleaned):
     invented = set(out_words) - set(raw_words)
     if invented:
         return f"invented words: {', '.join(sorted(invented))}"
-    content = [w for w in raw_words if w not in FILLERS] or raw_words
-    if len(out_words) < MIN_KEPT * len(content):
+    # Compare like with like: the speaker's non-filler words vs. the output's non-filler words.
+    content = [w for w in raw_words if w not in FILLERS]
+    kept = [w for w in out_words if w not in FILLERS]
+    if not content:  # all fillers ("um, yeah"): compare every word instead
+        content, kept = raw_words, out_words
+    if len(kept) < MIN_KEPT * len(content):
         return "dropped too much"
     return None
 
