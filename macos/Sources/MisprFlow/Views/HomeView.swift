@@ -142,28 +142,14 @@ struct HomeView: View {
         }
     }
 
-    /// The app switcher's voice commands (computer control), grouped.
-    static let commandGroups: [(title: String, commands: [(say: String, does: String)])] = [
-        ("Apps & windows", [
-            ("Chrome", "bring it to the front"),
-            ("close / minimize / expand", "the window (or name an app)"),
-            ("Chrome beside VS Code", "side by side, “70%” for a split"),
-            ("Chrome 80%", "size the window"),
-            ("set nickname C to Chrome", "say “C” from then on"),
-            ("quit Slack", "quit an app"),
-        ]),
-        ("Tabs & pages", [
-            ("new tab / close tab", "also reopen tab, tab 3, next tab"),
-            ("reload / back / forward", "add “in Chrome” to pick the app"),
-            ("zoom in / full screen", "also new window, find, bookmark"),
-            ("scroll down / page up", "a little, a lot, to the top"),
-        ]),
-        ("Sound", [
-            ("pause / play / next song", "whatever is playing"),
-            ("volume up / volume 40%", "or louder, quieter"),
-            ("mute / mute mic / mute tab", "and unmute the same way"),
-            ("skip forward 30 seconds", "or rewind 10 seconds"),
-        ]),
+    /// The most useful voice commands (the full set is in the app switcher's help).
+    static let commands: [(say: String, does: String)] = [
+        ("Chrome", "switch to an app"),
+        ("Chrome beside Code", "side by side"),
+        ("new tab / close tab", "in the app in front"),
+        ("scroll down", "or page up"),
+        ("pause / volume up", "media and sound"),
+        ("mute mic", "unmute the same way"),
     ]
 
     private var commandsCard: some View {
@@ -171,28 +157,14 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Voice commands").font(.system(size: 14, weight: .semibold))
                 if let key = model.switchKey {
-                    Text("Hold \(key.label), say it, let go.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    Text("Hold \(key.label), say it, let go").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    ForEach(Self.commands, id: \.say) { tip($0.say, $0.does) }
                 } else {
-                    Text("Control your Mac by voice: choose an app switcher key first.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button("Set it up in Settings") {
+                    Button("Set an app switcher key") {
                         model.settingsSection = .general
                         model.showSettings = true
                     }
                     .buttonStyle(.link).font(.system(size: 12))
-                }
-                ForEach(Self.commandGroups, id: \.title) { group in
-                    Text(group.title.uppercased()).font(.system(size: 10.5, weight: .semibold)).tracking(0.6)
-                        .foregroundStyle(Theme.secondary).padding(.top, 4)
-                    ForEach(group.commands, id: \.say) { command in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(command.say).font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.content))
-                            Text(command.does).font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
                 }
             }
         }
