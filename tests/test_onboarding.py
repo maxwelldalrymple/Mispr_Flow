@@ -274,6 +274,11 @@ def go(w, step):
 
 
 class TestWindow:
+    def test_opens_on_the_active_space(self, window):
+        behavior = window[0].window.collectionBehavior()
+        assert behavior & o.NSWindowCollectionBehaviorMoveToActiveSpace
+        assert behavior & o.NSWindowCollectionBehaviorFullScreenAuxiliary
+
     def test_title_and_size(self, window):
         w = window[0]
         f = w.window.contentView().frame()

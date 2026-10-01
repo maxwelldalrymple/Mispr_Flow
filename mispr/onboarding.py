@@ -34,6 +34,8 @@ from AppKit import (
     NSURL,
     NSView,
     NSWindow,
+    NSWindowCollectionBehaviorFullScreenAuxiliary,
+    NSWindowCollectionBehaviorMoveToActiveSpace,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskTitled,
     NSWorkspace,
@@ -284,6 +286,10 @@ class SetupWindow:
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable, NSBackingStoreBuffered, False,
         )
         self.window.setTitle_("Mispr Flow Setup")
+        # Open on the Space the user is looking at (and over fullscreen apps), not wherever
+        # this menu-bar app happens to live.
+        self.window.setCollectionBehavior_(
+            NSWindowCollectionBehaviorMoveToActiveSpace | NSWindowCollectionBehaviorFullScreenAuxiliary)
         self.window.setReleasedWhenClosed_(False)
         self.window.center()
         self.rows = {}  # permission key -> (status label, allow button)
