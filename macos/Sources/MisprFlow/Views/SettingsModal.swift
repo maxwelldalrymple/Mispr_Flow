@@ -5,9 +5,10 @@ import SwiftUI
 /// Settings as a panel over the main window, with its own section list (like Wispr Flow).
 struct SettingsModal: View {
     @EnvironmentObject var model: AppModel
-    @State private var section: Section = .general
+    private var section: Section { model.settingsSection }
 
     enum Section: String, CaseIterable, Identifiable {
+        case profile = "Profile"
         case general = "General"
         case system = "System"
         case privacy = "Data and Privacy"
@@ -16,6 +17,7 @@ struct SettingsModal: View {
 
         var symbol: String {
             switch self {
+            case .profile: "person.crop.circle"
             case .general: "slider.horizontal.3"
             case .system: "laptopcomputer"
             case .privacy: "checkmark.shield"
@@ -33,6 +35,7 @@ struct SettingsModal: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(section.rawValue).font(Theme.display(26)).padding(.bottom, 20)
                         switch section {
+                        case .profile: ProfileSettings()
                         case .general: GeneralSettings()
                         case .system: SystemSettings()
                         case .privacy: PrivacySettings()
@@ -62,7 +65,7 @@ struct SettingsModal: View {
             Text("SETTINGS").font(.system(size: 11, weight: .semibold)).tracking(0.8)
                 .foregroundStyle(Theme.secondary).padding(.leading, 10).padding(.bottom, 8)
             ForEach(Section.allCases) { s in
-                SidebarItem(title: s.rawValue, symbol: s.symbol, selected: section == s) { section = s }
+                SidebarItem(title: s.rawValue, symbol: s.symbol, selected: section == s) { model.settingsSection = s }
             }
             Spacer()
             Text("Mispr Flow \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
@@ -190,4 +193,111 @@ struct PrivacySettings: View {
         Text("Speech recognition and cleanup run entirely on this Mac. No audio or text is ever sent anywhere.")
             .font(.system(size: 12)).foregroundStyle(Theme.secondary)
     }
+}
+
+struct ProfileSettings: View {
+    @EnvironmentObject var model: AppModel
+    private var profile: Profile { model.profile }
+
+    var body: some View {
+        SettingsGroup {
+            HStack(spacing: 18) {
+                AvatarView(size: 64)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Hey \(model.firstName)!").font(Theme.display(22))
+                    HStack(spacing: 8) {
+                        Button("Choose photo…") { profile.choosePhoto() }
+                        if profile.photo != nil { Button("Remove") { profile.removePhoto() } }
+                    }
+                    if profile.photo == nil {
+                        HStack(spacing: 6) {
+                            ForEach(Profile.avatarColors, id: \.self) { hex in
+                                Circle().fill(Color(nsColor: Theme.nsColor(hex: hex))).frame(width: 18, height: 18)
+                                    .overlay(Circle().stroke(Theme.text, lineWidth: profile.avatarColor == hex ? 2 : 0).padding(-3))
+                                    .onTapGesture { profile.avatarColor = hex }
+                                    .help("Avatar color")
+                            }
+                        }
+                        .padding(.leading, 3)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 16)
+        }
+        SettingsGroup {
+            field("Name", "Your full name", text: Binding(get: { profile.name }, set: { profile.name = $0 }))
+            Divider()
+            field("Nickname", "What Mispr Flow calls you (\"Hey Max\")", text: Binding(get: { profile.nickname }, set: { profile.nickname = $0 }))
+            Divider()
+            field("What you do", "e.g. engineer, student, founder. Saved for personalization later.", text: Binding(get: { profile.role }, set: { profile.role = $0 }))
+        }
+        SettingsGroup {
+            SettingRow(title: "Appearance", detail: "Follow macOS, or always light or dark.") {
+                Picker("", selection: Binding(get: { profile.appearance }, set: { profile.appearance = $0 })) {
+                    ForEach(Profile.Appearance.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 210)
+            }
+        }
+        Text("THEME").font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+            .padding(.bottom, 10)
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            ForEach(Palette.all) { palette in
+                ThemeCard(palette: palette, selected: profile.themeID == palette.id) { profile.themeID = palette.id }
+            }
+        }
+        Text("Your profile stays on this Mac.").font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.top, 14)
+    }
+
+    private func field(_ title: String, _ detail: String, text: Binding<String>) -> some View {
+        SettingRow(title: title, detail: detail) {
+            TextField(title, text: text).textFieldStyle(.roundedBorder).frame(width: 220)
+        }
+    }
+}
+
+/// A theme preview: a mini window in the palette's light and dark colors.
+struct ThemeCard: View {
+    let palette: Palette
+    let selected: Bool
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 0) {
+                    preview(palette.light)
+                    preview(palette.dark)
+                }
+                .frame(height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                HStack {
+                    Text(palette.name).font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.accent : Theme.cardStroke, lineWidth: selected ? 2 : 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func preview(_ c: Palette.Colors) -> some View {
+        HStack(spacing: 0) {
+            Rectangle().fill(color(c.sidebar)).frame(width: 18)
+            VStack(alignment: .leading, spacing: 5) {
+                RoundedRectangle(cornerRadius: 2).fill(color(c.text)).frame(width: 30, height: 4)
+                RoundedRectangle(cornerRadius: 2).fill(color(c.secondary)).frame(width: 40, height: 3)
+                RoundedRectangle(cornerRadius: 3).fill(color(c.accent)).frame(width: 22, height: 10)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(color(c.content))
+        }
+    }
+
+    private func color(_ hex: UInt32) -> Color { Color(nsColor: Theme.nsColor(hex: hex)) }
 }

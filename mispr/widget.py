@@ -57,7 +57,7 @@ from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import copy_text, paste_text
+from .paste import copy_text, paste_text, type_text
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -97,6 +97,7 @@ SCREEN_POLL_SECONDS = 0.5
 MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation after launch
 COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
 COPIED_NOTICE = "No text box · Copied to clipboard"
+INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -428,14 +429,19 @@ class WidgetController:
             target = context.frontmost()  # where the text is about to land
             where, why = context.focused_text_target()
             log(f"text box: {where} ({why})")
+            incognito = self.settings.incognito
             if where == context.NO:
-                # ⌘V would do nothing (or paste something odd, like files in Finder).
-                copy_text(text)
+                # ⌘V would do nothing (or paste something odd, like files in Finder), so
+                # leave the text on the clipboard instead. In Incognito the clipboard is
+                # off-limits too: the words are simply dropped.
+                if not incognito:
+                    copy_text(text)
                 self.sounds.play(sounds.ERROR)
-                self.show_notice(COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+                self.show_notice(INCOGNITO_NOTICE if incognito else COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
                 status = storage.COPIED
             else:
-                paste_text(text)
+                # Incognito types the words in directly so they never pass through the clipboard.
+                (type_text if incognito else paste_text)(text)
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.

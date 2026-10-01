@@ -30,6 +30,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var stats = Stats()
     @Published private(set) var settingsError: String?
     let note = NoteModel()
+    let profile = Profile()
+    @Published var settingsSection: SettingsModal.Section = .profile
     /// Set by AppDelegate: shows the note side window.
     var openNote: () -> Void = {}
     private var cancellables: Set<AnyCancellable> = []
@@ -43,6 +45,7 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.reloadRecordings() }
         }.store(in: &cancellables)
         engine.saved.sink { [weak self] _ in self?.reloadRecordings() }.store(in: &cancellables)
+        profile.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.noteRequested.sink { [weak self] in self?.openNote() }.store(in: &cancellables)
         engine.$meetingActive.sink { [weak self] active in self?.note.meetingChanged(active) }.store(in: &cancellables)
     }
@@ -69,7 +72,12 @@ final class AppModel: ObservableObject {
     }
 
     var firstName: String {
-        NSFullUserName().split(separator: " ").first.map(String.init) ?? NSUserName()
+        profile.info.greetingName(account: NSFullUserName())
+    }
+
+    func openProfile() {
+        settingsSection = .profile
+        showSettings = true
     }
 
     // MARK: - Settings

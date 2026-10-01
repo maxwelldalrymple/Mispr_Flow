@@ -188,6 +188,8 @@ def controller(monkeypatch, clock):
     pasted, copied = [], []
     monkeypatch.setattr(W, "paste_text", pasted.append)
     monkeypatch.setattr(W, "copy_text", copied.append)
+    typed = []
+    monkeypatch.setattr(W, "type_text", typed.append)
     monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.YES, "TestApp"))
     monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {
         "app": "TestApp", "bundle_id": "com.test.app",
@@ -197,7 +199,7 @@ def controller(monkeypatch, clock):
     monkeypatch.setattr(W.sounds, "Sounds", SpySounds)
     monkeypatch.setattr(W.audio, "input_device", lambda: ("MacBook Pro Microphone", True))
     c = W.WidgetController()
-    c.pasted, c.copied = pasted, copied
+    c.pasted, c.copied, c.typed = pasted, copied, typed
     return c
 
 

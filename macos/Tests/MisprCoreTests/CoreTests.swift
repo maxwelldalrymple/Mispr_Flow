@@ -321,3 +321,22 @@ final class SettingsFileTests: XCTestCase {
         XCTAssertEqual(object["future_key"] as? String, "x")
     }
 }
+
+final class ProfileTests: XCTestCase {
+    func testGreetingPrefersNickname() {
+        XCTAssertEqual(ProfileInfo(name: "Maxwell Dalrymple", nickname: "Max").greetingName(account: "cyb"), "Max")
+    }
+
+    func testGreetingFallsBackToFirstNameThenAccount() {
+        XCTAssertEqual(ProfileInfo(name: "Maxwell Dalrymple").greetingName(account: "cyb"), "Maxwell")
+        XCTAssertEqual(ProfileInfo(nickname: "   ").greetingName(account: "cyb"), "Cyb")
+        XCTAssertEqual(ProfileInfo().greetingName(account: "Jane Doe"), "Jane")
+    }
+
+    func testInitials() {
+        XCTAssertEqual(ProfileInfo(name: "Maxwell Dalrymple").initials(account: "cyb"), "MD")
+        XCTAssertEqual(ProfileInfo(name: "Cher").initials(account: "cyb"), "C")
+        XCTAssertEqual(ProfileInfo(nickname: "max").initials(account: "cyb"), "M")
+        XCTAssertEqual(ProfileInfo().initials(account: ""), "?")
+    }
+}

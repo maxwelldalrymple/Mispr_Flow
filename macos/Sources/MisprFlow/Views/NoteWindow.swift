@@ -63,7 +63,7 @@ final class NoteWindowController {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 380, height: 480)
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        window.contentView = NSHostingView(rootView: NoteView(close: { [weak self] in self?.close() })
+        window.contentView = NSHostingView(rootView: ThemedRoot { NoteView(close: { [weak self] in self?.close() }) }
             .environmentObject(model).environmentObject(model.note))
         return window
     }

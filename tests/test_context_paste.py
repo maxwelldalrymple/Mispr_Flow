@@ -268,6 +268,31 @@ class TestFocusedTextTarget:
         assert why == ("Google Chrome (Electron)" if has_framework else "Google Chrome")
 
 
+class TestTypeText:
+    def test_types_in_chunks_without_the_clipboard(self, board):
+        board, posted = board
+        before = board.changeCount()
+        events = []
+        text = "Hello there, this is a longer dictation."  # 40 chars -> 2 chunks
+        paste.type_text(text, post=events.append)
+        assert board.changeCount() == before and posted == []
+        downs = [e for e in events if Quartz.CGEventGetType(e) == Quartz.kCGEventKeyDown]
+        assert len(events) == 4 and len(downs) == 2
+        typed = "".join(Quartz.CGEventKeyboardGetUnicodeString(e, 64, None, None)[1] for e in downs)
+        assert typed == text
+
+    def test_handles_emoji_and_accents(self):
+        events = []
+        paste.type_text("café 👍", post=events.append)
+        down = [e for e in events if Quartz.CGEventGetType(e) == Quartz.kCGEventKeyDown][0]
+        assert Quartz.CGEventKeyboardGetUnicodeString(down, 64, None, None)[1] == "café 👍"
+
+    def test_no_modifier_flags(self):
+        events = []
+        paste.type_text("x", post=events.append)
+        assert all(Quartz.CGEventGetFlags(e) & Quartz.kCGEventFlagMaskCommand == 0 for e in events)
+
+
 class TestCopyText:
     def test_leaves_text_on_clipboard_without_cmd_v(self, board):
         board, posted = board

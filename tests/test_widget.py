@@ -407,7 +407,7 @@ class TestSaving:
         controller.begin_handsfree()
         controller.finish()
         finish_transcription(controller)
-        assert saved_json(isolated_paths) == [] and controller.pasted == ["Hello world."]
+        assert saved_json(isolated_paths) == [] and controller.typed == ["Hello world."] and controller.pasted == []
 
     def test_cancelled_recording_saved_on_expiry(self, controller, speech, clock, isolated_paths):
         controller.recorder.audio_data = speech
@@ -1429,3 +1429,30 @@ class TestNoteWindowHooks:
         controller.on_meeting_changed = seen.append
         controller.stop_meeting()
         assert controller.state == W.IDLE and seen == [] and controller.sounds.played == []
+
+
+class TestIncognitoNeverUsesTheClipboard:
+    def deliver(self, controller, monkeypatch, target):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))
+        controller.settings.incognito = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Secret.", "secret", None, 1.0, "finished")
+
+    @pytest.mark.parametrize("target", ["yes", "unknown"])
+    def test_types_instead_of_pasting(self, controller, monkeypatch, target):
+        self.deliver(controller, monkeypatch, target)
+        assert controller.typed == ["Secret."] and controller.pasted == [] and controller.copied == []
+        assert controller.sounds.played[-1] == "paste"
+
+    def test_no_text_box_drops_the_words(self, controller, monkeypatch):
+        self.deliver(controller, monkeypatch, "no")
+        assert controller.typed == controller.pasted == controller.copied == []
+        assert controller.sounds.played[-1] == "error"
+        assert controller.notice[0] == "No text box · Incognito, nothing copied"
+
+    def test_normal_mode_still_pastes(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and controller.typed == []

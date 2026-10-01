@@ -27,7 +27,14 @@ struct RootView: View {
             .help(sidebarVisible ? "Hide sidebar" : "Show sidebar")
         }
         .overlay(alignment: .top) { EngineBanner() }
-        .overlay(alignment: .topTrailing) { IncognitoSwitch().padding(.top, 10).padding(.trailing, 18) }
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 12) {
+                IncognitoSwitch()
+                Button { model.openProfile() } label: { AvatarView(size: 24) }
+                    .buttonStyle(.plain).help("Profile")
+            }
+            .padding(.top, 9).padding(.trailing, 18)
+        }
         .overlay {
             if model.showSettings { SettingsModal() }
         }
@@ -194,5 +201,15 @@ struct IncognitoSwitch: View {
         }
         .animation(.easeOut(duration: 0.12), value: showInfo)
         .zIndex(10)
+    }
+}
+
+/// Rebuilds its content when the theme or appearance changes, so every color is re-read.
+struct ThemedRoot<Content: View>: View {
+    @EnvironmentObject var model: AppModel
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content.id(model.profile.lookID)
     }
 }

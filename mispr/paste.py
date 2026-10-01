@@ -47,6 +47,23 @@ def _post_cmd_v():
         Quartz.CGEventPost(Quartz.kCGSessionEventTap, event)
 
 
+TYPE_CHUNK = 20  # characters per synthetic key event (macOS truncates longer strings)
+
+
+def type_text(text, post=None):
+    """Insert text as typed characters, never touching the clipboard (used in Incognito).
+    Each key event carries up to TYPE_CHUNK characters as its Unicode string."""
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for i in range(0, len(text), TYPE_CHUNK):
+        chunk = text[i:i + TYPE_CHUNK]
+        for down in (True, False):
+            event = Quartz.CGEventCreateKeyboardEvent(source, 0, down)
+            Quartz.CGEventSetFlags(event, 0)  # no fn/⌘ leaking in from held keys
+            Quartz.CGEventKeyboardSetUnicodeString(event, len(chunk.encode("utf-16-le")) // 2, chunk)
+            post(event)
+
+
 def copy_text(text):
     """Leave `text` on the clipboard for the user to paste themselves (no ⌘V, no restore)."""
     pb = NSPasteboard.generalPasteboard()

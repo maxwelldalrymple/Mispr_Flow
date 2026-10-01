@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = makeMainMenu()
         model.engine.onCleanExit = { NSApp.terminate(nil) }
         model.openNote = { [weak self] in self?.noteWindow.show() }
+        model.profile.apply()
         model.start()
         showMainWindow()
     }
@@ -42,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.isMovableByWindowBackground = true
             window.minSize = NSSize(width: 900, height: 600)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: RootView().environmentObject(model))
+            window.contentView = NSHostingView(rootView: ThemedRoot { RootView() }.environmentObject(model))
             window.center()
             window.setFrameAutosaveName("MainWindow")
             self.window = window
