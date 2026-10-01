@@ -5,13 +5,16 @@ import SwiftUI
 /// meeting opens its summary, transcript, insights, and your own notes.
 struct NotesView: View {
     @EnvironmentObject var model: AppModel
-    @State private var tab = 0
+    @State private var tab = ProcessInfo.processInfo.environment["MISPR_PEOPLE"] == nil ? 0 : 1
     @State private var open: Meeting?
     @State private var query = ""
+    // Development: MISPR_PEOPLE="Priya Shah,Jordan Lee" opens People with them selected (screenshots).
+    @State private var selectedPeople: Set<String> = Set((ProcessInfo.processInfo.environment["MISPR_PEOPLE"] ?? "")
+        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
 
     var body: some View {
         if let open {
-            MeetingDetailView(meeting: open) { self.open = nil }
+            MeetingDetailView(meeting: open, back: { self.open = nil }, person: showPerson)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -26,7 +29,8 @@ struct NotesView: View {
                     .padding(.bottom, 22)
                     HStack(spacing: 22) {
                         tabButton("Notes", 0)
-                        tabButton("Insights", 1)
+                        tabButton("People", 1)
+                        tabButton("Insights", 2)
                         Spacer()
                         if tab == 0 {
                             HStack(spacing: 6) {
@@ -37,13 +41,24 @@ struct NotesView: View {
                         }
                     }
                     Divider().overlay(Theme.cardStroke).padding(.bottom, 22)
-                    if tab == 0 { list } else { NotesInsights(overview: MeetingsOverview(model.meetings)) }
+                    switch tab {
+                    case 0: list
+                    case 1: PeopleView(meetings: model.meetings, selected: $selectedPeople) { open = $0 }
+                    default: NotesInsights(overview: MeetingsOverview(model.meetings), person: showPerson)
+                    }
                 }
                 .padding(.horizontal, 40).padding(.vertical, 36)
                 .frame(maxWidth: 1000, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    /// Open someone's page from anywhere in Notetaker.
+    private func showPerson(_ name: String) {
+        open = nil
+        selectedPeople = [name]
+        tab = 1
     }
 
     private func tabButton(_ title: String, _ index: Int) -> some View {
@@ -165,6 +180,7 @@ struct Initials: View {
 /// Patterns across all your meetings.
 struct NotesInsights: View {
     let overview: MeetingsOverview
+    var person: (String) -> Void = { _ in }
 
     var body: some View {
         if overview.count == 0 {
@@ -189,7 +205,10 @@ struct NotesInsights: View {
                                 Spacer()
                                 Text("\(person.meetings) meeting\(person.meetings == 1 ? "" : "s")")
                                     .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                                Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.secondary)
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture { self.person(person.name) }
                         }
                         if let day = overview.busiestWeekday {
                             Text("Your busiest meeting day is \(Calendar.current.weekdaySymbols[day - 1]).")
@@ -222,6 +241,7 @@ struct NotesInsights: View {
 struct MeetingDetailView: View {
     let meeting: Meeting
     let back: () -> Void
+    var person: (String) -> Void = { _ in }
     @State private var tab = "Summary"
     private var insights: MeetingInsights { MeetingInsights(meeting) }
 
@@ -280,6 +300,9 @@ struct MeetingDetailView: View {
                 }
                 .padding(.vertical, 6).padding(.leading, 6).padding(.trailing, 12)
                 .background(Capsule().fill(Theme.card))
+                .contentShape(Capsule())
+                .onTapGesture { if p.isMe != true { person(p.name) } }
+                .help(p.isMe == true ? "" : "See all your meetings with \(p.name)")
             }
         }
     }

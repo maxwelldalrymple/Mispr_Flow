@@ -236,3 +236,87 @@ public struct MeetingsOverview: Equatable {
         busiestWeekday = days.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key
     }
 }
+
+/// People across your meetings: who you meet with, and what you share with them.
+public enum PeopleIndex {
+    public struct Person: Equatable, Identifiable {
+        public var name: String
+        public var role: String?
+        public var meetings: Int
+        public var seconds: Double
+        public var firstMet: Date
+        public var lastMet: Date
+        public var id: String { name }
+    }
+
+    /// Everyone except you, most-met first (then most recent).
+    public static func people(_ meetings: [Meeting]) -> [Person] {
+        var byName: [String: Person] = [:]
+        for m in meetings.sorted(by: { $0.startedAt < $1.startedAt }) {
+            for p in m.participants where p.isMe != true {
+                if var person = byName[p.name] {
+                    person.meetings += 1
+                    person.seconds += m.durationS
+                    person.lastMet = m.startedAt
+                    person.role = p.role ?? person.role
+                    byName[p.name] = person
+                } else {
+                    byName[p.name] = Person(name: p.name, role: p.role, meetings: 1, seconds: m.durationS,
+                                            firstMet: m.startedAt, lastMet: m.startedAt)
+                }
+            }
+        }
+        return byName.values.sorted { $0.meetings != $1.meetings ? $0.meetings > $1.meetings : $0.lastMet > $1.lastMet }
+    }
+
+    /// Meetings where every one of `names` was present, newest first.
+    public static func together(_ meetings: [Meeting], names: Set<String>) -> [Meeting] {
+        guard !names.isEmpty else { return [] }
+        return meetings.filter { m in names.isSubset(of: Set(m.participants.map(\.name))) }
+            .sorted { $0.startedAt > $1.startedAt }
+    }
+
+    /// Action items owned by this person (full name or first name), with their meeting.
+    public static func actionItems(_ meetings: [Meeting], for name: String) -> [(meeting: Meeting, item: Meeting.ActionItem)] {
+        let first = name.split(separator: " ").first.map(String.init)?.lowercased() ?? ""
+        return meetings.sorted { $0.startedAt > $1.startedAt }.flatMap { m in
+            (m.summary?.actionItems ?? []).filter { item in
+                let owner = item.owner.lowercased()
+                return owner == name.lowercased() || owner == first
+            }.map { (m, $0) }
+        }
+    }
+
+    /// What a group of people (one or more) looks like across the meetings they shared.
+    public struct Group: Equatable {
+        public var meetings = 0
+        public var seconds = 0.0
+        public var talkShare: [String: Int] = [:]   // average % of talk time per person
+        public var questions: [String: Int] = [:]   // questions asked per person
+        public var topics: [String] = []
+        public var lastMet: Date?
+        public var averageSeconds: Double { meetings > 0 ? seconds / Double(meetings) : 0 }
+    }
+
+    public static func group(_ meetings: [Meeting], names: Set<String>) -> Group {
+        let shared = together(meetings, names: names)
+        var g = Group()
+        g.meetings = shared.count
+        g.seconds = shared.reduce(0) { $0 + $1.durationS }
+        g.lastMet = shared.first?.startedAt
+        var shares: [String: [Int]] = [:]
+        var topicCounts: [String: Int] = [:]
+        for m in shared {
+            let insights = MeetingInsights(m)
+            for name in names {
+                let speaker = insights.speakers.first { $0.name == name }
+                shares[name, default: []].append(speaker?.share ?? 0)
+                g.questions[name, default: 0] += speaker?.questions ?? 0
+            }
+            for (i, topic) in insights.topics.enumerated() { topicCounts[topic, default: 0] += insights.topics.count - i }
+        }
+        g.talkShare = shares.mapValues { $0.isEmpty ? 0 : $0.reduce(0, +) / $0.count }
+        g.topics = topicCounts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(8).map(\.key)
+        return g
+    }
+}

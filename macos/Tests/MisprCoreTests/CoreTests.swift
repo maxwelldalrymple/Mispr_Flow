@@ -793,3 +793,55 @@ final class LiveMeetingTests: XCTestCase {
         XCTAssertEqual(loaded[0].startedAt.timeIntervalSince1970, start.timeIntervalSince1970, accuracy: 0.01)
     }
 }
+
+final class PeopleIndexTests: XCTestCase {
+    func meeting(_ day: Double, _ people: [String], minutes: Double = 10, lines: [(String, Double, String)] = [],
+                 items: [(String, String)] = []) -> Meeting {
+        var m = Meeting(id: UUID().uuidString, title: "M\(day)", startedAt: Date(timeIntervalSince1970: 1_790_000_000 + day * 86_400),
+                        durationS: minutes * 60,
+                        participants: [Meeting.Participant(name: "Max", isMe: true)] + people.map { Meeting.Participant(name: $0, role: "R") },
+                        transcript: lines.map { Meeting.Line(speaker: $0.0, startS: $0.1, text: $0.2) })
+        if !items.isEmpty {
+            m.summary = Meeting.Summary(overview: "", decisions: [], actionItems: items.map { .init(owner: $0.0, task: $0.1, due: nil) },
+                                        openQuestions: [])
+        }
+        return m
+    }
+
+    func testPeopleAreCountedAndSorted() {
+        let ms = [meeting(1, ["Priya Shah", "Jordan Lee"]), meeting(2, ["Priya Shah"], minutes: 20), meeting(3, ["Rachel Kim"])]
+        let people = PeopleIndex.people(ms)
+        XCTAssertEqual(people.map(\.name), ["Priya Shah", "Rachel Kim", "Jordan Lee"])  // most meetings, then most recent
+        XCTAssertEqual(people[0].meetings, 2)
+        XCTAssertEqual(people[0].seconds, 1800)
+        XCTAssertEqual(people[0].firstMet, ms[0].startedAt)
+        XCTAssertEqual(people[0].lastMet, ms[1].startedAt)
+        XCTAssertFalse(people.contains { $0.name == "Max" })  // not you
+    }
+
+    func testTogetherNeedsEveryoneSelected() {
+        let ms = [meeting(1, ["Priya Shah", "Jordan Lee"]), meeting(2, ["Priya Shah"]), meeting(3, ["Jordan Lee", "Priya Shah", "Sam"])]
+        XCTAssertEqual(PeopleIndex.together(ms, names: ["Priya Shah"]).count, 3)
+        XCTAssertEqual(PeopleIndex.together(ms, names: ["Priya Shah", "Jordan Lee"]).map(\.title), ["M3.0", "M1.0"])
+        XCTAssertEqual(PeopleIndex.together(ms, names: []), [])
+    }
+
+    func testActionItemsMatchFullOrFirstName() {
+        let ms = [meeting(1, ["Jordan Lee"], items: [("Jordan Lee", "Test installer"), ("Max", "Notes")]),
+                  meeting(2, ["Jordan Lee"], items: [("jordan", "Fix undo")])]
+        XCTAssertEqual(PeopleIndex.actionItems(ms, for: "Jordan Lee").map(\.item.task), ["Fix undo", "Test installer"])
+    }
+
+    func testGroupStats() {
+        let ms = [meeting(1, ["Ana", "Bo"], lines: [("Ana", 0, "Release plan?"), ("Bo", 300, "Release friday release")]),
+                  meeting(2, ["Ana"], minutes: 30)]
+        let g = PeopleIndex.group(ms, names: ["Ana", "Bo"])
+        XCTAssertEqual(g.meetings, 1)
+        XCTAssertEqual(g.seconds, 600)
+        XCTAssertEqual(g.talkShare["Ana"], 50)
+        XCTAssertEqual(g.questions["Ana"], 1)
+        XCTAssertEqual(g.topics.first, "release")
+        XCTAssertEqual(PeopleIndex.group(ms, names: ["Ana"]).meetings, 2)
+        XCTAssertEqual(PeopleIndex.group(ms, names: ["Nobody"]).meetings, 0)
+    }
+}
