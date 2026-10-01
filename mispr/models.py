@@ -83,15 +83,27 @@ def ensure_model(spec=DEFAULT_MODEL, progress=None):
     return spec.path
 
 
-if __name__ == "__main__":
+def progress_printer(out=None):
+    """A download progress callback that prints every 5%: "40% (229 / 574 MB)"."""
     last = [-1]
 
     def report(done, total):
         pct = done * 100 // total
         if pct != last[0] and pct % 5 == 0:
             last[0] = pct
-            print(f"{pct}% ({done / 1e6:.0f} / {total / 1e6:.0f} MB)", file=sys.stderr, flush=True)
+            print(f"{pct}% ({done / 1e6:.0f} / {total / 1e6:.0f} MB)", file=out or sys.stderr, flush=True)
 
+    return report
+
+
+def cli(args, ensure=None):
+    """python -m mispr.models [whisper] [cleanup]: download and verify models."""
+    ensure = ensure or ensure_model
     names = {"whisper": DEFAULT_MODEL, "cleanup": CLEANUP_MODEL}
-    for name in sys.argv[1:] or ["whisper", "cleanup"]:
-        print(ensure_model(names[name], progress=report))
+    report = progress_printer()
+    return [ensure(names[name], progress=report) for name in args or ["whisper", "cleanup"]]
+
+
+if __name__ == "__main__":
+    for path in cli(sys.argv[1:]):
+        print(path)
