@@ -1802,6 +1802,27 @@ class TestBrowserTextBoxRecheck:
         assert calls == [1] and controller.copied == ["Hi."]
 
 
+class TestTerminalDictation:
+    """In a terminal, dictation becomes shell syntax and Auto-Enter never runs it."""
+
+    def test_terminal_gets_shell_syntax_and_others_the_usual_cleanup(self, controller):
+        controller.rec_recorded_in = {"app": "Terminal", "bundle_id": "com.apple.Terminal"}
+        controller.settings.cleanup = False  # the plain converter (the model path is tested in test_terminal)
+        text, info = controller._post_processor()("ls flag a")
+        assert info["terminal"] and text in ("ls -a",)
+        controller.settings.cleanup = True
+        controller.rec_recorded_in = {"app": "Notes", "bundle_id": "com.apple.Notes"}
+        assert controller._post_processor() == controller.cleaner.clean
+
+    def test_auto_enter_skips_terminals(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("ls -a", "ls flag a", {"terminal": True, "applied": False, "ms": 0, "rejected": "x"}, 1.0, "finished")
+        assert controller.pasted == ["ls -a"] and enters == []
+
+
 class TestIncognitoNeverUsesTheClipboard:
     def deliver(self, controller, monkeypatch, target):
         monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))

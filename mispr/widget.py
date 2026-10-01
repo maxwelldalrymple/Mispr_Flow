@@ -53,7 +53,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import apps, audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -441,8 +441,16 @@ class WidgetController:
         self.transcriber.transcribe_async(
             self.recorder.audio(),
             lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
-            post=self.cleaner.clean if self.settings.cleanup else None,
+            post=self._post_processor(),
         )
+
+    def _post_processor(self):
+        """How the transcript is finished: shell syntax in a terminal ("ls flag a" -> "ls -a"),
+        otherwise the usual cleanup (or none)."""
+        if terminal.is_terminal(self.rec_recorded_in):
+            cleaner = self.cleaner if self.settings.cleanup else None
+            return lambda raw: terminal.clean(raw, cleaner)
+        return self.cleaner.clean if self.settings.cleanup else None
 
     def _on_transcribed(self, text, raw, info, secs, reason):
         cleanup_note = ""
@@ -470,7 +478,7 @@ class WidgetController:
             else:
                 # Incognito types the words in directly so they never pass through the clipboard.
                 (type_text if incognito else paste_text)(text)
-                if self.settings.auto_enter:
+                if self.settings.auto_enter and not (info or {}).get("terminal"):  # never run a command on its own
                     AppHelper.callLater(ENTER_DELAY, press_enter)  # send it, so you can just talk
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED

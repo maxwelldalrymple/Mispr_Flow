@@ -44,8 +44,8 @@ from Foundation import NSObject
 
 from . import apps, hotkey, settings as settings_mod, sounds
 
-WELCOME, PERMISSIONS, MODELS, READY = range(4)
-STEP_NAMES = ("Welcome", "Permissions", "Models", "Ready")
+WELCOME, PERMISSIONS, EXTRAS, MODELS, READY = range(5)
+STEP_NAMES = ("Welcome", "Permissions", "Optional", "Models", "Ready")
 
 _PANE = "x-apple.systempreferences:com.apple.preference.security?"
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -283,7 +283,7 @@ class _Actions(NSObject):
 
 
 class SetupWindow:
-    WIDTH, HEIGHT = 560, 600
+    WIDTH, HEIGHT = 560, 520
     CONTENT_W = 480
 
     def __init__(self, flow, on_finish=lambda: None, play=lambda name: None):
@@ -351,7 +351,7 @@ class SetupWindow:
     def render(self):
         self.rows = {}
         self.model_widgets = None
-        builders = (self._welcome, self._permissions, self._models, self._ready)
+        builders = (self._welcome, self._permissions, self._extras, self._models, self._ready)
         page = builders[self.flow.step]()
         content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, self.WIDTH, self.HEIGHT))
         footer = self._footer()
@@ -399,10 +399,21 @@ class SetupWindow:
         return _stack(views + [features], spacing=12, align=ALIGN_CENTER_X)
 
     def _permissions(self):
-        views = self._header("checkmark.shield", "Allow access",
-                             "Mispr Flow needs these to hear you and type for you. Nothing ever leaves your Mac.")
+        return self._permission_page(
+            True, "checkmark.shield", "Allow access",
+            "Mispr Flow needs these to hear you and type for you. Nothing ever leaves your Mac.")
+
+    def _extras(self):
+        return self._permission_page(
+            False, "sparkles", "Optional features",
+            "Turn on what you'll use. You can skip these and allow them later from Setup Guide…")
+
+    def _permission_page(self, required, symbol, title_text, subtitle):
+        views = self._header(symbol, title_text, subtitle)
         rows = []
         for p in self.flow.permissions:
+            if p.required != required:
+                continue
             icon = _symbol(p.symbol, 20, NSColor.controlAccentColor())
             _pin(icon, width=28)
             title = _label(p.title, 13, NSFontWeightSemibold)
@@ -447,7 +458,7 @@ class SetupWindow:
         return _stack(views + [tips], spacing=12, align=ALIGN_CENTER_X)
 
     def _footer(self):
-        step = _label(f"Step {self.flow.step + 1} of 4 · {STEP_NAMES[self.flow.step]}", 12,
+        step = _label(f"Step {self.flow.step + 1} of {len(STEP_NAMES)} · {STEP_NAMES[self.flow.step]}", 12,
                       color=NSColor.tertiaryLabelColor())
         spacer = NSView.alloc().init()
         buttons = [step, spacer]

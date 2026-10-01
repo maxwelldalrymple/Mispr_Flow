@@ -4,7 +4,7 @@ from AppKit import NSAppearance, NSBitmapImageRep, NSColor, NSGraphicsContext, N
 from conftest import FakeRecorder  # noqa: F401  (keeps conftest fakes importable here)
 from mispr import onboarding as o
 from mispr import settings as st
-from mispr.onboarding import MODELS, PERMISSIONS, READY, WELCOME, SetupFlow, SetupWindow
+from mispr.onboarding import EXTRAS, MODELS, PERMISSIONS, READY, WELCOME, SetupFlow, SetupWindow
 
 
 # --- Test doubles --------------------------------------------------------------------------
@@ -170,6 +170,7 @@ class TestNavigation:
         perms.granted["microphone"] = True
         assert not flow.can_advance()
         perms.granted["accessibility"] = True
+        assert flow.can_advance() and flow.advance() == EXTRAS  # the optional page, never blocking
         assert flow.can_advance() and flow.advance() == MODELS
 
     def test_optional_permission_never_blocks(self):
@@ -193,7 +194,7 @@ class TestNavigation:
     def test_back_stops_at_welcome(self):
         flow, _, _ = make_flow()
         flow.step = MODELS
-        assert flow.back() == PERMISSIONS and flow.back() == WELCOME and flow.back() == WELCOME
+        assert flow.back() == EXTRAS and flow.back() == PERMISSIONS and flow.back() == WELCOME and flow.back() == WELCOME
 
     def test_missing_required_lists_keys_in_order(self):
         flow, perms, _ = make_flow()
@@ -282,7 +283,7 @@ class TestWindow:
     def test_title_and_size(self, window):
         w = window[0]
         f = w.window.contentView().frame()
-        assert w.window.title() == "Mispr Flow Setup" and (f.size.width, f.size.height) == (560, 600)
+        assert w.window.title() == "Mispr Flow Setup" and (f.size.width, f.size.height) == (560, 520)
 
     @pytest.mark.parametrize("step,label,has_back", [
         (WELCOME, "Get Started", False), (PERMISSIONS, "Continue", True),
@@ -416,6 +417,7 @@ PAGES = {
     "welcome": (WELCOME, {}, {}),
     "permissions_none": (PERMISSIONS, {}, {}),
     "permissions_required_done": (PERMISSIONS, {"microphone": True, "accessibility": True}, {}),
+    "optional_features": (EXTRAS, {"screen_audio": True}, {}),
     "models_downloading": (MODELS, {}, {"progress": 0.42}),
     "models_error": (MODELS, {}, {"progress": 0.3, "error": "network unreachable"}),
     "models_ready": (MODELS, {}, {"ready": True}),
