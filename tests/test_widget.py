@@ -1699,6 +1699,7 @@ class TestAppSwitcher:
     def files(self, monkeypatch, tmp_path):
         log = {"open": [], "go": []}
         monkeypatch.setattr(W, "start_daemon", lambda target, name: target())
+        monkeypatch.setattr(W.apps, "spotlight", lambda *a, **k: None)  # the folder walk, on a temp tree
         monkeypatch.setattr(W.apps, "open_path", log["open"].append)
         monkeypatch.setattr(W.apps, "finder_go", log["go"].append)
         (tmp_path / "Docs" / "Taxes").mkdir(parents=True)

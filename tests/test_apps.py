@@ -307,3 +307,43 @@ class TestFolders:
 
     def test_finder_permission_check_never_prompts(self):
         assert apps.finder_control() in (True, False, None)
+
+
+class TestSoundAlikeNames:
+    """Whisper wrote "clawed" for "Claude": the folder should still open."""
+
+    def test_sound_codes(self):
+        assert apps.sounds_like("clawed") == apps.sounds_like("Claude") == apps.sounds_like("claw to") == "C430"
+        assert apps.sounds_like("Robert") == apps.sounds_like("Rupert")
+        assert apps.sounds_like("abc") is None  # too short to trust
+
+    def test_exact_name_wins_then_highest_sound_alike(self, tmp_path):
+        (tmp_path / "work" / "claude").mkdir(parents=True)
+        (tmp_path / "Clawed Notes").mkdir()
+        assert apps.find_in(tmp_path, "clawed", files=False) == str(tmp_path / "work" / "claude")
+        (tmp_path / "Clawed").mkdir()
+        assert apps.find_in(tmp_path, "clawed", files=False) == str(tmp_path / "Clawed")  # exact beats sound-alike
+
+
+class TestSpotlightAndAccess:
+    def test_spotlight_exact_then_sound_alike_shallowest(self, tmp_path):
+        out = {"*clawed*": "", "cl*": f"{tmp_path}/a/b/claude\n{tmp_path}/claude\n{tmp_path}/.hidden/claude\n{tmp_path}/clips\n"}
+        run = lambda cmd: next(v for k, v in out.items() if f"'{k}'" in cmd[-1])
+        for d in ("a/b/claude", "claude", "clips"):
+            (tmp_path / d).mkdir(parents=True, exist_ok=True)
+        assert apps.spotlight(tmp_path, "clawed", files=False, run=run) == str(tmp_path / "claude")
+
+    def test_spotlight_off_or_failing_is_none(self, tmp_path):
+        assert apps.spotlight(tmp_path, "claude", run=lambda cmd: "") is None
+        assert apps.spotlight(tmp_path, "claude", run=lambda cmd: (_ for _ in ()).throw(OSError())) is None
+
+    def test_full_disk_access_check(self, tmp_path):
+        locked = tmp_path / "locked"
+        locked.write_text("x")
+        assert apps.full_disk_access(locked) is True
+        locked.chmod(0)
+        try:
+            assert apps.full_disk_access(locked) is False
+        finally:
+            locked.chmod(0o600)
+        assert apps.full_disk_access(tmp_path / "missing") is True

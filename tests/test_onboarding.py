@@ -13,7 +13,7 @@ class Perms:
     """Controllable permissions: `granted[key]` drives check(); requests are recorded."""
 
     def __init__(self, granted=None, prompt_available=True):
-        self.granted = {"microphone": False, "accessibility": False, "screen_audio": False, "finder": False}
+        self.granted = {"microphone": False, "accessibility": False, "screen_audio": False, "files": False, "finder": False}
         self.granted.update(granted or {})
         self.requests = []
         self.prompt_available = prompt_available
@@ -58,14 +58,14 @@ def opened_panes(monkeypatch):
 class TestDefaultPermissions:
     def test_keys_and_requirements(self):
         perms = {p.key: p for p in o.default_permissions()}
-        assert list(perms) == ["microphone", "accessibility", "screen_audio", "finder"]
+        assert list(perms) == ["microphone", "accessibility", "screen_audio", "files", "finder"]
         assert perms["microphone"].required and perms["accessibility"].required
         assert not perms["screen_audio"].required  # only for meeting notes
 
     def test_settings_panes(self):
         panes = {p.key: p.pane for p in o.default_permissions()}
         assert panes == {"microphone": "Privacy_Microphone", "accessibility": "Privacy_Accessibility",
-                         "screen_audio": "Privacy_ScreenCapture", "finder": "Privacy_Automation"}
+                         "screen_audio": "Privacy_ScreenCapture", "files": "Privacy_AllFiles", "finder": "Privacy_Automation"}
 
     def test_every_permission_explains_why(self):
         for p in o.default_permissions():
@@ -203,7 +203,7 @@ class TestNavigation:
 
     def test_granted_reports_every_permission(self):
         flow, perms, _ = make_flow(Perms({"screen_audio": True}))
-        assert flow.granted() == {"microphone": False, "accessibility": False, "screen_audio": True, "finder": False}
+        assert flow.granted() == {"microphone": False, "accessibility": False, "screen_audio": True, "files": False, "finder": False}
 
     def test_finish_marks_onboarded_and_saves(self):
         flow, _, _ = make_flow()
@@ -282,7 +282,7 @@ class TestWindow:
     def test_title_and_size(self, window):
         w = window[0]
         f = w.window.contentView().frame()
-        assert w.window.title() == "Mispr Flow Setup" and (f.size.width, f.size.height) == (560, 520)
+        assert w.window.title() == "Mispr Flow Setup" and (f.size.width, f.size.height) == (560, 600)
 
     @pytest.mark.parametrize("step,label,has_back", [
         (WELCOME, "Get Started", False), (PERMISSIONS, "Continue", True),

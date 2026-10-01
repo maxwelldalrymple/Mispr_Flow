@@ -642,7 +642,7 @@ class WidgetController:
         kind = command[0]
         if kind == "open_folder":  # "open folder projects": the highest-level match under your home folder
             name = command[1]
-            return self._in_background(lambda: apps.find_in(Path.home(), name, files=False),
+            return self._in_background(lambda: apps.spotlight(Path.home(), name, files=False) or apps.find_in(Path.home(), name, files=False),
                                        lambda path: (apps.open_path(path), self._switch_done(f"Opened {Path(path).name}"))
                                        if path else self._switch_failed(f"Couldn't find a “{name}” folder"))
         if kind == "open":
@@ -662,7 +662,7 @@ class WidgetController:
                         else:
                             apps.open_path(path)
                         self._switch_done(f"Opened {Path(path).name}")
-                    return self._in_background(lambda: apps.find_in(folder, name), opened)
+                    return self._in_background(lambda: apps.spotlight(folder, name) or apps.find_in(folder, name), opened)
             command, kind = ("switch", name), "switch"  # elsewhere "open X" means the app X
         if kind == "media":
             apps.press_media(command[1])

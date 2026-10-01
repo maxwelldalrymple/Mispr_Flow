@@ -121,8 +121,14 @@ def default_permissions():
             "waveform.badge.mic", False, screen_audio_granted, request_screen_audio, "Privacy_ScreenCapture",
         ),
         Permission(
+            "files", "Full Disk Access",
+            "For “open folder …”: find folders anywhere. Switch on Mispr Flow in the list.",
+            "internaldrive", False, apps.full_disk_access, lambda: open_pane("Privacy_AllFiles"),
+            "Privacy_AllFiles", prompt_available=lambda: False,
+        ),
+        Permission(
             "finder", "Control Finder",
-            "For “open folder …” by voice: shows the folder you say in Finder.",
+            "For “open …” in Finder: opens folders in the same window.",
             "folder", False, lambda: apps.finder_control() is True, lambda: apps.finder_control(ask=True),
             "Privacy_Automation",
             prompt_available=lambda: apps.finder_control() is None,
@@ -277,7 +283,7 @@ class _Actions(NSObject):
 
 
 class SetupWindow:
-    WIDTH, HEIGHT = 560, 520
+    WIDTH, HEIGHT = 560, 600
     CONTENT_W = 480
 
     def __init__(self, flow, on_finish=lambda: None, play=lambda name: None):

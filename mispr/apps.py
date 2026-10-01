@@ -6,6 +6,7 @@ Everything here is local: apps are found on disk and in the running-apps list, n
 
 import difflib
 import os
+import sys
 import re
 from pathlib import Path
 
@@ -95,10 +96,68 @@ def name_key(name):
     return re.sub(r"[\W_]+", "", name.lower())
 
 
+_SOUNDEX = {**dict.fromkeys("bfpv", "1"), **dict.fromkeys("cgjkqsxz", "2"), **dict.fromkeys("dt", "3"),
+            "l": "4", **dict.fromkeys("mn", "5"), "r": "6"}
+
+
+def sounds_like(name):
+    """Soundex of the name with spaces and punctuation removed: "clawed", "claw to" and
+    "Claude" are all C430, so a misheard name still finds the folder. Under 4 letters: None."""
+    word = re.sub(r"[\W_]+", "", name.lower())
+    if len(word) < 4:
+        return None
+    out, last = word[0].upper(), _SOUNDEX.get(word[0], "")
+    for ch in word[1:]:
+        code = _SOUNDEX.get(ch, "")
+        if code and code != last:
+            out += code
+        if ch not in "hw":
+            last = code
+    return (out + "000")[:4]
+
+
+def _hidden_or_skipped(path, root):
+    rel = os.path.relpath(path, root)
+    return any(part.startswith(".") or part in SKIP_DIRS or part.endswith((".app", ".photoslibrary", ".bundle"))
+               for part in rel.split(os.sep))
+
+
+def spotlight(root, name, files=True, run=None):
+    """Like find_in, from the Spotlight index (instant, any depth): exact names first, then
+    sound-alikes; the shallowest wins, folders first. None if Spotlight has nothing (or is off)."""
+    import subprocess
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=4).stdout)
+    want, sound = name_key(name), sounds_like(name)
+    words = [w for w in re.split(r"[\W_]+", name.lower()) if len(w) >= 2]
+    if not want or not words:
+        return None
+    kind = "" if files else " && kMDItemContentType == 'public.folder'"
+    queries = [f"kMDItemFSName == '*{max(words, key=len)}*'cd{kind}"]
+    if sound:
+        queries.append(f"kMDItemFSName == '{words[0][:2]}*'cd{kind}")  # sound-alikes start alike ("cla…")
+    for query in queries:
+        try:
+            paths = [p for p in run(["mdfind", "-onlyin", str(root), query]).splitlines()
+                     if p and not _hidden_or_skipped(p, root)]
+        except Exception:
+            return None
+        def ok(p, exact):
+            base = os.path.basename(p)
+            stem = base if os.path.isdir(p) else os.path.splitext(base)[0]
+            keys = (name_key(base), name_key(stem)) if exact else (sounds_like(base), sounds_like(stem))
+            return (want if exact else sound) in keys
+        for exact in (True, False):
+            hits = [p for p in paths if ok(p, exact)]
+            if hits:
+                return min(hits, key=lambda p: (p.count(os.sep), not os.path.isdir(p), len(p)))
+    return None
+
+
 def find_in(root, name, files=True, max_depth=8, budget=1.5, clock=None):
     """The shallowest folder (or file, by name with or without its extension) under `root` whose
     name sounds like `name`, searching level by level so duplicates resolve to the highest one.
-    Hidden folders, Library and build/dependency folders are skipped. None if not found in time."""
+    Hidden folders, Library and build/dependency folders are skipped. If nothing has the name,
+    the highest one that sounds like it ("clawed" -> Claude). None if not found in time."""
     import time as _time
     clock = clock or _time.monotonic
     want = name_key(name)
@@ -106,11 +165,16 @@ def find_in(root, name, files=True, max_depth=8, budget=1.5, clock=None):
         return None
     deadline = clock() + budget
     level = [str(root)]
+    sound = sounds_like(name)
+    alike = None  # the first (highest) sound-alike, used only if no exact name turns up
     for _ in range(max_depth):
         found, below = [], []
         for folder in level:
             try:
                 entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
+            except PermissionError:  # Documents/Desktop/Downloads before "Files & Folders" is allowed
+                print(f"mispr: no permission to look in {folder}", file=sys.stderr)
+                continue
             except OSError:
                 continue
             for e in entries:
@@ -120,16 +184,34 @@ def find_in(root, name, files=True, max_depth=8, budget=1.5, clock=None):
                 stem = e.name if is_dir else os.path.splitext(e.name)[0]
                 if (is_dir or files) and want in (name_key(e.name), name_key(stem)):
                     found.append(e.path)
+                elif alike is None and sound and (is_dir or files) and sound in (sounds_like(e.name), sounds_like(stem)):
+                    alike = e.path
                 if is_dir and e.name not in SKIP_DIRS and not e.name.endswith((".app", ".photoslibrary", ".bundle")):
                     below.append(e.path)
             if clock() > deadline:
-                return found[0] if found else None
+                return found[0] if found else alike
         if found:
             return min(found, key=lambda p: (not os.path.isdir(p), len(p)))  # folders first
         level = below
         if not level:
-            return None
-    return None
+            return alike
+    return alike
+
+
+TCC_DB = Path.home() / "Library" / "Application Support" / "com.apple.TCC" / "TCC.db"
+
+
+def full_disk_access(probe=None):
+    """Does Mispr Flow have Full Disk Access (so "open folder" can search everywhere, including
+    Documents, Desktop and Downloads)? Reading this protected file says so without any prompt."""
+    try:
+        with open(probe or TCC_DB, "rb") as f:
+            f.read(1)
+        return True
+    except PermissionError:
+        return False
+    except OSError:
+        return True  # nothing there to protect: nothing is blocked
 
 
 def finder_control(ask=False):
