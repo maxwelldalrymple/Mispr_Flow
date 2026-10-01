@@ -56,10 +56,7 @@ struct RootView: View {
                     }
                     .buttonStyle(OutlineButton()).padding(.top, 36).padding(.trailing, 40)
                 }
-        case .style:
-            PlaceholderView(title: "Style", symbol: "textformat",
-                            message: "Choose how your dictation is written in messages, work chat, email, and everything else.",
-                            detail: "Coming soon. Today cleanup keeps your words and fixes punctuation everywhere.")
+        case .prompts: PromptsView()
         }
     }
 }

@@ -5,7 +5,11 @@ import XCTest
 final class EngineProtocolTests: XCTestCase {
     func testHello() {
         let event = EngineEvent.parse(#"@mispr {"event": "hello", "recordings_dir": "/r", "settings_path": "/s/settings.json"}"#)
-        XCTAssertEqual(event, .hello(recordingsDir: URL(fileURLWithPath: "/r"), settingsFile: URL(fileURLWithPath: "/s/settings.json")))
+        XCTAssertEqual(event, .hello(recordingsDir: URL(fileURLWithPath: "/r"), settingsFile: URL(fileURLWithPath: "/s/settings.json"),
+                                     promptsFile: nil, defaultPrompts: nil))
+        let full = EngineEvent.parse(#"@mispr {"event": "hello", "recordings_dir": "/r", "settings_path": "/s", "prompts_path": "/p.json", "default_prompts": {"system": "S", "examples": "Said: a\nWrote: b"}}"#)
+        XCTAssertEqual(full, .hello(recordingsDir: URL(fileURLWithPath: "/r"), settingsFile: URL(fileURLWithPath: "/s"),
+                                    promptsFile: URL(fileURLWithPath: "/p.json"), defaultPrompts: DefaultPrompts(system: "S", examples: "Said: a\nWrote: b")))
     }
 
     func testSaved() {
@@ -39,6 +43,11 @@ final class EngineProtocolTests: XCTestCase {
         }
     }
 
+    func testTried() {
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "tried", "output": "Hi.", "applied": true, "rejected": null, "ms": 40}"#),
+                       .tried(TryResult(output: "Hi.", applied: true, rejected: nil, ms: 40)))
+    }
+
     func testUnknownEventsAreKept() {
         XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "future"}"#), .unknown("future"))
     }
@@ -49,6 +58,12 @@ final class EngineProtocolTests: XCTestCase {
             let object = try JSONSerialization.jsonObject(with: Data(command.line.utf8)) as? [String: String]
             XCTAssertEqual(object, ["cmd": command.rawValue])
         }
+        let withArgs = EngineCommand.tryPrompt.line(["text": "um \"hi\"\nthere", "guard": false])
+        XCTAssertEqual(withArgs.filter { $0 == "\n" }.count, 1)  // newlines in values stay escaped
+        let object = try JSONSerialization.jsonObject(with: Data(withArgs.utf8)) as? [String: Any]
+        XCTAssertEqual(object?["cmd"] as? String, "try_prompt")
+        XCTAssertEqual(object?["text"] as? String, "um \"hi\"\nthere")
+        XCTAssertEqual(object?["guard"] as? Bool, false)
         XCTAssertEqual(EngineCommand.openSetup.rawValue, "open_setup")  // must match mispr/app.py
         XCTAssertEqual(EngineCommand.reloadSettings.rawValue, "reload_settings")
     }
@@ -338,5 +353,37 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(ProfileInfo(name: "Cher").initials(account: "cyb"), "C")
         XCTAssertEqual(ProfileInfo(nickname: "max").initials(account: "cyb"), "M")
         XCTAssertEqual(ProfileInfo().initials(account: ""), "?")
+    }
+}
+
+
+final class PromptDraftTests: XCTestCase {
+    let defaults = DefaultPrompts(system: "Default.", examples: "Said: um a\nWrote: A.")
+
+    func testExamplesTextMatchesPython() {
+        let pairs = [["um hi", "Hi."], ["a, a b", "A b."]]
+        XCTAssertEqual(PromptDraft.format(pairs), "Said: um hi\nWrote: Hi.\n\nSaid: a, a b\nWrote: A b.")
+        XCTAssertEqual(PromptDraft.parse(PromptDraft.format(pairs)), pairs)
+        XCTAssertEqual(PromptDraft.parse("Said: one\nnoise\nWrote: 1\n\nWrote: orphan\nSaid: dangling"), [["one", "1"]])
+    }
+
+    func testMissingFileUsesDefaults() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/prompts.json")
+        XCTAssertEqual(PromptDraft.load(from: url, defaults: defaults), PromptDraft(system: "Default.", examples: "Said: um a\nWrote: A."))
+    }
+
+    func testRoundTrip() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/prompts.json")
+        let draft = PromptDraft(system: "Mine.", extra: "No emoji.", examples: "Said: x\nWrote: X.", guardOn: false)
+        try draft.save(to: url)
+        XCTAssertEqual(PromptDraft.load(from: url, defaults: defaults), draft)
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        XCTAssertEqual(object?["examples"] as? [[String]], [["x", "X."]])  // the engine's format
+    }
+
+    func testBlankSystemFallsBack() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/prompts.json")
+        try PromptDraft(system: "", examples: "").save(to: url)
+        XCTAssertEqual(PromptDraft.load(from: url, defaults: defaults).system, "Default.")
     }
 }

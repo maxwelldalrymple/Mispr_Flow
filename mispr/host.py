@@ -39,13 +39,16 @@ def send(event, out=None, **fields):
 
 
 def parse(line):
-    """The command name in one stdin line, or None for blank or malformed lines."""
+    """(command, arguments) from one stdin line, or (None, {}) for blank or malformed lines.
+    Arguments are the message's other keys, e.g. {"cmd": "try_prompt", "text": "…"}."""
     try:
         message = json.loads(line)
     except ValueError:
-        return None
+        return None, {}
     cmd = message.get("cmd") if isinstance(message, dict) else None
-    return cmd if isinstance(cmd, str) else None
+    if not isinstance(cmd, str):
+        return None, {}
+    return cmd, {k: v for k, v in message.items() if k != "cmd"}
 
 
 def listen(handlers, on_eof, stream=None, call=AppHelper.callAfter, start=threads.start_daemon):
@@ -54,10 +57,10 @@ def listen(handlers, on_eof, stream=None, call=AppHelper.callAfter, start=thread
 
     def run():
         for line in stream:
-            cmd = parse(line)
+            cmd, args = parse(line)
             handler = handlers.get(cmd)
             if handler is not None:
-                call(handler)
+                call(lambda handler=handler, args=args: handler(**args))
             elif cmd is not None:
                 print(f"mispr: unknown host command {cmd!r}", file=sys.stderr)
         call(on_eof)

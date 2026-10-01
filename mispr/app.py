@@ -24,7 +24,7 @@ from PyObjCTools import AppHelper
 
 from Foundation import NSObject
 
-from . import host, hotkey, onboarding, settings, setup, storage
+from . import host, hotkey, onboarding, prompts, settings, setup, storage, threads
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -149,9 +149,22 @@ def _connect_host(app, widget, open_setup):
     widget.on_note_requested = lambda: host.send("open_note")
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     host.listen({"open_setup": open_setup, "reload_settings": widget.reload_settings, "quit": quit_app,
-                 "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting},
+                 "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
+                 "try_prompt": lambda **draft: try_prompt(widget.cleaner, **draft)},
                 on_eof=quit_app)
-    host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH))
+    host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH),
+              prompts_path=str(prompts.PROMPTS_PATH), default_prompts=prompts.defaults_payload())
+
+
+def try_prompt(cleaner, text="", system="", extra="", examples="", guard=True, start=threads.start_daemon):
+    """The Prompts page's Try it box: clean `text` with a draft prompt (not saved) on a worker
+    thread, and send back what the model wrote."""
+    def run():
+        draft = prompts.Prompts(system=system or prompts.Prompts().system, extra=extra,
+                                examples=prompts.parse_examples(examples), guard=bool(guard))
+        output, info = cleaner.clean(text, system=draft.full_system(), examples=draft.examples, guard=draft.guard)
+        host.send("tried", output=output, applied=info["applied"], rejected=info["rejected"], ms=info["ms"])
+    start(run, "try-prompt")
 
 
 def maintain_hotkey(fn):

@@ -7,7 +7,7 @@ enum Page: String, CaseIterable, Identifiable {
     case home = "Home"
     case notetaker = "Notetaker"
     case insights = "Insights"
-    case style = "Style"
+    case prompts = "Prompts"
 
     var id: String { rawValue }
 
@@ -16,7 +16,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .home: "mic"
         case .notetaker: "record.circle"
         case .insights: "chart.bar"
-        case .style: "textformat"
+        case .prompts: "text.bubble"
         }
     }
 }

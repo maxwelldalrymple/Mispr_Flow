@@ -5,8 +5,10 @@ import Foundation
 /// Engine -> app: stdout lines "@mispr {json}"; anything else on stdout is ignored.
 /// App -> engine: one JSON object per line on stdin, e.g. {"cmd": "open_setup"}.
 public enum EngineEvent: Equatable {
-    /// Sent once at startup: where the engine keeps its data.
-    case hello(recordingsDir: URL, settingsFile: URL)
+    /// Sent once at startup: where the engine keeps its data, and its built-in prompts.
+    case hello(recordingsDir: URL, settingsFile: URL, promptsFile: URL?, defaultPrompts: DefaultPrompts?)
+    /// The result of a "Try it" run on the Prompts page.
+    case tried(TryResult)
     /// A dictation was saved (not sent in Incognito).
     case saved(URL)
     /// The widget's note button was clicked: show the note window.
@@ -28,7 +30,16 @@ public enum EngineEvent: Equatable {
         case "hello":
             guard let recordings = object["recordings_dir"] as? String,
                   let settings = object["settings_path"] as? String else { return nil }
-            return .hello(recordingsDir: URL(fileURLWithPath: recordings), settingsFile: URL(fileURLWithPath: settings))
+            let prompts = (object["prompts_path"] as? String).map { URL(fileURLWithPath: $0) }
+            let defaults = (object["default_prompts"] as? [String: Any]).flatMap { d -> DefaultPrompts? in
+                guard let system = d["system"] as? String, let examples = d["examples"] as? String else { return nil }
+                return DefaultPrompts(system: system, examples: examples)
+            }
+            return .hello(recordingsDir: URL(fileURLWithPath: recordings), settingsFile: URL(fileURLWithPath: settings),
+                          promptsFile: prompts, defaultPrompts: defaults)
+        case "tried":
+            return .tried(TryResult(output: object["output"] as? String ?? "", applied: object["applied"] as? Bool ?? false,
+                                    rejected: object["rejected"] as? String, ms: object["ms"] as? Int ?? 0))
         case "saved":
             guard let path = object["path"] as? String else { return nil }
             return .saved(URL(fileURLWithPath: path))
@@ -43,14 +54,35 @@ public enum EngineEvent: Equatable {
     }
 }
 
+public struct DefaultPrompts: Equatable {
+    public var system: String
+    public var examples: String  // "Said: … / Wrote: …" text
+}
+
+public struct TryResult: Equatable {
+    public var output: String
+    public var applied: Bool
+    public var rejected: String?
+    public var ms: Int
+}
+
 public enum EngineCommand: String {
     case openSetup = "open_setup"
     case reloadSettings = "reload_settings"
     case startMeeting = "start_meeting"
     case stopMeeting = "stop_meeting"
+    case tryPrompt = "try_prompt"
     case quit
 
-    public var line: String { "{\"cmd\": \"\(rawValue)\"}\n" }
+    public var line: String { line() }
+
+    /// The command as one JSON line, with optional arguments alongside "cmd".
+    public func line(_ args: [String: Any] = [:]) -> String {
+        var object = args
+        object["cmd"] = rawValue
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self) + "\n"
+    }
 }
 
 /// Splits a byte stream into lines, keeping a partial last line until its newline arrives.

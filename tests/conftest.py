@@ -147,6 +147,10 @@ class FakeTranscriber:
 class FakeCleaner:
     def __init__(self):
         self.loaded = self.closed = 0
+        self.configured = []
+
+    def configure(self, system, examples, guard):
+        self.configured.append((system, examples, guard))
 
     def load_async(self):
         self.loaded += 1

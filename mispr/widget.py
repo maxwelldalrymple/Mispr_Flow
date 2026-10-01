@@ -52,7 +52,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import audio, context, draw, settings, setup, sounds, storage
+from . import audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -256,6 +256,7 @@ class WidgetController:
         self.recorder = Recorder()
         self.transcriber = Transcriber()
         self.cleaner = Cleaner()
+        self.apply_prompts()
         self.setup_progress = 0.0
         self.setup_error = None
         self.rec_started_at = self.rec_ended_at = None
@@ -381,7 +382,13 @@ class WidgetController:
         """Pick up settings.json after the main window changed it."""
         self.settings = settings.load()
         self.sounds.enabled = self.settings.sounds
+        self.apply_prompts()
         log(f"settings reloaded: {self.settings}")
+
+    def apply_prompts(self):
+        """Use the prompts from the app's Prompts page (prompts.json), or the defaults."""
+        p = prompts.load()
+        self.cleaner.configure(p.full_system(), p.examples, p.guard)
 
     def begin_hold(self, source):
         self._drop_cancelled()

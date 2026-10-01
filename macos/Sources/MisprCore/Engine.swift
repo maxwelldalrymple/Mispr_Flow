@@ -33,6 +33,10 @@ public final class Engine: ObservableObject {
     @Published public private(set) var state: State = .stopped
     @Published public private(set) var recordingsDir: URL?
     @Published public private(set) var settingsFile: URL?
+    @Published public private(set) var promptsFile: URL?
+    @Published public private(set) var defaultPrompts: DefaultPrompts?
+    /// Results of Prompts > Try it.
+    public let tried = PassthroughSubject<TryResult, Never>()
     /// Fires on the main thread for each saved dictation.
     public let saved = PassthroughSubject<URL, Never>()
     /// The widget's note button was clicked.
@@ -96,9 +100,9 @@ public final class Engine: ObservableObject {
         }
     }
 
-    public func send(_ command: EngineCommand) {
+    public func send(_ command: EngineCommand, _ args: [String: Any] = [:]) {
         guard let input, process?.isRunning == true else { return }
-        try? input.write(contentsOf: Data(command.line.utf8))
+        try? input.write(contentsOf: Data(command.line(args).utf8))
     }
 
     /// Stop the engine (it frees its models and wipes audio on SIGTERM) and wait briefly.
@@ -122,10 +126,14 @@ public final class Engine: ObservableObject {
 
     func handle(_ event: EngineEvent) {
         switch event {
-        case let .hello(recordings, settings):
+        case let .hello(recordings, settings, prompts, defaults):
             recordingsDir = recordings
             settingsFile = settings
+            promptsFile = prompts
+            defaultPrompts = defaults
             state = .running
+        case let .tried(result):
+            tried.send(result)
         case let .saved(url):
             saved.send(url)
         case .openNote:

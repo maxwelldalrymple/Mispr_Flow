@@ -55,13 +55,14 @@ class TestChannel:
 
 
 class TestParse:
-    @pytest.mark.parametrize("line,cmd", [
-        ('{"cmd": "open_setup"}\n', "open_setup"),
-        ('{"cmd": "quit", "extra": 1}', "quit"),
-        ("", None), ("not json", None), ("[1, 2]", None), ('{"cmd": 5}', None), ('{"other": "x"}', None),
+    @pytest.mark.parametrize("line,parsed", [
+        ('{"cmd": "open_setup"}\n', ("open_setup", {})),
+        ('{"cmd": "try_prompt", "text": "hi", "guard": false}', ("try_prompt", {"text": "hi", "guard": False})),
+        ("", (None, {})), ("not json", (None, {})), ("[1, 2]", (None, {})), ('{"cmd": 5}', (None, {})),
+        ('{"other": "x"}', (None, {})),
     ])
-    def test_lines(self, line, cmd):
-        assert host.parse(line) == cmd
+    def test_lines(self, line, parsed):
+        assert host.parse(line) == parsed
 
 
 class TestListen:
@@ -84,6 +85,13 @@ class TestListen:
         called, eof = self.run('{"cmd": "dance"}\ngarbage\n{"cmd": "quit"}\n', ["quit"])
         assert called == ["quit"] and eof == [True]
         assert "unknown host command 'dance'" in capsys.readouterr().err
+
+    def test_arguments_reach_the_handler(self):
+        got = []
+        host.listen({"try_prompt": lambda **kw: got.append(kw)}, on_eof=lambda: None,
+                    stream=io.StringIO('{"cmd": "try_prompt", "text": "um hi"}\n'),
+                    call=lambda fn: fn(), start=lambda target, name: target())
+        assert got == [{"text": "um hi"}]
 
     def test_closed_stdin_means_the_app_is_gone(self):
         called, eof = self.run("", ["quit"])
@@ -117,7 +125,8 @@ class TestConnectHost:
         opened = object()
         widget = Widget()
         app._connect_host(App(), widget, opened)
-        assert sent[0][0] == "hello" and set(sent[0][1]) == {"recordings_dir", "settings_path"}
+        assert sent[0][0] == "hello"
+        assert set(sent[0][1]) == {"recordings_dir", "settings_path", "prompts_path", "default_prompts"}
         assert listened["handlers"]["open_setup"] is opened
         assert listened["handlers"]["reload_settings"] is Widget.reload_settings
         widget.on_saved("/r/a.json")
@@ -131,3 +140,34 @@ class TestConnectHost:
         listened["handlers"]["quit"]()
         listened["eof"]()
         assert App.terminated == 2
+
+
+class TestTryPrompt:
+    def test_runs_the_draft_and_reports(self, monkeypatch):
+        from mispr import app
+        sent = []
+        monkeypatch.setattr(host, "send", lambda event, **f: sent.append((event, f)))
+
+        class Cleaner:
+            def clean(self, text, system, examples, guard):
+                self.args = (text, system, examples, guard)
+                return "Hi.", {"applied": True, "rejected": None, "ms": 12}
+
+        c = Cleaner()
+        app.try_prompt(c, text="um hi", system="Be terse.", extra="No emoji.",
+                       examples="Said: a um b\nWrote: a b", guard=False, start=lambda target, name: target())
+        assert c.args == ("um hi", "Be terse.\n\nAlso follow these rules from the user:\nNo emoji.", [["a um b", "a b"]], False)
+        assert sent == [("tried", {"output": "Hi.", "applied": True, "rejected": None, "ms": 12})]
+
+    def test_blank_instructions_mean_the_default(self, monkeypatch):
+        from mispr import app, cleanup
+        monkeypatch.setattr(host, "send", lambda event, **f: None)
+
+        class Cleaner:
+            def clean(self, text, system, examples, guard):
+                self.system = system
+                return text, {"applied": False, "rejected": None, "ms": 0}
+
+        c = Cleaner()
+        app.try_prompt(c, text="x", start=lambda target, name: target())
+        assert c.system == cleanup.SYSTEM_PROMPT
