@@ -7,24 +7,31 @@ struct HomeView: View {
     @StateObject private var player = Player()
     @State private var query = ""
     @State private var searching = false
+    @State private var groups: [DayGroup] = []  // grouped once per change, not on every redraw
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                greeting
-                HStack(alignment: .top, spacing: 20) {
-                    history.frame(maxWidth: .infinity)
-                    VStack(spacing: 14) {
-                        statsCard
-                        tipsCard
-                    }
-                    .frame(width: 232)
+        // Only the history scrolls (lazily); the greeting and side cards stay put.
+        VStack(alignment: .leading, spacing: 22) {
+            greeting.padding(.top, 36)
+            HStack(alignment: .top, spacing: 20) {
+                history.frame(maxWidth: .infinity)
+                VStack(spacing: 14) {
+                    statsCard
+                    tipsCard
                 }
+                .frame(width: 232)
             }
-            .padding(.horizontal, 40).padding(.vertical, 36)
-            .frame(maxWidth: 1100)
-            .frame(maxWidth: .infinity)
         }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: 1100, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity)
+        .onAppear(perform: regroup)
+        .onChange(of: model.recordings) { regroup() }
+        .onChange(of: query) { regroup() }
+    }
+
+    private func regroup() {
+        groups = DayGroup.group(filtered)
     }
 
     private var greeting: some View {
@@ -48,26 +55,25 @@ struct HomeView: View {
 
     private var history: some View {
         VStack(alignment: .leading, spacing: 0) {
-            let groups = DayGroup.group(filtered)
-            if groups.isEmpty {
-                HStack { sectionHeader(model.recordings.isEmpty ? "History" : "No matches"); Spacer(); searchControl }
-                emptyState
+            HStack {
+                sectionHeader(groups.first?.title ?? (model.recordings.isEmpty ? "History" : "No matches"))
+                Spacer()
+                searchControl
             }
-            ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                HStack {
-                    sectionHeader(group.title)
-                    Spacer()
-                    if index == 0 { searchControl }
-                }
-                .padding(.top, index == 0 ? 0 : 22)
-                VStack(spacing: 0) {
-                    ForEach(group.records) { record in
-                        HistoryRow(record: record, player: player)
-                        if record.id != group.records.last?.id { Divider().overlay(Theme.cardStroke) }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if groups.isEmpty { emptyState }
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                        if index > 0 { sectionHeader(group.title).padding(.top, 22) }
+                        ForEach(group.records) { record in
+                            HistoryRow(record: record, playing: player.playing == record.id) { player.toggle(record) }
+                            if record.id != group.records.last?.id { Divider().overlay(Theme.cardStroke) }
+                        }
                     }
                 }
-                .background(RoundedRectangle(cornerRadius: 12).stroke(Theme.cardStroke))
+                .padding(.bottom, 28)
             }
+            .scrollIndicators(.automatic)
         }
     }
 
@@ -167,7 +173,8 @@ struct DayGroup: Identifiable {
 struct HistoryRow: View {
     @EnvironmentObject var model: AppModel
     let record: Recording
-    @ObservedObject var player: Player
+    let playing: Bool  // a plain value: rows don't redraw when another row starts playing
+    let onPlay: () -> Void
     @State private var hovering = false
     @State private var copied = false
     @State private var confirmDelete = false
@@ -182,7 +189,7 @@ struct HistoryRow: View {
                     Text("Cancelled recording · \(Int(record.durationS.rounded()))s")
                         .font(.system(size: 13)).italic().foregroundStyle(Theme.secondary)
                 } else {
-                    Text(record.transcript).font(.system(size: 13)).textSelection(.enabled)
+                    Text(record.transcript).font(.system(size: 13))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if record.status == .copied {
@@ -196,8 +203,8 @@ struct HistoryRow: View {
             Spacer(minLength: 8)
             actions.opacity(hovering ? 1 : 0)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(hovering ? Theme.card.opacity(0.6) : Color.clear)
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Theme.card : Color.clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .confirmationDialog("Delete this dictation?", isPresented: $confirmDelete) {
@@ -210,9 +217,7 @@ struct HistoryRow: View {
     private var actions: some View {
         HStack(spacing: 10) {
             if record.audioURL != nil {
-                iconButton(player.playing == record.id ? "stop.fill" : "play.fill", player.playing == record.id ? "Stop" : "Play recording") {
-                    player.toggle(record)
-                }
+                iconButton(playing ? "stop.fill" : "play.fill", playing ? "Stop" : "Play recording", action: onPlay)
             }
             if record.status != .cancelled {
                 iconButton(copied ? "checkmark" : "doc.on.doc", "Copy text") {
