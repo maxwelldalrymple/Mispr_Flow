@@ -141,14 +141,19 @@ class _AppDelegate(NSObject):
         return True
 
 
-def _connect_host(app, widget, open_setup):
+def _connect_host(app, widget, open_setup, fn=None):
     """Wire the engine to the Swift app: announce where data lives, report each saved
     dictation, and follow its commands. Quitting the app (stdin closes) quits the engine."""
     quit_app = lambda: app.terminate_(None)
     widget.on_saved = lambda path: host.send("saved", path=str(path))
     widget.on_note_requested = lambda: host.send("open_note")
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
-    host.listen({"open_setup": open_setup, "reload_settings": widget.reload_settings, "quit": quit_app,
+    def reload_settings():
+        widget.reload_settings()
+        if fn is not None:
+            fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
+
+    host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
                  "try_prompt": lambda **draft: try_prompt(widget.cleaner, **draft)},
                 on_eof=quit_app)
@@ -211,7 +216,8 @@ def main():
     if icon is not None:
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
-    fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key)
+    fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
+                          trigger=widget.settings.hotkey)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)
@@ -231,7 +237,7 @@ def main():
 
     _keepalive.append(add_setup_menu_item(status_item, open_setup))
     if hosted:
-        _connect_host(app, widget, open_setup)
+        _connect_host(app, widget, open_setup, fn)
     else:
         menu_actions = _MenuActions.alloc().init()
         menu_actions.open_setup = open_setup

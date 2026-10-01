@@ -37,7 +37,7 @@ struct HomeView: View {
     private var greeting: some View {
         HStack(spacing: 8) {
             Text("Hey \(model.firstName), get back into the flow with").font(.system(size: 24, weight: .semibold))
-            Text("fn").font(.system(size: 20, weight: .semibold, design: .rounded))
+            Text(model.dictationKey.label).font(.system(size: 20, weight: .semibold, design: .rounded))
                 .padding(.horizontal, 7).padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Theme.key.opacity(0.85)))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.black.opacity(0.25)))
@@ -132,10 +132,11 @@ struct HomeView: View {
         Card {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Shortcuts").font(.system(size: 14, weight: .semibold))
-                tip("Hold fn", "talk, release to paste")
-                tip("Double-tap fn", "hands-free")
+                let key = model.dictationKey.label
+                tip("Hold \(key)", "talk, release to paste")
+                tip("Double-tap \(key)", "hands-free")
                 tip("space", "finish hands-free")
-                tip("fn / delete", "cancel hands-free")
+                tip("\(key) / delete", "cancel hands-free")
             }
         }
     }

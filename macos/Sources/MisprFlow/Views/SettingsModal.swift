@@ -119,10 +119,9 @@ struct GeneralSettings: View {
 
     var body: some View {
         SettingsGroup {
-            SettingRow(title: "Shortcuts", detail: "Hold fn and speak; double-tap fn for hands-free.") {
-                Text("fn").font(.system(size: 13, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Theme.content))
+            SettingRow(title: "Dictation key",
+                       detail: "Hold \(model.dictationKey.label) and speak; double-tap it for hands-free. Click the key to change it.") {
+                KeyRecorder()
             }
             Divider()
             SettingRow(title: "Microphone", detail: microphone) {
@@ -300,4 +299,90 @@ struct ThemeCard: View {
     }
 
     private func color(_ hex: UInt32) -> Color { Color(nsColor: Theme.nsColor(hex: hex)) }
+}
+
+/// Click, then press the key you want to dictate with (fn, one side of a modifier, or any
+/// other key). Esc cancels. Keys hands-free needs are refused.
+struct KeyRecorder: View {
+    @EnvironmentObject var model: AppModel
+    @State private var listening = false
+    @State private var monitor: Any?
+    @State private var message: String?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                if model.dictationKey != .fn && !listening {
+                    Button("Use fn") { model.setDictationKey(.fn); message = nil }.buttonStyle(.link).font(.system(size: 12))
+                }
+                Button(action: toggle) {
+                    Text(listening ? "Press a key…" : model.dictationKey.label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(minWidth: 60)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(listening ? Theme.accentSoft : Theme.content))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(listening ? Theme.accent : Theme.cardStroke, lineWidth: listening ? 2 : 1))
+                }
+                .buttonStyle(.plain)
+                .help(listening ? "Press the key you want, or Esc to cancel" : "Click to change the dictation key")
+            }
+            if let message {
+                Text(message).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.trailing).frame(maxWidth: 260, alignment: .trailing)
+            }
+        }
+        .onDisappear(perform: stop)
+    }
+
+    private func toggle() {
+        listening ? stop() : start()
+    }
+
+    private func start() {
+        listening = true
+        message = model.dictationKey == .fn ? "To keep fn, press Esc. fn itself can't be picked here while it's the dictation key." : nil
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            handle(event)
+            return nil  // don't let the key do anything else while picking
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        listening = false
+    }
+
+    private func handle(_ event: NSEvent) {
+        let code = Int(event.keyCode)
+        if event.type == .keyDown {
+            if code == 53 { stop(); message = nil; return }  // Esc
+            guard let key = DictationKey.key(keycode: code, characters: event.charactersIgnoringModifiers) else {
+                message = "That key is needed for hands-free or by macOS. Pick another."
+                return
+            }
+            choose(key)
+            if key.typesCharacters { message = "“\(key.label)” won't type while Mispr Flow is running." }
+        } else if let key = DictationKey.modifier(keycode: code), isPress(event, keycode: code) {
+            choose(key)
+        }
+    }
+
+    /// flagsChanged fires on press and release; only a press picks the key.
+    private func isPress(_ event: NSEvent, keycode: Int) -> Bool {
+        let flag: NSEvent.ModifierFlags = switch keycode {
+        case 59, 62: .control
+        case 56, 60: .shift
+        case 58, 61: .option
+        case 54, 55: .command
+        default: .function
+        }
+        return event.modifierFlags.contains(flag)
+    }
+
+    private func choose(_ key: DictationKey) {
+        model.setDictationKey(key)
+        message = nil
+        stop()
+    }
 }

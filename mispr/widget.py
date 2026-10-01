@@ -707,6 +707,9 @@ class WidgetController:
 
         tip = TOOLTIPS.get((self.state, self.hovered))
         if tip is not None:
+            label = (self.settings.hotkey or {}).get("label") or "fn"
+            tip = [(label, bold) if (text, bold) == ("fn", True) else (text, bold) for text, bold in tip]
+        if tip is not None:
             self.tip = (tip, layout(self.state).elems[self.hovered])
         self.tip_a += ((1.0 if tip is not None else 0.0) - self.tip_a) * 0.3
 

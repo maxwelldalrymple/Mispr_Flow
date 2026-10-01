@@ -117,7 +117,12 @@ class TestConnectHost:
                 App.terminated += 1
 
         class Widget:
-            reload_settings = object()
+            reloaded = 0
+            settings = type("S", (), {"hotkey": {"kind": "fn"}})()
+
+            def reload_settings(self):
+                self.reloaded += 1
+
             begin_meeting = object()
             stop_meeting = object()
             on_saved = on_note_requested = on_meeting_changed = None
@@ -128,7 +133,8 @@ class TestConnectHost:
         assert sent[0][0] == "hello"
         assert set(sent[0][1]) == {"recordings_dir", "settings_path", "prompts_path", "default_prompts"}
         assert listened["handlers"]["open_setup"] is opened
-        assert listened["handlers"]["reload_settings"] is Widget.reload_settings
+        listened["handlers"]["reload_settings"]()
+        assert widget.reloaded == 1
         widget.on_saved("/r/a.json")
         assert sent[-1] == ("saved", {"path": "/r/a.json"})
         assert listened["handlers"]["start_meeting"] is Widget.begin_meeting
@@ -171,3 +177,24 @@ class TestTryPrompt:
         c = Cleaner()
         app.try_prompt(c, text="x", start=lambda target, name: target())
         assert c.system == cleanup.SYSTEM_PROMPT
+
+
+def test_reload_applies_a_new_dictation_key(monkeypatch):
+    from mispr import app
+    listened = {}
+    monkeypatch.setattr(host, "send", lambda event, **f: None)
+    monkeypatch.setattr(host, "listen", lambda handlers, on_eof: listened.update(handlers))
+
+    class Widget:
+        settings = type("S", (), {"hotkey": {"kind": "key", "keycode": 96, "label": "F5"}})()
+        reload_settings = lambda self: None
+        begin_meeting = stop_meeting = cleaner = None
+
+    class Fn:
+        def set_trigger(self, trigger):
+            self.trigger = trigger
+
+    fn = Fn()
+    app._connect_host(object(), Widget(), lambda: None, fn)
+    listened["reload_settings"]()
+    assert fn.trigger == {"kind": "key", "keycode": 96, "label": "F5"}

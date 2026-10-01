@@ -91,6 +91,19 @@ final class AppModel: ObservableObject {
 
     func setting(_ key: String) -> Bool { settingsFile.bool(key) }
 
+    var dictationKey: DictationKey { settingsFile.dictationKey }
+
+    func setDictationKey(_ key: DictationKey) {
+        do {
+            try settingsFile.setDictationKey(key)
+            settingsError = nil
+            engine.send(.reloadSettings)  // the engine switches keys immediately
+        } catch {
+            settingsError = "Couldn't save the shortcut: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
+
     func setSetting(_ key: String, _ value: Bool) {
         do {
             try settingsFile.set(key, value)

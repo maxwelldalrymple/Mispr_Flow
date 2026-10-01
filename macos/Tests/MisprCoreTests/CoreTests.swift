@@ -509,3 +509,35 @@ final class FunFactsTests: XCTestCase {
         XCTAssertNil(i.catchphrase)
     }
 }
+
+
+final class DictationKeyTests: XCTestCase {
+    func testModifiers() {
+        XCTAssertEqual(DictationKey.modifier(keycode: 61), DictationKey(kind: .modifier, keycode: 61, label: "Right ⌥"))
+        XCTAssertEqual(DictationKey.modifier(keycode: 63), .fn)
+        XCTAssertNil(DictationKey.modifier(keycode: 57))  // caps lock
+    }
+
+    func testKeys() {
+        XCTAssertEqual(DictationKey.key(keycode: 96, characters: "\u{F708}")?.label, "F5")
+        XCTAssertEqual(DictationKey.key(keycode: 50, characters: "`")?.label, "`")
+        XCTAssertEqual(DictationKey.key(keycode: 0, characters: "a")?.label, "A")
+        XCTAssertTrue(DictationKey.key(keycode: 0, characters: "a")!.typesCharacters)
+        XCTAssertFalse(DictationKey.key(keycode: 96, characters: nil)!.typesCharacters)
+        for blocked in [49, 36, 51, 53, 57] { XCTAssertNil(DictationKey.key(keycode: blocked, characters: "x"), "\(blocked)") }
+    }
+
+    func testSavedInSettings() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/settings.json")
+        let file = SettingsFile(url: url)
+        XCTAssertEqual(file.dictationKey, .fn)
+        try file.set("onboarded", true)
+        let f5 = DictationKey(kind: .key, keycode: 96, label: "F5")
+        try file.setDictationKey(f5)
+        XCTAssertEqual(file.dictationKey, f5)
+        XCTAssertEqual(file.read()["onboarded"] as? Bool, true)
+        let hotkey = file.read()["hotkey"] as? [String: Any]
+        XCTAssertEqual(hotkey?["kind"] as? String, "key")  // the engine's format
+        XCTAssertEqual(hotkey?["keycode"] as? Int, 96)
+    }
+}

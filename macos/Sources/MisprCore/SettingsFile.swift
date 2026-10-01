@@ -26,7 +26,13 @@ public struct SettingsFile {
         read()[key] as? Bool ?? Self.defaults[key] ?? false
     }
 
-    public func set(_ key: String, _ value: Bool) throws {
+    public var dictationKey: DictationKey { DictationKey(json: read()["hotkey"]) ?? .fn }
+
+    public func setDictationKey(_ key: DictationKey) throws {
+        try set("hotkey", key.json)
+    }
+
+    public func set(_ key: String, _ value: Any) throws {
         var object = read()
         object[key] = value
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
