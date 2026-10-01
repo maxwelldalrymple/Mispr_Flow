@@ -2,8 +2,8 @@
 # Build build/Mispr Flow.app from macos/ (SwiftUI) for this machine: tools/build_app.sh [--open]
 #
 # The app runs the Python engine from this checkout's .venv, so it's a development build
-# (the DMG will bundle Python instead). Ad-hoc signed: macOS may ask for Microphone and
-# Accessibility again after each rebuild.
+# (the DMG will bundle Python instead). Signed with the local certificate from
+# tools/make_signing_cert.sh if you've made one, else ad-hoc.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -46,7 +46,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP" >/dev/null
+# Sign with the local certificate when it exists (tools/make_signing_cert.sh), so the
+# signature, and with it macOS's permission grants, stays the same across rebuilds.
+SIGN_ID="Mispr Flow Local Signing"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+    codesign --force --sign "$SIGN_ID" --identifier "$BUNDLE_ID" "$APP"
+else
+    codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+    echo "note: ad-hoc signed; macOS forgets permissions when the app changes. Run tools/make_signing_cert.sh once to fix that." >&2
+fi
 echo "Built $APP"
 
 if [ "${1:-}" = "--open" ]; then
