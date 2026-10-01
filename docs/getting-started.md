@@ -31,17 +31,16 @@ Mispr Flow captures the fn/🌐 key itself once Accessibility is allowed (next s
 .venv/bin/python -m mispr
 ```
 
-The **Mispr Flow Setup** window opens and walks you through four steps:
+The **Mispr Flow Setup** window opens and walks you through five steps:
 
 1. **Welcome.** What Mispr Flow is. Click **Get Started**.
 2. **Allow access.** Each permission shows why it's needed and an **Allow…** button. Rows turn to **✓ Allowed** as soon as you grant them (the window checks every half second).
    - **Microphone** (required): hears you while you hold fn.
    - **Accessibility** (required): uses the fn key and pastes into the app you're typing in. The first click shows the macOS prompt; clicking again opens the right page in System Settings.
-   - **Screen & System Audio** (optional): for meeting notes. You may need to reopen Mispr Flow after allowing it.
-
-   **Continue** unlocks once both required permissions are allowed. fn starts working within a second of granting Accessibility, with no restart.
-3. **Download speech models.** Whisper (0.57 GB) and Gemma (2.5 GB), with a progress bar. Both are verified with SHA-256 and stored in `~/Library/Application Support/Mispr_Flow/models/`. If it fails, click **Retry**.
-4. **You're all set.** A quick guide to fn. Click **Start Dictating**.
+   **Continue** unlocks once both are allowed. fn starts working within a second of granting Accessibility, with no restart.
+3. **Optional features** (skip any): **Screen & System Audio** (meeting notes; you may need to reopen the app), **Full Disk Access** (lets "open folder" search Documents/Desktop/Downloads; Allow… opens the System Settings list), **Control Finder** (opens folders in the same Finder window).
+4. **Download speech models.** Whisper (0.57 GB) and Gemma (2.5 GB), with a progress bar. Both are verified with SHA-256 and stored in `~/Library/Application Support/Mispr_Flow/models/`. If it fails, click **Retry**.
+5. **You're all set.** A quick guide to fn. Click **Start Dictating**.
 
 When running from source, permissions are granted to the app that launched Mispr Flow (Terminal, or Claude if started from a Claude session). The logo appears in the menu bar and a small pill sits above the Dock. Reopen setup anytime from the menu bar: **Setup Guide…**
 

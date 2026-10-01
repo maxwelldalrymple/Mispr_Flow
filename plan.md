@@ -207,7 +207,7 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Testing and Quality
 
-- **Suite:** 958 Python unit tests (~15 s) + 90 Swift tests (`swift test` in `macos/`) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
+- **Suite (Oct 1):** 1217 Python tests (~13 s) + 287 Swift tests; every function tested, see `docs/testing.md`. Earlier: 958 Python unit tests + 90 Swift tests (`swift test` in `macos/`) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
 - **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (45 files, reviewed visually), and fakes for AppKit objects.
 - **Mutation score:** 97.6% overall; audio 95.5%. Remaining survivors are documented as equivalent mutants.
 - **Reports:** `logs/2026-09-30_13-25-55_stresstest.md` (suite stress test) and `logs/2026-09-30_14-34-34_mic-deadlock-fix.md` (freeze diagnosis).
