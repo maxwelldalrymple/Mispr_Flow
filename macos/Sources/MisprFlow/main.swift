@@ -19,6 +19,8 @@ if CommandLine.arguments.contains("--detect") {
 if CommandLine.arguments.contains("--record-test") {
     let recorder = MeetingRecorder()
     var report = "mic permission: \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) (3 = authorized)\n"
+    report += "screen capture preflight: \(CGPreflightScreenCaptureAccess())\n"
+    report += "bundle: \(Bundle.main.bundleIdentifier ?? "-") at \(Bundle.main.bundlePath)\n"
     var peak: Float = 0
     recorder.onLevel = { peak = max(peak, $0) }
     recorder.onChunk = { stream, start, samples in report += "chunk \(stream) at \(start)s: \(samples.count / 16_000)s\n" }
