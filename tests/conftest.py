@@ -188,7 +188,7 @@ def controller(monkeypatch, clock):
     pasted, copied = [], []
     monkeypatch.setattr(W, "paste_text", pasted.append)
     monkeypatch.setattr(W, "copy_text", copied.append)
-    monkeypatch.setattr(W.context, "focused_text_target", lambda: W.context.YES)
+    monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.YES, "TestApp"))
     monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {
         "app": "TestApp", "bundle_id": "com.test.app",
         "url": "https://example.com/page" if include_page else None,

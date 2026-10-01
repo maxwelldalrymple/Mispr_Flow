@@ -423,7 +423,9 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         if text:
             target = context.frontmost()  # where the text is about to land
-            if context.focused_text_target() == context.NO:
+            where, why = context.focused_text_target()
+            log(f"text box: {where} ({why})")
+            if where == context.NO:
                 # ⌘V would do nothing (or paste something odd, like files in Finder).
                 copy_text(text)
                 self.sounds.play(sounds.ERROR)

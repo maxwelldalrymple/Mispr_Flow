@@ -810,14 +810,14 @@ class TestSoundCues:
 
     @pytest.mark.parametrize("target", ["yes", "unknown"])
     def test_pastes_unless_sure_there_is_no_text_box(self, controller, monkeypatch, target):
-        monkeypatch.setattr(W.context, "focused_text_target", lambda: target)
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))
         controller.begin_handsfree()
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
         assert controller.pasted == ["Hi."] and controller.copied == [] and controller.sounds.played[-1] == "paste"
 
     def test_no_text_box_copies_instead_with_error_sound(self, controller, monkeypatch, clock):
-        monkeypatch.setattr(W.context, "focused_text_target", lambda: W.context.NO)
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
         saved = []
         monkeypatch.setattr(controller, "_save", lambda status, text, **kw: saved.append((status, text)))
         controller.begin_handsfree()

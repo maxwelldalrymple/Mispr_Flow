@@ -82,9 +82,11 @@ def text_target(pid, electron=False):
     """YES if app `pid` has a focused text input, NO if it clearly has none (e.g. Finder,
     the desktop, a web page with nothing focused), UNKNOWN if the app won't say.
 
-    Callers paste on UNKNOWN, so this only ever skips a paste that had nowhere to go.
-    Electron apps (VS Code, Slack...) can report "nothing focused" while their editor has
-    the caret, so for them that answer is UNKNOWN rather than NO.
+    Native apps and browsers report focus reliably, so anything that isn't a text input is
+    NO there (the desktop, a Finder window, a web page with no field clicked). Electron apps
+    (VS Code, Slack, Claude...) can report "nothing focused" or a bare container while their
+    editor has the caret, so for them only known non-text roles are NO and the rest is
+    UNKNOWN. Callers paste on UNKNOWN.
     """
     try:
         app = AS.AXUIElementCreateApplication(pid)
@@ -98,10 +100,9 @@ def text_target(pid, electron=False):
             return UNKNOWN
         if _is_text_input(focused):
             return YES
-        role = _attr(focused, "AXRole")
-        # Only say NO for roles we know aren't typing surfaces; anything unexpected
-        # (a custom editor, a terminal emulator's own view) gets the benefit of the doubt.
-        return NO if role in NOT_TEXT_ROLES else UNKNOWN
+        if not electron:
+            return NO
+        return NO if _attr(focused, "AXRole") in NOT_TEXT_ROLES else UNKNOWN
     except Exception:
         return UNKNOWN
 
@@ -119,15 +120,15 @@ def _is_electron(app):
 
 
 def focused_text_target():
-    """text_target() for the frontmost app."""
+    """(answer, why) for the frontmost app: text_target() plus a note for the debug log."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if app is None:
-        return NO
+        return NO, "no frontmost app"
     try:
         electron = _is_electron(app)
     except Exception:
         electron = True  # can't tell: take the cautious answer
-    return text_target(app.processIdentifier(), electron)
+    return text_target(app.processIdentifier(), electron), f"{app.localizedName()}{' (Electron)' if electron else ''}"
 
 
 def frontmost(include_page=True):
