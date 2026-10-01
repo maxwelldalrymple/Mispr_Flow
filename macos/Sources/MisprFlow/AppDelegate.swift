@@ -44,7 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.isMovableByWindowBackground = true
             window.minSize = NSSize(width: 900, height: 600)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: ThemedRoot { RootView() }.environmentObject(model))
+            let host = NSHostingView(rootView: ThemedRoot { RootView() }.environmentObject(model))
+            host.sizingOptions = []  // the window sets its size; content scrolls inside it
+            window.contentView = host
             window.center()
             window.setFrameAutosaveName("MainWindow")
             self.window = window

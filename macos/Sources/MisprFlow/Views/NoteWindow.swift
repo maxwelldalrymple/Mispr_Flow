@@ -65,8 +65,12 @@ final class NoteWindowController {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 380, height: 480)
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        window.contentView = NSHostingView(rootView: ThemedRoot { NoteView(close: { [weak self] in self?.close() }) }
+        let host = NSHostingView(rootView: ThemedRoot { NoteView(close: { [weak self] in self?.close() }) }
             .environmentObject(model).environmentObject(model.note))
+        // Don't let the window grow to fit its content (a long transcript made it taller than
+        // the screen): the window keeps the size we give it and the transcript scrolls.
+        host.sizingOptions = []
+        window.contentView = host
         return window
     }
 }
