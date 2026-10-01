@@ -1593,6 +1593,21 @@ class TestAppSwitcher:
         self.say(controller, clock, "Flurbo beside Chrome")
         assert windows == [] and controller.notice[0] == "No app called “flurbo”"
 
+    def test_tab_shortcuts_here_or_in_a_named_app(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.say(controller, clock, "New tab")
+        assert pressed == ["new tab"] and fronted == []
+        self.say(controller, clock, "Close tab in Chrome")
+        assert fronted == ["/A/Google Chrome.app"] and pressed == ["new tab", "close tab"]
+        assert controller.notice[0] == "Close tab · Google Chrome"
+
+    def test_quit(self, controller, clock, fronted, monkeypatch, windows):
+        quit_ = []
+        monkeypatch.setattr(W.apps, "quit_app", quit_.append)
+        self.say(controller, clock, "quit chrome")
+        assert quit_ == [11] and controller.notice[0] == "Quit Google Chrome"
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()

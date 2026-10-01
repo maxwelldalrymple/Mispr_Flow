@@ -100,6 +100,7 @@ COPIED_NOTICE = "No text box · Copied to clipboard"
 INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
 SWITCH_NOTICE = "Say an app to switch to"
 SWITCH_RESULT_SECONDS = 2.5
+SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing its shortcut
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
@@ -616,6 +617,24 @@ class WidgetController:
             return (target, path) if path else None
 
         kind = command[0]
+        if kind == "shortcut":  # "new tab", "close tab in chrome"
+            _, shortcut, name = command
+            if name is None:
+                apps.press_shortcut(shortcut)
+                return self._switch_done(shortcut.capitalize())
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            apps.bring_to_front(hit[1])
+            AppHelper.callLater(SHORTCUT_DELAY, apps.press_shortcut, shortcut)  # once it's in front
+            return self._switch_done(f"{shortcut.capitalize()} · {hit[0]}")
+        if kind == "quit":
+            hit = find(command[1])
+            pid = hit and apps.pid_for(hit[1])
+            if not pid:
+                return self._switch_failed(f"{hit[0] if hit else command[1]} isn't open")
+            apps.quit_app(pid)
+            return self._switch_done(f"Quit {hit[0]}")
         names = [n for n in command[1:3] if isinstance(n, str)] if kind == "beside" else [command[1]]
         found = []
         for name in names:

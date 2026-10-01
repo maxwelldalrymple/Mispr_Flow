@@ -40,6 +40,20 @@ def parse(text):
         if m:
             return ("nickname", m["nick"].strip(), m["app"].strip())
     said = _number_words(said)
+    m = _SHORTCUT.match(said)
+    if m:  # "new tab", "close tab in chrome", "chrome reload", "tab 3"
+        lead = r"^(?:(?:please|go|to|open|switch|then|and|a|the)\b\s*)+"
+        app = next((n for n in (re.sub(lead, "", m[k] or "").strip() for k in ("app", "app2")) if n), None)
+        name = m["cmd"]
+        if name.startswith(("tab ", "go to tab ", "switch to tab ")):
+            n = int(name.split()[-1])
+            if not 1 <= n <= 9:
+                return None
+            name = f"tab {n}"
+        return ("shortcut", SHORTCUT_ALIASES.get(name, name), _FILLER.sub("", app).strip() if app else None)
+    m = _QUIT.match(said)
+    if m:
+        return ("quit", _FILLER.sub("", m["app"]).strip())
     m = _ACTION.match(said)
     if m:  # close / minimize / expand, of an app or (none named) the current one
         target = _FILLER.sub("", m["rest"] or "").strip() or None
@@ -54,6 +68,59 @@ def parse(text):
         return ("size", _FILLER.sub("", m["app"]).strip(), int(m["pct"]))
     name = _FILLER.sub("", said).strip()
     return ("switch", name) if name else None
+
+
+# Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).
+_KEY = {"t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
+        "0": 29, "=": 24, "-": 27, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25}
+SHORTCUTS = {
+    "new tab": ("t", "cmd"), "close tab": ("w", "cmd"), "reopen tab": ("t", "cmd shift"),
+    "next tab": ("tab", "ctrl"), "previous tab": ("tab", "ctrl shift"),
+    "new window": ("n", "cmd"), "new private window": ("n", "cmd shift"), "close window": ("w", "cmd shift"),
+    "reload": ("r", "cmd"), "back": ("[", "cmd"), "forward": ("]", "cmd"), "address bar": ("l", "cmd"),
+    "find": ("f", "cmd"), "bookmark": ("d", "cmd"), "zoom in": ("=", "cmd"), "zoom out": ("-", "cmd"),
+    "actual size": ("0", "cmd"), "full screen": ("f", "ctrl cmd"), "last tab": ("9", "cmd"),
+    **{f"tab {n}": (str(n), "cmd") for n in range(1, 9)},
+}
+SHORTCUT_ALIASES = {
+    "open tab": "new tab", "open a new tab": "new tab", "a new tab": "new tab", "close this tab": "close tab",
+    "close the tab": "close tab", "reopen closed tab": "reopen tab", "reopen the tab": "reopen tab",
+    "undo close tab": "reopen tab", "next": "next tab", "previous": "previous tab", "prev tab": "previous tab",
+    "new incognito window": "new private window", "incognito window": "new private window",
+    "private window": "new private window", "incognito": "new private window", "refresh": "reload",
+    "reload page": "reload", "refresh page": "reload", "go back": "back", "go forward": "forward",
+    "search bar": "address bar", "url bar": "address bar", "url": "address bar", "search": "find",
+    "find on page": "find", "bookmark this": "bookmark", "bookmark page": "bookmark", "zoom": "zoom in",
+    "reset zoom": "actual size", "fullscreen": "full screen", "enter full screen": "full screen",
+    "exit full screen": "full screen", "close this window": "close window",
+}
+_SHORTCUT_WORDS = "|".join(sorted((re.escape(k) for k in list(SHORTCUTS) + list(SHORTCUT_ALIASES)), key=len, reverse=True))
+_SHORTCUT = re.compile(rf"^(?:please\s+)?(?:(?P<app>.+?)\s+)?(?P<cmd>{_SHORTCUT_WORDS}|(?:go to |switch to )?tab \d+)"
+                       rf"(?:\s+(?:in|on|for)\s+(?P<app2>.+))?$")
+_QUIT = re.compile(r"^(?:please\s+)?(?:quit|exit)\s+(?P<app>.+)$")
+
+
+def press_shortcut(name, post=None):
+    """Press the shortcut `name` (see SHORTCUTS) in the app in front."""
+    import Quartz
+    key, mods = SHORTCUTS[name]
+    flags = 0
+    for m in mods.split():
+        flags |= {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift,
+                  "ctrl": Quartz.kCGEventFlagMaskControl}[m]
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for down in (True, False):
+        event = Quartz.CGEventCreateKeyboardEvent(source, _KEY[key], down)
+        Quartz.CGEventSetFlags(event, flags)
+        post(event)
+
+
+def quit_app(pid):
+    """Ask the app to quit normally (it can still ask about unsaved work). True if asked."""
+    from AppKit import NSRunningApplication
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    return bool(app and app.terminate())
 
 
 _ACTIONS = {"close": "close", "minimize": "minimize", "minimise": "minimize", "hide": "minimize",

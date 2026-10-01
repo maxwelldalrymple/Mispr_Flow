@@ -122,3 +122,37 @@ class TestWindowCommands:
         assert w > 0 and h > 0 and y >= 0
         assert apps.frontmost_pid() is not None
         assert apps.pid_for("/no/such.app") is None
+
+
+class TestShortcuts:
+    """Tab and browser commands are the apps' own keyboard shortcuts."""
+
+    @pytest.mark.parametrize("said,expected", [
+        ("New tab.", ("shortcut", "new tab", None)),
+        ("Close tab in Chrome", ("shortcut", "close tab", "chrome")),
+        ("Chrome new tab", ("shortcut", "new tab", "chrome")),
+        ("Go to tab 3", ("shortcut", "tab 3", None)),
+        ("Open incognito window in Chrome", ("shortcut", "new private window", "chrome")),
+        ("go forward in safari", ("shortcut", "forward", "safari")),
+        ("Refresh", ("shortcut", "reload", None)),
+        ("reopen closed tab", ("shortcut", "reopen tab", None)),
+        ("quit slack", ("quit", "slack")),
+        ("tab 12", None),
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_every_alias_is_a_real_shortcut(self):
+        assert set(apps.SHORTCUT_ALIASES.values()) <= set(apps.SHORTCUTS)
+
+    @pytest.mark.parametrize("name,code,mods", [("new tab", 17, {"cmd"}), ("reopen tab", 17, {"cmd", "shift"}),
+                                                ("next tab", 48, {"ctrl"}), ("tab 3", 20, {"cmd"})])
+    def test_keys_pressed(self, name, code, mods):
+        import Quartz
+        events = []
+        apps.press_shortcut(name, post=events.append)
+        assert [Quartz.CGEventGetType(e) for e in events] == [Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp]
+        assert Quartz.CGEventGetIntegerValueField(events[0], Quartz.kCGKeyboardEventKeycode) == code
+        flags = Quartz.CGEventGetFlags(events[0])
+        masks = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift, "ctrl": Quartz.kCGEventFlagMaskControl}
+        assert {m for m, bit in masks.items() if flags & bit} == mods
