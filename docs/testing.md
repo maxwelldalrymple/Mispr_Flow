@@ -4,7 +4,7 @@
 - Python: **1217 passed**, 10 skipped. The skipped ones are opt-in integration tests.
 - Swift: **287 / 287**.
 - Every function is covered. Python line coverage is 96%.
-- [logs/2026-10-01_18-57-46_test-catalog.md](../logs/2026-10-01_18-57-46_test-catalog.md) lists every test with what it checks. Regenerate it with `python tools/test_catalog.py`.
+- **Every test, with what it checks, file by file:** [docs/tests/](tests/README.md). The same list as one file: [logs/2026-10-01_19-14-46_test-catalog.md](../logs/2026-10-01_19-14-46_test-catalog.md). Regenerate both with `python tools/test_catalog.py`.
 
 ## Running
 

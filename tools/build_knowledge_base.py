@@ -8,10 +8,13 @@ ROOT = Path(__file__).resolve().parent.parent
 PARTS = [
     "knowledge-base/01-overview.md", "knowledge-base/05-working-with-the-user.md", "knowledge-base/02-history.md",
     "knowledge-base/03-decisions.md", "knowledge-base/04-research.md", "knowledge-base/06-open-items.md",
+    "knowledge-base/08-your-messages.md",
     "docs/features/dictation.md", "docs/features/voice-commands.md", "docs/features/meeting-notes.md",
     "docs/features/notetaker.md", "docs/features/main-window.md", "docs/features/setup-and-permissions.md",
     "docs/features/privacy.md", "docs/architecture.md", "docs/engine-protocol.md", "docs/models.md",
-    "docs/testing.md", "mispr/README.md", "macos/README.md", "tools/README.md",
+    "docs/testing.md", "docs/data-formats.md", "mispr/README.md", "macos/README.md",
+    "macos/Sources/MisprCore/README.md", "macos/Sources/MisprFlow/README.md", "macos/Sources/MisprFlow/Views/README.md",
+    "tools/README.md",
 ]
 
 INTRO = """# Mispr Flow: complete knowledge base
@@ -20,7 +23,8 @@ You are being given the full context of the Mispr Flow project: what it is, how 
 decision and why, the history of the work, research results, and how the project owner likes to
 work. Read section 1 (overview) and section 2 (working preferences) first, and follow those
 preferences when helping. Paths are relative to the repository root
-(github.com/maxwelldalrymple/Mispr_Flow).
+(github.com/maxwelldalrymple/Mispr_Flow). Links inside each section are relative to that section's own
+file, named in the comment above it.
 
 """
 

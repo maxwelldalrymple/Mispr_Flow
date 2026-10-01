@@ -12,7 +12,11 @@ Everything about Mispr Flow and how it was built, written so an AI assistant (Cl
 | [04-research.md](04-research.md) | Benchmarks and findings with numbers |
 | [05-working-with-the-user.md](05-working-with-the-user.md) | Preferences and conventions to follow |
 | [06-open-items.md](06-open-items.md) | What's next, known limits |
+| [07-chat-log.md](07-chat-log.md) | The full conversation: every user message and assistant reply (262 KB) |
+| [08-your-messages.md](08-your-messages.md) | Just the user's 237 messages, in order, including those sent while Claude was working |
 
 Detailed guides are in [`../docs/`](../docs/). Per-change reports with test results are in [`../logs/`](../logs/README.md).
 
-Rebuild `ALL-IN-ONE.md` after editing any file: `python tools/build_knowledge_base.py`.
+Rebuild `ALL-IN-ONE.md` after editing any file with `python tools/build_knowledge_base.py`. It includes everything except the full chat log, to stay small enough to paste.
+
+Re-export the chat from the Claude Code transcript with `python tools/export_chat_history.py ~/.claude/projects/<folder>/<session>.jsonl`.

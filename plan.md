@@ -24,7 +24,12 @@ Mispr Flow is a Wispr Flow clone built to be:
 | Sounds | Original WAVs synthesized by `tools/make_sounds.py` | Matches the feel of Wispr Flow's cues (length, pitch range, envelope, loudness were measured as targets) without using their audio, which is theirs. Copies, noise-altered copies, and waveform reconstructions were ruled out for the same reason. |
 | Storage | Save recordings by default; Incognito turns it off | Needed for the future history and stats UI. |
 | Distribution | Unsigned `.pkg` whose postinstall downloads the models; first-launch setup as fallback | Keeps the download small, fits GitHub Releases' 2 GB limit, and updates don't re-download 3 GB of models. |
-| Meeting audio | Mic (AVAudioEngine) + system audio (ScreenCaptureKit, audio only), cut at pauses, transcribed by the engine | Two separate streams give You vs Them for free; live previews every 0.8 s, final lines at pauses. Other voices are grouped by spectral signature and labelled by pitch (Male/Female/Person N). |
+| Meeting audio | Mic (AVAudioEngine) + system audio (ScreenCaptureKit, audio only), cut at pauses, transcribed by the engine | Two separate streams give You vs Them for free. Live previews every 0.5 s on their own thread with Whisper `base.en` (~0.15 s); final lines at pauses with turbo. |
+| Meeting speakers | TitaNet-large fingerprints (sherpa-onnx), cosine: join ≥ 0.40, new person only after two matching stretches (≥ 0.30), merge lookalikes ≥ 0.60 | Best of 5 models on real meetings (AMI, a Zoom recording). The user's rule: one person must never switch labels; 0% switches on AMI. Gender = fingerprint classifier (96 voices) averaged with pitch around 145 Hz (Zoom audio puts women near 150 Hz). |
+| Meeting echo and clicks | `EchoGate` on the mic audio + text-level echo removal; Silero VAD before Whisper | Calls on speakers came back through the mic as "You"; clicks were transcribed as "okay"/"Thank you". The gate keeps 100% of your speech and removes ~86% of echo in a real-voice bench; VAD scores clicks as 0 s of speech. |
+| Voice commands | Hold a switch key (key, modifier side, or combo); Whisper → `apps.parse` → actions via Accessibility, the apps' own shortcuts, media keys, AppleScript `set volume`, Spotlight | Works in every app without integrations. Confidence-scored matching never launches an app on a guess (a clipped "Chrome" heard as "Pro." once opened Logic Pro). |
+| Terminal mode | Gemma with terminal instructions, accepted only if every output word was said; else a word-for-symbol converter | Spoken syntax ("ls flag a") → shell (`ls -a`) without ever adding commands. |
+| Folder search | Spotlight (`mdfind`) first, level-by-level walk as backup, Soundex sound-alikes | Instant at any depth; highest match wins; Whisper mishears names ("clawed" → claude). Needs Full Disk Access for Documents/Desktop/Downloads. |
 | Signing | Local self-signed certificate, trusted for code signing | Ad-hoc builds lost permissions on every rebuild; an untrusted certificate kept Accessibility but not Screen & System Audio (pinned to one build's cdhash). |
 | Branding | Mispr Flow, package `mispr`, logo in `mispr/assets/` | Renamed from "Whispr Clone". "Wispr Flow" refers only to the product this is modeled on. |
 
@@ -66,6 +71,9 @@ Requested from the setup window (`onboarding.py`), never on launch:
 - **Microphone** (required): dictation.
 - **Accessibility** (required): swallow fn and the globe key so macOS doesn't open the emoji picker, post the paste keystroke, and read the browser page. fn works within a second of granting it (`app.maintain_hotkey`).
 - **Screen & System Audio** (optional): the meeting notetaker's system-audio capture; may require reopening the app.
+- **Full Disk Access** (optional): lets "open folder" search Documents, Desktop and Downloads. No prompt exists; Allow… opens the System Settings list. Checked without prompting by reading the TCC database.
+- **Control Finder** (optional, Automation): "open …" in Finder navigates the same window. Checked with `AEDeterminePermissionToAutomateTarget` without asking.
+- Required and optional permissions are on separate setup pages (Allow access / Optional features).
 - **Input Monitoring:** not requested. It's only a fallback for a listen-only fn tap when Accessibility is off.
 
 ## Milestones
@@ -90,6 +98,15 @@ Requested from the setup window (`onboarding.py`), never on launch:
 18. ✅ MIT license, CONTRIBUTING guide, and CHANGELOG.
 19. ✅ Original sound cues hooked to every current event; paste only when a text box is focused (otherwise copy + error sound + notice).
 20. ✅ First-dictation mic-name notice; app icon on the macOS icon grid.
+21. ✅ Test audit: every UI and engine function tested (`MisprFlowTests`), test catalogue in `logs/`.
+22. ✅ Meeting quality: TitaNet diarization with confirm/merge rules, gender (fingerprint + pitch), echo gate, Silero click filtering, fast preview thread, save only on Save.
+23. ✅ Notetaker editing: delete notes (hover, right-click, page, multi-select), rename/merge/remove people, contact cards.
+24. ✅ Voice commands: apps and windows, layouts, tabs, media/volume/mute, seek, scroll, folders and files, nicknames, quit, Commands history with real names.
+25. ✅ Dictation extras: Auto-Enter (badge, chime, terminals too), terminal mode, browser text-box recheck.
+26. ✅ Setup on two permission pages; Full Disk Access and Control Finder.
+27. ✅ Documentation: feature guides, folder READMEs, per-test docs, knowledge base with the full chat history.
+28. ⬜ First-run tutorial of every feature.
+29. ⬜ Security and network audit for open-source distribution.
 
 ## Floating Widget
 
@@ -103,9 +120,12 @@ A transparent, non-activating panel centred just above the Dock on the screen wi
 | Hands-free | ✕ · waveform · ✓; tooltips "Cancel", "Finish and paste", "**space** to paste · **fn** to cancel" | Double-tap `fn`, or click the mic |
 | Processing | Dim waveform + spinner | Release `fn` (hold), space/return (hands-free), or click ✓ |
 | Cancelled | "Transcript cancelled · Undo" toast with a 5 s draining bar. Undo processes the recording; otherwise it is saved as cancelled and wiped when the bar runs out | Click ✕, press delete, or press `fn` during hands-free |
-| Meeting | Outlined pill: small waveform + ■ stop (UI only; capture not built yet) | Click ◉ |
+| Meeting | Outlined pill: small waveform + ■ stop; the app's side panel does the capture | Click ◉ or ⌥M |
 | Started by mistake? | Card with Discard / Keep | Stopping a meeting shorter than 10 s |
 | Setup | "Downloading models NN%" with progress bar; "Model download failed · Retry" | Launch with a model missing |
+| Voice command | The Hold pill with "Say an app to switch to"; then a result notice ("→ Google Chrome") | Hold the switch key |
+
+A blue ⏎ badge sits on the pill's corner whenever Auto-Enter is on; Incognito gives it a purple outline.
 
 Behaviour: original sound cues (see Sounds); a notice pill above the widget ("Using Built-in mic (recommended)" for 3 s on the first recording after launch, "No text box · Copied to clipboard" for 4 s after a copy), which takes the tooltip's place and fades over its last 0.4 s; follows the focused window's screen (or the pointer's); the idle pill hides in fullscreen apps but recording states always show. SF Symbols for all icons.
 
@@ -178,22 +198,21 @@ On launch, if either required model (Whisper large-v3-turbo q5, Gemma-3-4B-it Q4
 ## Recording Storage
 
 - **Default:** every finished or cancelled dictation is saved to `voice-recordings/YYYY-MM-DD/` in the project folder (`~/Library/Application Support/Mispr_Flow/voice-recordings` once packaged), named by start time to the millisecond: `2026-09-30_12-28-33-123.wav` (16 kHz mono PCM) + `.json`.
-- **JSON fields:** `id`, `started_at` / `ended_at` (ms precision, with timezone), `duration_s`, `status` (`pasted` / `copied` (no text box; left on the clipboard) / `cancelled`), `transcript`, `raw_transcript`, `words`, `recorded_in` (app, bundle id), `pasted_into` (app, bundle id, and for browsers `url` and `page_title`; `null` if cancelled), `model`, `cleanup` (model, applied, ms, rejection reason), `audio_file`.
+- **JSON fields:** `id`, `started_at` / `ended_at` (ms precision, with timezone), `duration_s`, `status` (`pasted` / `copied` (no text box; left on the clipboard) / `cancelled` / `command` (a voice command; its `transcript` is the outcome with real names, `raw_transcript` what was heard)), `transcript`, `raw_transcript`, `words`, `recorded_in` (app, bundle id), `pasted_into` (app, bundle id, and for browsers `url` and `page_title`; `null` if cancelled), `model`, `cleanup` (model, applied, ms, rejection reason), `audio_file`.
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, silent clips, and anything in Incognito mode.
 - **Possible upgrade:** encrypt recordings with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
 
 ## Meeting Notetaker (◉)
 
-Built on branch `ui`; the notes below were the plan, and now describe it, except diarization: speakers are grouped by a lightweight voice signature during the meeting (no separate pass), and labelled Male/Female/Person N by pitch.
+Built on branch `ui`, improved on `speaker-id`. Full guide: [docs/features/meeting-notes.md](docs/features/meeting-notes.md).
 
-Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and writes a business-style summary.
-
-- **Capture:** microphone ("You") + system audio (others) via ScreenCaptureKit; needs the Screen & System Audio Recording permission.
-- **Transcription:** whisper.cpp in chunks for a live transcript; a diarization pass afterwards labels speakers.
-- **Summary:** local LLM → overview, decisions, action items with owners, open questions.
-- **Output:** `meeting-recordings/` in the project folder; audio follows the dictation rules (saved by default, never in Incognito).
-- **Notes window (later):** My thoughts / Transcript / Summary tabs, plus "Ask anything about this meeting".
-- **Guard:** very short meetings ask "Started by mistake?" (Discard / Keep). The UI for this already exists.
+- **Capture:** microphone ("You") + system audio (everyone else) via ScreenCaptureKit, resampled to 16 kHz; the mic passes through `EchoGate` so a call on speakers isn't heard twice.
+- **Chunks:** cut at pauses (≥ 0.5 s, ≤ 10 s); Silero VAD drops clips without real speech (clicks).
+- **Text:** final lines from Whisper turbo split at speaker changes; live previews twice a second from `base.en` on their own thread; text-level echo removal for anything left.
+- **Speakers:** TitaNet fingerprints with join/confirm/merge rules; merges relabel earlier lines (`speakers_merged`); Male/Female from a fingerprint classifier + pitch; rename and People pages.
+- **Summary and Q&A:** Gemma, locally.
+- **Saving:** only when you press Save note; closing or starting a new note with unsaved words asks Save / Discard / Keep editing; Incognito never saves.
+- **Output:** `meeting-recordings/YYYY-MM-DD/<id>.json` + audio folder; contacts in `meeting-recordings/people.json`.
 
 ## Distribution
 
@@ -220,7 +239,11 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - `soxr` prints harmless nanobind "leaked function" notices at interpreter exit.
 - Models under `/Library/Application Support` aren't checked yet (needed for the `.pkg`).
 - `Mispr Flow.app` runs this checkout's `.venv` Python; a DMG needs a bundled portable Python (see Distribution).
-- Speaker grouping is a heuristic: similar voices can merge, and male/female is a pitch guess.
+- Speakers: on compressed call audio (Zoom) similar voices, especially men, can merge into one person (by design: never split one person). Male/female can still be wrong for low-pitched women on call audio.
+- The echo gate needs a second or two of call audio to learn the speakers' leak.
+- Terminal mode doesn't detect VS Code's integrated terminal.
+- "Mute app" only works for browser tabs (macOS has no per-app volume); seek assumes 5 s per arrow press.
+- If the app quits while the mic is muted, the mic stays muted.
 - Whisper mishears names ("Mispr" → "Misper"); a custom dictionary would fix it.
 - Transcription is English-only today despite the multilingual model.
 - Text-box detection gives Electron apps (VS Code, Slack, Discord) the benefit of the doubt when they report no focus, so ⌘V can still go nowhere there; Chrome's focused web content often reads as an unfamiliar role (UNKNOWN), which also pastes.
@@ -246,10 +269,7 @@ Findings: detection was correct on every clip, but auto-detect roughly doubles t
 
 ## Branches and Releases
 
-- `main`: merged, working code (via GitHub PRs).
-- `build`: day-to-day development; merged into `main` through PRs.
-- `planning`, `Rebranding`, `widget`, `dictation-complete`, `widgets-fn-record-complete`, `setup-screens`: milestone and feature branches (all merged).
-- `original-sounds`: merged into `build`.
-- `ui`: the SwiftUI app, main window, and meeting notes (on top of `build`; not merged yet).
-- `fix-setup-window-space`: opens the setup window on the active Space (not merged yet).
+- `main`: merged, working code (via GitHub PRs with merge commits).
+- Work happens on a branch per change, merged by PR: `build`, `ui` (#15), `ui-tests` + `speaker-id` (#16), `documentation` (#17), `documentation-2`.
+- Earlier milestone branches (all merged): `planning`, `Rebranding`, `widget`, `dictation-complete`, `widgets-fn-record-complete`, `setup-screens`, `original-sounds`.
 - Tags: `v0.1-dictation` (end-to-end dictation), `v0.2-llm-cleanup` (LLM cleanup + guard).
