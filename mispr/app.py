@@ -24,7 +24,7 @@ from PyObjCTools import AppHelper
 
 from Foundation import NSObject
 
-from . import host, hotkey, onboarding, prompts, settings, setup, storage, threads
+from . import host, hotkey, levels, meeting, onboarding, prompts, settings, setup, storage, threads
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -146,7 +146,10 @@ def _connect_host(app, widget, open_setup, fn=None):
     dictation, and follow its commands. Quitting the app (stdin closes) quits the engine."""
     quit_app = lambda: app.terminate_(None)
     widget.on_saved = lambda path: host.send("saved", path=str(path))
-    widget.on_note_requested = lambda: host.send("open_note")
+    widget.on_note_requested = lambda: host.send("open_note", start=True)
+    pushed = levels.PushedLevelSource()
+    widget.meeting_levels = pushed  # the app streams real levels while it records
+    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send)
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     def reload_settings():
         widget.reload_settings()
@@ -155,7 +158,9 @@ def _connect_host(app, widget, open_setup, fn=None):
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
-                 "try_prompt": lambda **draft: try_prompt(widget.cleaner, **draft)},
+                 "try_prompt": lambda **draft: try_prompt(widget.cleaner, **draft),
+                 "meeting_level": lambda level=0.0: pushed.push(level),
+                 "transcribe_chunk": worker.transcribe_chunk, "summarize": worker.summarize, "ask": worker.ask},
                 on_eof=quit_app)
     host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH),
               prompts_path=str(prompts.PROMPTS_PATH), default_prompts=prompts.defaults_payload())
@@ -217,7 +222,7 @@ def main():
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
-                          trigger=widget.settings.hotkey)
+                          trigger=widget.settings.hotkey, on_note=widget.request_note)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)

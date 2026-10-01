@@ -1403,6 +1403,20 @@ class TestNoteWindowHooks:
         click(controller, "note")
         assert controller.state == W.MEETING
 
+    def test_option_m_toggles_the_meeting_when_standalone(self, controller, clock):
+        controller.request_note()
+        assert controller.state == W.MEETING
+        clock.advance(30)
+        controller.request_note()
+        assert controller.state == W.IDLE
+
+    def test_option_m_asks_the_app_from_any_state_when_hosted(self, controller):
+        asked = []
+        controller.on_note_requested = lambda: asked.append(True)
+        controller.state = W.MEETING
+        controller.request_note()
+        assert asked == [True] and controller.state == W.MEETING  # the app decides to stop
+
     def test_note_button_asks_the_app_when_hosted(self, controller):
         asked = []
         controller.on_note_requested = lambda: asked.append(True)

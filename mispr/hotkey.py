@@ -20,6 +20,8 @@ GLOBE_KEYCODE = 179
 
 _FN_USAGE_DO_NOTHING = "0"  # AppleFnUsageType value for "Do Nothing"
 
+KEY_M = 46  # ⌥M starts or stops a meeting note
+
 # The dictation key (Settings > General > Shortcuts). "fn" is the default; "modifier" is one
 # side of a modifier key (e.g. right ⌥); "key" is any other key (e.g. F5).
 FN_TRIGGER = {"kind": "fn", "keycode": 63, "label": "fn"}
@@ -80,9 +82,10 @@ class FnMonitor:
     inside the tap, so it must only inspect state and defer any real work.
     """
 
-    def __init__(self, on_down, on_up, on_combo, on_key=None, trigger=None):
+    def __init__(self, on_down, on_up, on_combo, on_key=None, trigger=None, on_note=None):
         self.on_down, self.on_up, self.on_combo = on_down, on_up, on_combo
         self.on_key = on_key
+        self.on_note = on_note  # ⌥M: new meeting note
         self.trigger = normalize_trigger(trigger)
         self.fn_down = False
         self._swallowed_keys = set()  # swallow the key-up of keys whose key-down we took
@@ -171,6 +174,15 @@ class FnMonitor:
                 return None
             return event
         if event_type == Quartz.kCGEventKeyDown:
+            flags = Quartz.CGEventGetFlags(event)
+            if (keycode == KEY_M and self.on_note is not None and flags & Quartz.kCGEventFlagMaskAlternate
+                    and not flags & (Quartz.kCGEventFlagMaskCommand | Quartz.kCGEventFlagMaskControl)):
+                if not Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
+                    AppHelper.callAfter(self.on_note)
+                if self.active:
+                    self._swallowed_keys.add(keycode)
+                    return None  # ⌥M would otherwise type "µ"
+                return event
             if self.fn_down:
                 AppHelper.callAfter(self.on_combo)
                 return event  # fn+arrow etc. still reach the app

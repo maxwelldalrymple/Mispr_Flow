@@ -130,6 +130,16 @@ class Cleaner:
         messages.append({"role": "user", "content": f"<dictation>{text}</dictation>"})
         return messages
 
+    def complete(self, messages, max_tokens=400, temperature=0.2):
+        """Free-form generation with the same model (meeting summaries and questions).
+        Returns the reply text, or None if the model isn't available."""
+        self._ready.wait()
+        if self._llm is None:
+            return None
+        with self._lock:
+            out = self._llm.create_chat_completion(messages, max_tokens=max_tokens, temperature=temperature)
+        return out["choices"][0]["message"]["content"]
+
     def clean(self, raw, system=None, examples=None, guard=None):
         """Return (text, info). Falls back to `raw` on any failure or rejected output.
         system/examples/guard override the configured prompt (the app's Try it box)."""

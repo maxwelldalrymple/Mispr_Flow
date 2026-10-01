@@ -489,7 +489,8 @@ struct MoreInsightsView: View {
                 PointMark(x: .value("Day", day.day, unit: .day), y: .value("WPM", day.wpm))
                     .foregroundStyle(chartColor).symbolSize(24)
             }
-            .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+            // About five evenly spaced dates; one per day overlaps when there are two weeks.
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
             .frame(height: 140)
         }
     }

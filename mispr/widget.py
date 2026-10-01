@@ -262,7 +262,7 @@ class WidgetController:
         self.setup_error = None
         self.rec_started_at = self.rec_ended_at = None
         self.rec_recorded_in = None  # context.frontmost() when the recording started
-        self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
+        self.meeting_levels = FakeLevelSource()  # replaced by real levels when the app records
         self.sounds = sounds.Sounds()
         self.sounds.enabled = self.settings.sounds
         self.on_saved = lambda path: None  # the Swift app refreshes its history from this
@@ -573,10 +573,14 @@ class WidgetController:
             self.discard_quietly()
 
     def request_note(self):
-        """The ◉ button: open the note window when the app hosts us, else start right away."""
+        """The ◉ button and ⌥M: the app opens its note window and starts (or stops) the
+        recording; standalone, the widget's meeting pill toggles."""
         if self.on_note_requested is not None:
-            self.to_idle()
+            if self.state == HOVER:
+                self.to_idle()
             self.on_note_requested()
+        elif self.state == MEETING:
+            self.stop_meeting()
         else:
             self.begin_meeting()
 

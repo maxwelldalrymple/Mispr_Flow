@@ -371,3 +371,27 @@ class TestSetTrigger:
         cb(monitor, FLAGS_CHANGED, ev(63, FN_MASK))
         monitor.set_trigger(hotkey.FN_TRIGGER)
         assert monitor.calls == ["down"] and monitor.fn_down
+
+
+class TestNoteShortcut:
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.on_note = lambda: monitor.calls.append("note")
+        return monitor
+
+    def test_option_m_opens_a_note_and_is_swallowed(self, m):
+        assert cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate)) is None
+        assert cb(m, KEY_UP, ev(hotkey.KEY_M)) is None
+        assert m.calls == ["note"]
+
+    def test_plain_m_and_cmd_option_m_pass(self, m):
+        plain = ev(hotkey.KEY_M)
+        assert cb(m, KEY_DOWN, plain) is plain
+        cmd = ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate | CMD)
+        assert cb(m, KEY_DOWN, cmd) is cmd
+        assert "note" not in m.calls
+
+    def test_auto_repeat_opens_once(self, m):
+        cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate))
+        cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate, repeat=1))
+        assert m.calls == ["note"]

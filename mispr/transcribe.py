@@ -81,6 +81,10 @@ class Transcriber:
 
         start_daemon(work, "whisper-run")
 
+    def transcribe(self, audio):
+        """Transcribe on the calling thread (meeting chunks; serialized with dictation)."""
+        return self._transcribe(audio)
+
     def _transcribe(self, audio):
         if len(audio) < MIN_SECONDS * SAMPLE_RATE:
             return ""
