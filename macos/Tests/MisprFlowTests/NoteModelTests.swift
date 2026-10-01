@@ -119,6 +119,15 @@ final class NoteModelTests: XCTestCase {
         XCTAssertEqual(note.transcript.groups.map(\.label), ["Male 1", "Female 1"])
     }
 
+    func testMergedSpeakersShowAsOnePerson() {
+        note.start()
+        say("them", 1, "First.", speaker: 1, voice: "male")
+        say("them", 4, "Second.", speaker: 2, voice: "male")
+        XCTAssertEqual(note.transcript.groups.map(\.label), ["Male 1", "Male 2"])
+        t.event(["event": "speakers_merged", "id": note.meetingID, "speaker": 2, "into": 1])
+        XCTAssertEqual(note.transcript.groups.map(\.label), ["Male 1"])
+    }
+
     func testOtherMeetingsEventsAreIgnored() {
         t.event(["event": "chunk_text", "id": "someone-else", "stream": "you", "speaker": 0, "offset": 0.0, "text": "Hi."])
         XCTAssertTrue(note.transcript.lines.isEmpty)

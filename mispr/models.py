@@ -61,7 +61,18 @@ WESPEAKER_RESNET34 = ModelSpec(
            "wespeaker_en_voxceleb_resnet34_LM.onnx",
 )
 
-SPEAKER_MODEL = WESPEAKER_RESNET34
+# Better at telling voices apart than ResNet34, and as fast (21 ms per second of audio):
+# separation d' 4.09 vs 3.10 on AMI meetings, 0.66 vs 0.57 on a Zoom recording. NVIDIA TitaNet-large
+# (CC BY 4.0), converted by sherpa-onnx.
+TITANET_LARGE = ModelSpec(
+    "nemo_en_titanet_large.onnx",
+    101_405_493,
+    "d51abcf31717ef28162f26acb9d44dd4127c3d44c9b8624f699f3425daca8e77",
+    source="https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/"
+           "nemo_en_titanet_large.onnx",
+)
+
+SPEAKER_MODEL = TITANET_LARGE
 
 # Speech detection (Silero VAD): tells real speech from clicks, typing and noise, so a mouse
 # click during a meeting never becomes "okay." or "Thank you." From sherpa-onnx's release.

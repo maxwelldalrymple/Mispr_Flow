@@ -141,31 +141,64 @@ class SpeakerEmbedder:
         return vector / norm if norm else None
 
 
-class VoiceClusters:
-    """Tells the other people on a call apart. Each stretch of speech gets a voice
-    fingerprint; it's the same person as the closest one heard so far when their cosine
-    similarity is high enough, otherwise a new person. Names can be fixed by hand afterwards.
+class GenderModel:
+    """Female probability from a voice fingerprint: logistic regression trained on TitaNet
+    fingerprints of 96 voices (AMI Meeting Corpus and LibriSpeech, both CC BY 4.0; held out
+    by person: 76/80 LibriSpeech and 13/16 AMI voices right). Weights: voice_gender.json."""
 
-    With the WeSpeaker model (`embedder`), tested on a real 4-person meeting (AMI EN2002b):
-    the same voice scores ~0.75 and different voices ~0.48, so 0.60 splits them and found
-    exactly 4 people. Without it, a spectral signature with a much higher bar is used.
+    PATH = Path(__file__).with_name("voice_gender.json")
+
+    def __init__(self, weights, bias):
+        self.weights, self.bias = np.asarray(weights, dtype=np.float32), float(bias)
+
+    @classmethod
+    def load(cls, path=None):
+        try:
+            data = json.loads(Path(path or cls.PATH).read_text())
+            return cls(data["weights"], data["bias"])
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def female(self, vector):
+        if len(vector) != len(self.weights):
+            return None  # a fingerprint from another model
+        return float(1 / (1 + np.exp(-(vector @ self.weights + self.bias))))
+
+
+class VoiceClusters:
+    """Tells the people on a call apart (speaker diarization), and guesses male/female.
+
+    Each stretch of speech gets a voice fingerprint (TitaNet). It joins the most similar
+    person when cosine similarity >= JOIN. Otherwise it waits as "maybe someone new" (shown
+    as the closest known person); a second stretch that matches it (>= CONFIRM) makes a new
+    person. People whose voices turn out alike (>= MERGE) are merged, and `merges` reports it
+    so the app relabels their lines. One odd-sounding sentence never creates a new person.
+
+    Tested on 6 real AMI meetings (23 people): the old rule (new person below 0.60) made 45
+    people and switched labels mid-person 9% of the time; these rules: 0% switches, 100% of each
+    person's speech under one label, at the cost of merging a few alike voices (18 found).
     """
 
-    SAME_SPEAKER = 0.60  # cosine similarity for one voice (WeSpeaker fingerprints)
-    SAME_SPEAKER_SIGNATURE = 0.93  # for the fallback spectral signature
+    JOIN, CONFIRM, MERGE = 0.40, 0.30, 0.60  # TitaNet cosine similarities
+    SIGNATURE_JOIN, SIGNATURE_CONFIRM, SIGNATURE_MERGE = 0.93, 0.95, 0.97  # fallback spectral signature
     MIN_SECONDS = 1.0  # shorter speech is too little to fingerprint: it joins its neighbour
     NEW_SPEAKER_SECONDS = 1.5  # only this much clear speech can start a new person or teach a voice
     MAX_SPEAKERS = 8
     BANDS = 24
+    # Male/female: the average of a fingerprint classifier (trained on 96 voices: AMI +
+    # LibriSpeech) and a pitch score centred on 145 Hz (in a Zoom recording women measured
+    # ~150-155 Hz and men 115-132; in AMI women 163-227 and men 113-142).
+    PITCH_MIDDLE, PITCH_SPREAD = 145.0, 10.0
 
-    # Typical speaking pitch: men ~85-155 Hz, women ~165-255 Hz. In between, or no clear
-    # pitch (music, noise, a dog), the voice is just "person".
-    MALE_MAX, FEMALE_MIN = 155.0, 168.0
-
-    def __init__(self, embedder=None):
+    def __init__(self, embedder=None, gender=None):
         self.embedder = embedder
-        self.centroids, self.counts, self.pitches = [], [], []
+        self.gender = gender if gender is not None else GenderModel.load()
+        self.centroids, self.counts, self.pitches, self.female = {}, {}, {}, {}  # by speaker id
+        self.pending = []  # fingerprints of "maybe someone new": [(vector, shown as)]
+        self.merges = []  # [(from, into)] since the worker last looked
+        self.next_id = 1
         self.last = 0  # the most recent speaker, for stretches too short to tell
+        self._thresholds = (self.JOIN, self.CONFIRM, self.MERGE)
 
     @staticmethod
     def pitch(audio, rate=16_000):
@@ -188,12 +221,16 @@ class VoiceClusters:
         return float(np.median(found)) if len(found) >= 3 else None
 
     def voice(self, speaker):
-        """"male", "female", or "person" for a 1-based speaker number."""
-        values = self.pitches[speaker - 1] if 0 < speaker <= len(self.pitches) else []
-        if len(values) == 0:
+        """"male", "female", or "person" (nothing heard to judge by) for a speaker id."""
+        scores = []
+        if self.female.get(speaker):
+            scores.append(float(np.mean(self.female[speaker])))
+        if self.pitches.get(speaker):
+            f0 = float(np.median(self.pitches[speaker]))
+            scores.append(1 / (1 + np.exp(-(f0 - self.PITCH_MIDDLE) / self.PITCH_SPREAD)))
+        if not scores:
             return "person"
-        f0 = float(np.median(values))
-        return "male" if f0 <= self.MALE_MAX else "female" if f0 >= self.FEMALE_MIN else "person"
+        return "female" if np.mean(scores) >= 0.5 else "male"
 
     @classmethod
     def signature(cls, audio, rate=16_000):
@@ -221,44 +258,80 @@ class VoiceClusters:
         return sig / norm if norm else None
 
     def fingerprint(self, audio):
-        """(vector, threshold) for this audio, or (None, None) if it can't be measured."""
+        """This audio's voice vector (or None), using the signature thresholds if it's the fallback."""
         if self.embedder is not None:
             vector = self.embedder.embed(audio)
             if vector is not None:
-                return vector, self.SAME_SPEAKER
+                self._thresholds = (self.JOIN, self.CONFIRM, self.MERGE)
+                return vector, True
         sig = self.signature(audio)
-        return (sig, self.SAME_SPEAKER_SIGNATURE) if sig is not None else (None, None)
+        self._thresholds = (self.SIGNATURE_JOIN, self.SIGNATURE_CONFIRM, self.SIGNATURE_MERGE)
+        return sig, False
 
     def assign(self, audio, rate=16_000):
-        """1-based speaker number for this stretch of speech."""
+        """Speaker id (1, 2, ...) for this stretch of speech."""
+        self._sure = True
         speaker = self._assign(audio, rate)
-        f0 = self.pitch(audio)
-        while len(self.pitches) < speaker:
-            self.pitches.append([])
+        f0 = self.pitch(audio) if self._sure else None  # a "maybe someone new" doesn't teach anyone's voice
         if f0 is not None:
-            self.pitches[speaker - 1].append(f0)
+            self.pitches.setdefault(speaker, []).append(f0)
         self.last = speaker
         return speaker
 
+    def _new(self, vector, female):
+        speaker, self.next_id = self.next_id, self.next_id + 1
+        self.centroids[speaker], self.counts[speaker] = vector.copy(), 1
+        if female is not None:
+            self.female[speaker] = [female]
+        return speaker
+
     def _assign(self, audio, rate):
-        fallback = self.last or (int(np.argmax(self.counts)) + 1 if self.counts else 1)
+        fallback = self.last or (max(self.counts, key=self.counts.get) if self.counts else 1)
         if len(audio) < self.MIN_SECONDS * rate:
             return fallback
-        vector, threshold = self.fingerprint(audio)
+        vector, real = self.fingerprint(audio)
         if vector is None:
             return fallback
+        join, confirm, _ = self._thresholds
+        female = self.gender.female(vector) if (real and self.gender) else None
         clear = len(audio) >= self.NEW_SPEAKER_SECONDS * rate
-        if self.centroids:
-            sims = [float(vector @ c / np.linalg.norm(c)) for c in self.centroids]
-            best = int(np.argmax(sims))
-            if sims[best] >= threshold or not clear or len(self.centroids) >= self.MAX_SPEAKERS:
-                if clear:  # only clear speech refines what a voice sounds like
-                    self.centroids[best] = self.centroids[best] + vector
-                self.counts[best] += 1
-                return best + 1
-        self.centroids.append(vector.copy())
-        self.counts.append(1)
-        return len(self.centroids)
+        if not self.centroids:
+            return self._new(vector, female) if clear else 1
+        sims = {k: float(vector @ c / np.linalg.norm(c)) for k, c in self.centroids.items()}
+        best = max(sims, key=sims.get)
+        if sims[best] >= join or not clear or len(self.centroids) >= self.MAX_SPEAKERS:
+            if clear:  # only clear speech refines what a voice sounds like
+                self.centroids[best] = self.centroids[best] + vector
+                if female is not None:
+                    self.female.setdefault(best, []).append(female)
+            self.counts[best] += 1
+            self._merge_alike()
+            return best
+        for i, (waiting, _) in enumerate(self.pending):  # a second match: someone new for sure
+            if float(vector @ waiting) >= confirm:
+                self.pending.pop(i)
+                return self._new(vector + waiting, female)
+        self.pending = (self.pending + [(vector, best)])[-5:]
+        self._sure = False
+        self.counts[best] += 1
+        return best  # shown as the closest known person until confirmed
+
+    def _merge_alike(self):
+        _, _, merge = self._thresholds
+        while True:
+            ids = sorted(self.centroids)
+            pair = next(((a, b) for i, a in enumerate(ids) for b in ids[i + 1:]
+                         if float(self.centroids[a] @ self.centroids[b]
+                                  / np.linalg.norm(self.centroids[a]) / np.linalg.norm(self.centroids[b])) >= merge), None)
+            if pair is None:
+                return
+            into, gone = pair  # the earlier person keeps their label
+            self.centroids[into] = self.centroids[into] + self.centroids.pop(gone)
+            self.counts[into] += self.counts.pop(gone)
+            self.pitches.setdefault(into, []).extend(self.pitches.pop(gone, []))
+            self.female.setdefault(into, []).extend(self.female.pop(gone, []))
+            self.last = into if self.last == gone else self.last
+            self.merges.append((gone, into))
 
     def split(self, audio, segments, rate=16_000):
         """Whisper's timed segments -> [(start_s, end_s, text, speaker)], with neighbouring
@@ -374,6 +447,10 @@ class MeetingWorker:
                 if delete:
                     Path(path).unlink(missing_ok=True)
                 voices = self._voices.get(id)
+                for gone, into in (voices.merges if voices else []):  # same person after all: relabel
+                    self.send("speakers_merged", id=id, speaker=gone, into=into)
+                if voices:
+                    voices.merges = []
                 for i, (at, text, speaker) in enumerate(lines or [(offset, "", 0)]):
                     voice = voices.voice(speaker) if (voices and speaker) else "person"
                     self.send("chunk_text", id=id, stream=stream, offset=at, text=text, speaker=speaker, voice=voice,

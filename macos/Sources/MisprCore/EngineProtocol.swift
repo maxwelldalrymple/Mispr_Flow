@@ -25,6 +25,8 @@ public enum EngineEvent: Equatable {
     case openNote(start: Bool)
     /// A meeting recording started or stopped (from the note window or the widget's pill).
     case meeting(active: Bool)
+    /// Two voices turned out to be the same person: relabel `speaker`'s lines as `into`.
+    case speakersMerged(meeting: String, speaker: Int, into: Int)
     /// The engine changed settings.json itself (a nickname set by voice): re-read it.
     case settingsChanged
     /// A well-formed event this version doesn't know.
@@ -69,6 +71,9 @@ public enum EngineEvent: Equatable {
         case "answer":
             return .answer(meeting: object["id"] as? String ?? "", question: object["question"] as? String ?? "",
                            text: object["text"] as? String ?? "")
+        case "speakers_merged":
+            guard let from = object["speaker"] as? Int, let into = object["into"] as? Int else { return nil }
+            return .speakersMerged(meeting: object["id"] as? String ?? "", speaker: from, into: into)
         case "settings_changed":
             return .settingsChanged
         case "meeting":

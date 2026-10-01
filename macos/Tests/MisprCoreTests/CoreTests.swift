@@ -1211,3 +1211,27 @@ final class EchoGateTests: XCTestCase {
         XCTAssertEqual(gate.flush().count, 4_800)
     }
 }
+
+
+/// Two voices that turn out to be one person are merged: their lines relabelled, names kept.
+final class SpeakerMergeTests: XCTestCase {
+    func testMergeRelabelsLinesAndKeepsAName() {
+        var t = LiveTranscript()
+        t.add(stream: "them", speaker: 1, offset: 0, text: "Hi there everyone.", voice: "male")
+        t.add(stream: "them", speaker: 2, offset: 5, text: "Let's get going.", voice: "male")
+        t.add(stream: "you", speaker: 0, offset: 8, text: "Sounds good to me.")
+        t.names[2] = "Sam"
+        XCTAssertEqual(t.groups.map(\.label), ["Male 1", "Sam", "You"])
+        t.merge(2, into: 1)
+        XCTAssertEqual(t.lines.filter { $0.stream == "them" }.map(\.speaker), [1, 1])
+        XCTAssertEqual(t.groups.map(\.label), ["Sam", "You"])  // one person, one bubble group
+        t.merge(1, into: 1)  // no-op
+        XCTAssertEqual(t.lines.count, 3)
+    }
+
+    func testMergedEventParses() {
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "speakers_merged", "id": "m", "speaker": 3, "into": 1}"#),
+                       .speakersMerged(meeting: "m", speaker: 3, into: 1))
+        XCTAssertNil(EngineEvent.parse(EngineEvent.prefix + #"{"event": "speakers_merged", "id": "m"}"#))
+    }
+}

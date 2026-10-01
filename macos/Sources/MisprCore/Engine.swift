@@ -147,7 +147,7 @@ public final class Engine: ObservableObject {
             saved.send(url)
         case let .openNote(start):
             noteRequested.send(start)
-        case .chunkText, .summary, .answer:
+        case .chunkText, .summary, .answer, .speakersMerged:
             meetingEvents.send(event)
         case let .meeting(active):
             meetingActive = active

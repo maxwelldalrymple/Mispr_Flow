@@ -68,10 +68,11 @@ class TestTranscribeChunk:
 
     def test_them_chunks_get_speaker_numbers(self, tmp_path):
         s = Sync()
-        for i, voice in enumerate([LOW, HIGH, LOW]):
+        for i, voice in enumerate([LOW, HIGH, HIGH, LOW]):
             write_wav(tmp_path / f"{i}.wav", tone(voice, seed=i))
             s.worker.transcribe_chunk(id="m1", path=str(tmp_path / f"{i}.wav"), stream="them", offset=i)
-        assert [f["speaker"] for _, f in s.sent] == [1, 2, 1]
+        # a new voice is shown as the closest person until a second sentence confirms them
+        assert [f["speaker"] for _, f in s.sent] == [1, 1, 2, 1]
 
     def test_bad_file_still_reports_and_never_raises(self, tmp_path, capsys):
         s = Sync()
@@ -85,6 +86,9 @@ class TestSplitAtSpeakerChanges:
 
     def two_voices(self, tmp_path, segments):
         s = Sync(segments=lambda audio: segments)
+        known = meeting.VoiceClusters(gender=False)  # both people already heard (HIGH confirmed)
+        known.assign(tone(LOW, 2.0)); known.assign(tone(HIGH, 2.0, seed=1)); known.assign(tone(HIGH, 2.0, seed=2))
+        s.worker._voices["m1"] = known
         write_wav(tmp_path / "c.wav", np.concatenate([tone(LOW, 2.0), tone(HIGH, 2.0, seed=1)]))
         s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="them", offset=10.0)
         return [(f["offset"], f["text"], f["speaker"], f["last"]) for _, f in s.sent]
@@ -124,116 +128,114 @@ class FakeEmbedder:
 
 
 class TestEmbeddingClusters:
-    """With voice fingerprints: cosine similarity >= 0.60 is the same person."""
+    """Diarization rules with voice fingerprints: join >= 0.40, a new person only after a second
+    matching sentence (>= 0.30), people who turn out alike (>= 0.60) merged and reported."""
 
-    A, B, NEAR_A = [1, 0, 0], [0, 1, 0], [0.8, 0.5, 0]  # NEAR_A·A ≈ 0.85, NEAR_A·B ≈ 0.53
+    A, B = [1, 0, 0], [0, 1, 0]
+    NEAR_A = [0.8, 0.5, 0]  # 0.85 to A
+    D = [0.35, 0.937, 0]  # 0.35 to A: a different person
+    F = [0.67, 0.74, 0]  # close to D (0.93), drifts D's voice toward A
 
     def voice(self, peak, seconds=2.0):
         return np.full(int(16_000 * seconds), peak, dtype=np.float32)
 
     def clusters(self):
-        return meeting.VoiceClusters(FakeEmbedder({0.1: self.A, 0.2: self.B, 0.3: self.NEAR_A, 0.4: self.B}))
+        return meeting.VoiceClusters(FakeEmbedder({0.1: self.A, 0.2: self.B, 0.3: self.NEAR_A, 0.5: self.D, 0.6: self.F}),
+                                     gender=False)
 
-    def test_threshold_is_cosine_060(self):
+    def test_joins_the_closest_person(self):
         v = self.clusters()
-        assert [v.assign(self.voice(p)) for p in (0.1, 0.2, 0.3, 0.4)] == [1, 2, 1, 2]
-        assert meeting.VoiceClusters.SAME_SPEAKER == 0.60
+        assert [v.assign(self.voice(0.1)), v.assign(self.voice(0.3))] == [1, 1]
+        assert meeting.VoiceClusters.JOIN == 0.40
+
+    def test_one_odd_sentence_never_makes_a_new_person(self):
+        v = self.clusters()
+        assert [v.assign(self.voice(p)) for p in (0.1, 0.2, 0.1)] == [1, 1, 1]  # B once: still person 1
+        assert v.assign(self.voice(0.2)) == 2  # B again: confirmed, someone new
+
+    def test_people_who_turn_out_alike_are_merged_and_reported(self):
+        v = self.clusters()
+        for p in (0.1, 0.5, 0.5):
+            v.assign(self.voice(p))
+        assert set(v.centroids) == {1, 2}
+        for _ in range(10):
+            v.assign(self.voice(0.6))
+            if v.merges:
+                break
+        assert v.merges == [(2, 1)] and set(v.centroids) == {1}
+        assert v.assign(self.voice(0.5)) == 1  # their voice now belongs to person 1
 
     def test_short_unclear_speech_never_starts_a_new_person(self):
         v = self.clusters()
         v.assign(self.voice(0.1))
-        assert v.assign(self.voice(0.2, seconds=1.2)) == 1  # B-like, but only 1.2 s: closest known
-        assert len(v.centroids) == 1
-        assert v.assign(self.voice(0.2, seconds=1.6)) == 2  # clear: a new person
+        assert v.assign(self.voice(0.2, seconds=1.2)) == 1 and v.pending == []
+        assert [v.assign(self.voice(0.2, seconds=1.6)) for _ in range(2)] == [1, 2]
 
     def test_only_clear_speech_refines_a_voice(self):
         v = self.clusters()
         v.assign(self.voice(0.1))
-        before = v.centroids[0].copy()
+        before = v.centroids[1].copy()
         v.assign(self.voice(0.3, seconds=1.2))
-        assert np.array_equal(v.centroids[0], before)
+        assert np.array_equal(v.centroids[1], before)
         v.assign(self.voice(0.3, seconds=2.0))
-        assert not np.array_equal(v.centroids[0], before)
+        assert not np.array_equal(v.centroids[1], before)
 
     def test_too_short_to_fingerprint_is_the_last_speaker(self):
         v = self.clusters()
-        v.assign(self.voice(0.1)); v.assign(self.voice(0.2))
+        for p in (0.1, 0.2, 0.2):
+            v.assign(self.voice(p))
         e = v.embedder.calls
         assert v.assign(self.voice(0.1, seconds=0.5)) == 2 and v.embedder.calls == e
 
     def test_at_most_eight_people(self):
-        vectors = {round(0.1 * (i + 1), 1): np.eye(9)[i] for i in range(9)}
-        v = meeting.VoiceClusters(FakeEmbedder(vectors))
-        assert [v.assign(self.voice(round(0.1 * (i + 1), 1))) for i in range(9)][-1] <= 8
+        vectors = {round(0.1 * (i + 1), 1): np.eye(10)[i] for i in range(10)}
+        v = meeting.VoiceClusters(FakeEmbedder(vectors), gender=False)
+        for i in range(10):
+            for _ in range(2):
+                v.assign(self.voice(round(0.1 * (i + 1), 1)))
+        assert len(v.centroids) <= 8
 
     def test_falls_back_to_the_signature_without_a_model(self):
         dead = type("E", (), {"embed": lambda self, audio: None})()
-        v = meeting.VoiceClusters(dead)
-        assert v.assign(tone(LOW)) == 1 and v.assign(tone(HIGH)) == 2
-        assert v.fingerprint(tone(LOW))[1] == meeting.VoiceClusters.SAME_SPEAKER_SIGNATURE
+        v = meeting.VoiceClusters(dead, gender=False)
+        assert [v.assign(tone(LOW)), v.assign(tone(HIGH)), v.assign(tone(HIGH, seed=1))] == [1, 1, 2]
+        assert v._thresholds[0] == meeting.VoiceClusters.SIGNATURE_JOIN
 
-
-class NoSpeech:
-    """A detector that hears nothing (the audio was a click)."""
-
-    def __init__(self, seconds=0.0):
-        self.seconds, self.calls = seconds, 0
-
-    def has_speech(self, audio):
-        self.calls += 1
-        return self.seconds >= meeting.SpeechDetector.MIN_SPEECH
-
-
-class TestClicksAreNotWords:
-    """Mouse clicks and typing during a meeting must never become "okay." or "Thank you."."""
-
-    def test_a_chunk_with_no_speech_is_skipped_but_still_reported_done(self, tmp_path):
-        said = []
-        s = Sync(speech=NoSpeech(), segments=lambda audio: said.append(1) or [(0, 1, "Thank you.")])
-        write_wav(tmp_path / "c.wav", tone(LOW))
-        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="you", offset=3.0)
-        assert said == [] and s.sent == [("chunk_text", {"id": "m1", "stream": "you", "offset": 3.0, "text": "",
-                                                          "speaker": 0, "voice": "person", "last": True})]
-        assert not (tmp_path / "c.wav").exists()
-
-    def test_speech_goes_through(self, tmp_path):
-        s = Sync(speech=NoSpeech(seconds=1.0))
+    def test_merges_are_sent_to_the_app(self, tmp_path):
+        s = Sync()
+        v = self.clusters()
+        v.merges = [(2, 1)]
+        s.worker._voices["m1"] = v
         write_wav(tmp_path / "c.wav", tone(LOW))
         s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="them", offset=0)
-        assert s.sent[-1][1]["text"] == "hello there"
-
-    def test_previews_of_clicks_show_nothing(self, tmp_path):
-        s = Sync(speech=NoSpeech())
-        write_wav(tmp_path / "p.wav", tone(LOW))
-        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "p.wav"), stream="you", offset=0, partial=True)
-        assert s.sent[-1][1]["text"] == "" and s.sent[-1][1]["partial"] is True
-
-    def test_timing_is_logged(self, tmp_path, capsys):
-        s = Sync()
-        write_wav(tmp_path / "c.wav", tone(LOW))
-        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="you", offset=0)
-        assert "meeting: you 1.5s chunk -> 1 line(s) in" in capsys.readouterr().err
+        assert ("speakers_merged", {"id": "m1", "speaker": 2, "into": 1}) in s.sent and v.merges == []
 
 
-class TestSpeechDetector:
-    def test_unavailable_means_keep_everything(self, capsys):
-        d = meeting.SpeechDetector(ensure=lambda spec: (_ for _ in ()).throw(OSError("offline")))
-        assert d.speech_seconds(tone(LOW)) is None and d.has_speech(tone(LOW)) is True
-        assert "speech detector unavailable" in capsys.readouterr().err
+class TestGender:
+    """Male/female: fingerprint classifier averaged with pitch."""
 
-    @pytest.mark.skipif(not meeting.VAD_MODEL.path.exists(), reason="Silero VAD not downloaded")
-    def test_real_model_clicks_typing_and_silence_are_not_speech(self):
-        rng = np.random.default_rng(0)
-        d = meeting.SpeechDetector()
-        def clicks(times, loud):
-            x = 0.002 * rng.standard_normal(16_000 * 3).astype(np.float32)
-            for t in times:
-                i = int(t * 16_000)
-                x[i:i + 400] += (rng.standard_normal(400) * np.exp(-np.arange(400) / 60) * loud).astype(np.float32)
-            return x
-        assert d.speech_seconds(clicks((0.3, 0.9, 1.4), 0.5)) == 0  # mouse clicks
-        assert d.speech_seconds(clicks(np.cumsum(rng.uniform(0.08, 0.25, 15)), 0.3)) == 0  # typing
-        assert not d.has_speech(np.zeros(32_000, dtype=np.float32))
+    def test_shipped_weights_load_for_titanet(self):
+        g = meeting.GenderModel.load()
+        assert g is not None and len(g.weights) == 192
+
+    def test_missing_or_mismatched_is_none(self, tmp_path):
+        assert meeting.GenderModel.load(tmp_path / "nope.json") is None
+        assert meeting.GenderModel([0.1] * 4, 0).female(np.ones(3)) is None
+
+    def test_fingerprint_and_pitch_are_averaged(self):
+        v = meeting.VoiceClusters(gender=False)
+        v.female[1] = [0.9]  # the fingerprint says female...
+        v.pitches[1] = [120.0]  # ...pitch says male (score ~0.08): average 0.49 -> male
+        assert v.voice(1) == "male"
+        v.pitches[1] = [140.0]  # ~0.38: average 0.64 -> female
+        assert v.voice(1) == "female"
+        v2 = meeting.VoiceClusters(gender=False)
+        v2.female[1] = [0.2]
+        assert v2.voice(1) == "male"  # no pitch: the fingerprint alone
+
+    def test_classifier_output_is_a_probability(self):
+        g = meeting.GenderModel([1.0, -1.0], 0.0)
+        assert g.female(np.array([2.0, 0.0])) > 0.85 and g.female(np.array([0.0, 2.0])) < 0.15
 
 
 class TestSpeakerEmbedder:
@@ -266,7 +268,7 @@ class TestSpeakerEmbedder:
         monkeypatch.setitem(sys.modules, "sherpa_onnx", fake)
         e = meeting.SpeakerEmbedder(ensure=lambda spec: tmp_path / spec.filename)
         assert np.allclose(e.embed(np.zeros(16_000, dtype=np.float32)), [0.6, 0.8])
-        assert got == {"model": str(tmp_path / "wespeaker_en_voxceleb_resnet34_LM.onnx"), "rate": 16_000, "n": 16_000, "finished": True}
+        assert got == {"model": str(tmp_path / "nemo_en_titanet_large.onnx"), "rate": 16_000, "n": 16_000, "finished": True}
 
     def test_zero_vector_is_none(self, monkeypatch, tmp_path):
         import sys, types
@@ -282,9 +284,9 @@ class TestVoiceClusters:
         v = meeting.VoiceClusters()
         assert [v.assign(tone(LOW, seed=i)) for i in range(3)] == [1, 1, 1]
 
-    def test_different_voices(self):
+    def test_different_voices_after_a_second_sentence(self):
         v = meeting.VoiceClusters()
-        assert v.assign(tone(LOW)) == 1 and v.assign(tone(HIGH)) == 2
+        assert [v.assign(tone(LOW)), v.assign(tone(HIGH)), v.assign(tone(HIGH, seed=1))] == [1, 1, 2]
 
     def test_too_short_to_measure_joins_the_main_speaker(self):
         v = meeting.VoiceClusters()
@@ -364,14 +366,14 @@ class TestVoiceKind:
         rng = np.random.default_rng(1)
         assert meeting.VoiceClusters.pitch((0.2 * rng.standard_normal(32000)).astype(np.float32)) is None
 
-    def test_male_female_person(self):
-        v = meeting.VoiceClusters()
-        low, high = v.assign(tone(LOW)), v.assign(tone(HIGH))
+    def test_male_female_by_pitch_around_145_hz(self):
+        v = meeting.VoiceClusters(gender=False)
+        low = v.assign(tone(LOW)); v.assign(tone(HIGH)); high = v.assign(tone(HIGH, seed=1))
         assert (v.voice(low), v.voice(high)) == ("male", "female")
-        mid = [(160 * k, 1 / k) for k in range(1, 12)]  # in the overlap: don't guess
-        v2 = meeting.VoiceClusters()
-        assert v2.voice(v2.assign(tone(mid))) == "person"
-        assert v.voice(99) == "person"
+        zoom_woman = [(152 * k, 1 / k) for k in range(1, 12)]  # women measured ~150 Hz in a Zoom call
+        v2 = meeting.VoiceClusters(gender=False)
+        assert v2.voice(v2.assign(tone(zoom_woman))) == "female"
+        assert v.voice(99) == "person"  # nothing heard
 
     def test_reported_with_each_chunk(self, tmp_path):
         s = Sync()

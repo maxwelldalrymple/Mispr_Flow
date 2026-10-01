@@ -236,6 +236,15 @@ public struct LiveTranscript: Equatable {
         }
     }
 
+    /// Two voices were the same person: their lines become `into`'s (a name given to either is kept).
+    public mutating func merge(_ speaker: Int, into: Int) {
+        guard speaker != into else { return }
+        for i in lines.indices where lines[i].stream == "them" && lines[i].speaker == speaker { lines[i].speaker = into }
+        if (names[into] ?? "").isEmpty, let name = names[speaker] { names[into] = name }
+        names[speaker] = nil
+        voices[speaker] = nil
+    }
+
     public var themSpeakers: Set<Int> { Set(lines.filter { $0.stream == "them" }.map(\.speaker)) }
 
     /// "You", a name you gave, or what the voice sounds like, numbered in order of first

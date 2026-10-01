@@ -397,6 +397,9 @@ final class NoteModel: ObservableObject {
             self.summary = summary
             if title.isEmpty && !suggested.isEmpty { title = suggested }
             save()
+        case let .speakersMerged(id, speaker, into) where id == meetingID:
+            transcript.merge(speaker, into: into)
+            save()
         case let .answer(id, question, text) where id == meetingID:
             asking = false
             answers.append((question.isEmpty ? "What did I miss?" : question, text))
