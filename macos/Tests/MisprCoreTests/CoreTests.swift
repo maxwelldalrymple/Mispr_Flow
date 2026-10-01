@@ -541,3 +541,39 @@ final class DictationKeyTests: XCTestCase {
         XCTAssertEqual(hotkey?["keycode"] as? Int, 96)
     }
 }
+
+
+final class VoiceStyleTests: XCTestCase {
+    func rec(_ text: String, words: Int, seconds: Double = 6) -> Recording {
+        Recording(id: UUID().uuidString, startedAt: Date(), endedAt: Date(), durationS: seconds, status: .pasted,
+                  transcript: text, words: words)
+    }
+
+    func testStyleSignals() {
+        let p = VoiceProfile([
+            rec("So I'm shipping the widget today. It's done!", words: 8),
+            rec("So can we ship the widget tomorrow?", words: 7),
+            rec("Okay. Ship it.", words: 3),
+            rec("Widget review at noon.", words: 4),
+        ])
+        XCTAssertEqual(p.openers, ["so"])
+        XCTAssertEqual(p.wordCloud.first?.word, "widget")
+        XCTAssertEqual(p.wordCloud.first?.count, 3)
+        XCTAssertEqual(p.contractionRate, 25)
+        XCTAssertEqual(p.exclamationRate, 25)
+        XCTAssertEqual(p.questionRate, 25)
+        XCTAssertEqual(p.wordsPerSentence, 4)  // 22 words / 6 sentences
+        XCTAssertEqual(p.pace, 55)             // 22 words in 24 s
+        XCTAssertEqual(p.style, .deliberate)
+        XCTAssertEqual(p.tone, "Balanced")
+        XCTAssertGreaterThan(p.richness, 50)
+    }
+
+    func testStyleThresholds() {
+        var p = VoiceProfile()
+        p.pace = 160; XCTAssertEqual(p.style, .fast)
+        p.pace = 120; XCTAssertEqual(p.style, .steady)
+        p.contractionRate = 50; XCTAssertEqual(p.tone, "Casual")
+        p.contractionRate = 5; XCTAssertEqual(p.tone, "Formal")
+    }
+}

@@ -125,6 +125,32 @@ public struct VoiceProfile: Equatable {
     public var topApp: String?
     public var averageWords = 0
     public var longestWords = 0
+    public var wordCloud: [(word: String, count: Int)] = []  // top words for the cloud
+    public var openers: [String] = []       // most common first words ("so", "okay")
+    public var wordsPerSentence = 0
+    public var richness = 0                 // different words as a % of all words
+    public var contractionRate = 0          // % of dictations using contractions (I'm, don't)
+    public var exclamationRate = 0          // % of dictations with an exclamation mark
+    public var questionRate = 0             // % of dictations asking something
+    public var pace = 0                     // words per minute overall
+
+    public enum Style: String {
+        case fast = "Fast talker", steady = "Steady speaker", deliberate = "Deliberate speaker"
+    }
+
+    public var style: Style { pace >= 150 ? .fast : pace >= 110 ? .steady : .deliberate }
+
+    /// Casual vs formal, from how often you use contractions.
+    public var tone: String { contractionRate >= 40 ? "Casual" : contractionRate >= 15 ? "Balanced" : "Formal" }
+
+    public static func == (a: VoiceProfile, b: VoiceProfile) -> Bool {
+        a.mostUsedWords == b.mostUsedWords && a.peakHour == b.peakHour && a.topApp == b.topApp
+            && a.averageWords == b.averageWords && a.longestWords == b.longestWords
+            && a.wordCloud.map(\.word) == b.wordCloud.map(\.word) && a.wordCloud.map(\.count) == b.wordCloud.map(\.count)
+            && a.openers == b.openers && a.wordsPerSentence == b.wordsPerSentence && a.richness == b.richness
+            && a.contractionRate == b.contractionRate && a.exclamationRate == b.exclamationRate
+            && a.questionRate == b.questionRate && a.pace == b.pace
+    }
 
     static let stopwords: Set<String> = [
         "the", "a", "an", "and", "or", "but", "so", "to", "of", "in", "on", "at", "for", "with", "is", "it", "its",
@@ -159,6 +185,30 @@ public struct VoiceProfile: Equatable {
         let words = used.map(\.words)
         averageWords = Int((Double(words.reduce(0, +)) / Double(words.count)).rounded())
         longestWords = words.max() ?? 0
+
+        wordCloud = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .prefix(18).map { ($0.key, $0.value) }
+        var firsts: [String: Int] = [:]
+        for record in used {
+            if let first = MoreInsights.tokens(record.transcript).first { firsts[first, default: 0] += 1 }
+        }
+        openers = firsts.filter { $0.value > 1 }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(2).map(\.key)
+        let sentences = used.reduce(0) { total, r in
+            total + max(1, r.transcript.split(whereSeparator: { ".!?".contains($0) })
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count)
+        }
+        let totalWords = words.reduce(0, +)
+        wordsPerSentence = Int((Double(totalWords) / Double(sentences)).rounded())
+        let allTokens = used.flatMap { MoreInsights.tokens($0.transcript) }
+        richness = allTokens.isEmpty ? 0 : Int((Double(Set(allTokens).count) * 100 / Double(allTokens.count)).rounded())
+        let n = Double(used.count)
+        let percent = { (match: (Recording) -> Bool) in Int((Double(used.filter(match).count) * 100 / n).rounded()) }
+        contractionRate = percent { $0.transcript.range(of: #"\b\w+['’](m|re|s|ve|ll|d|t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil }
+        exclamationRate = percent { $0.transcript.contains("!") }
+        questionRate = percent { $0.transcript.contains("?") }
+        let minutes = used.reduce(0.0) { $0 + $1.durationS } / 60
+        pace = minutes > 0 ? Int((Double(totalWords) / minutes).rounded()) : 0
     }
 }
 

@@ -4,7 +4,7 @@ import SwiftUI
 
 struct InsightsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var tab = 0
+    @State private var tab = ProcessInfo.processInfo.environment["MISPR_PAGE"] == "Voice" ? 1 : 0  // dev screenshots
 
     var body: some View {
         ScrollView {
@@ -15,7 +15,7 @@ struct InsightsView: View {
                     tabButton("Your voice", 1)
                 }
                 Divider().overlay(Theme.cardStroke).padding(.bottom, 26)
-                if tab == 0 { usage } else { VoiceView(profile: VoiceProfile(model.recordings)) }
+                if tab == 0 { usage } else { VoiceView(profile: model.voice) }
             }
             .padding(.horizontal, 40).padding(.vertical, 36)
             .frame(maxWidth: 1100)
@@ -215,34 +215,130 @@ struct VoiceView: View {
                 Text("Dictate a few times and your voice profile appears here.").font(Theme.display(20))
             }
         } else {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 20), GridItem(.flexible())], spacing: 20) {
-                tile("Most used words", profile.mostUsedWords.isEmpty ? "Not enough yet" : profile.mostUsedWords.joined(separator: ", "))
-                tile("Your peak time & place", peak)
-                tile("Average dictation", "\(profile.averageWords) words")
-                tile("Longest dictation", "\(profile.longestWords) words")
+            VStack(alignment: .leading, spacing: 20) {
+                hero
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3), spacing: 20) {
+                    tile("text.word.spacing", "\(profile.wordsPerSentence) words", "Per sentence",
+                         profile.wordsPerSentence > 20 ? "You build long, flowing sentences." : "Short and punchy.")
+                    tile("books.vertical", "\(profile.richness)%", "Vocabulary richness",
+                         "Different words, as a share of everything you've said.")
+                    tile("questionmark.bubble", "\(profile.questionRate)%", "Curiosity", "Of your dictations ask a question.")
+                    tile("exclamationmark.bubble", "\(profile.exclamationRate)%", "Enthusiasm", "Of your dictations end with a bang!")
+                    tile("clock", peak, "Peak time & place", "When and where you talk the most.")
+                    tile("text.alignleft", "\(profile.averageWords) words", "Average dictation",
+                         "Your longest was \(profile.longestWords) words.")
+                }
+                Card(padding: 20) { cloud }
+                Text("Worked out on this Mac from your saved dictations. Nothing is uploaded.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary)
             }
-            Text("Worked out on this Mac from your saved dictations. Nothing is uploaded.")
-                .font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.top, 14)
         }
+    }
+
+    private var hero: some View {
+        Card(padding: 24) {
+            HStack(alignment: .top, spacing: 18) {
+                Image(systemName: profile.style == .fast ? "hare.fill" : profile.style == .steady ? "metronome.fill" : "tortoise.fill")
+                    .font(.system(size: 30)).foregroundStyle(Theme.accent).frame(width: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("You're a \(profile.style.rawValue.lowercased())").font(Theme.display(28))
+                    Text("\(profile.pace) words per minute, with a \(profile.tone.lowercased()) tone" +
+                         (profile.openers.isEmpty ? "." : ". You tend to start with " + profile.openers.map { "“\($0.capitalized)”" }.joined(separator: " or ") + "."))
+                        .font(.system(size: 14)).foregroundStyle(Theme.secondary)
+                    HStack(spacing: 8) {
+                        chip(profile.tone, "theatermasks")
+                        chip("\(profile.contractionRate)% contractions", "quote.closing")
+                        if let first = profile.mostUsedWords.first { chip("Loves “\(first)”", "heart") }
+                    }
+                    .padding(.top, 6)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var cloud: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your words").font(Theme.display(22))
+            let top = Double(profile.wordCloud.first?.count ?? 1)
+            FlowLayout(spacing: 10) {
+                ForEach(Array(profile.wordCloud.enumerated()), id: \.offset) { index, item in
+                    let weight = Double(item.count) / top
+                    Text(item.word)
+                        .font(.system(size: 13 + 17 * weight, weight: weight > 0.6 ? .semibold : .regular, design: .serif))
+                        .foregroundStyle(index % 3 == 0 ? Theme.accent : Theme.text.opacity(0.55 + 0.45 * weight))
+                        .help("Said \(item.count) times")
+                }
+            }
+        }
+    }
+
+    private func chip(_ text: String, _ symbol: String) -> some View {
+        Label(text, systemImage: symbol).font(.system(size: 12))
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Capsule().fill(Theme.accentSoft))
     }
 
     private var peak: String {
         let hour = profile.peakHour.map { h -> String in
             var components = DateComponents()
             components.hour = h
-            let date = Calendar.current.date(from: components) ?? Date()
-            return "Around " + date.formatted(.dateTime.hour())
+            return (Calendar.current.date(from: components) ?? Date()).formatted(.dateTime.hour())
         } ?? "Anytime"
-        return profile.topApp.map { "\(hour), mostly in \($0)" } ?? hour
+        return profile.topApp.map { "\(hour) · \($0)" } ?? hour
     }
 
-    private func tile(_ title: String, _ value: String) -> some View {
-        Card(padding: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(Theme.display(20))
-                Text(value).font(.system(size: 14)).foregroundStyle(Theme.secondary)
+    private func tile(_ symbol: String, _ value: String, _ title: String, _ detail: String) -> some View {
+        Card(padding: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Theme.accent)
+                Text(value).font(.system(size: 22, weight: .medium)).lineLimit(1).minimumScaleFactor(0.7)
+                Text(title.uppercased()).font(.system(size: 10.5, weight: .medium)).tracking(0.8).foregroundStyle(Theme.secondary)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// Lays children out left to right, wrapping onto new lines (for the word cloud).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0,
+                      height: rows.reduce(0) { $0 + $1.height } + spacing * CGFloat(max(0, rows.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.items {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: .unspecified)
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        var rows = [Row()]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if !rows[rows.count - 1].items.isEmpty && rows[rows.count - 1].width + spacing + size.width > width {
+                rows.append(Row())
+            }
+            var row = rows[rows.count - 1]
+            row.width += (row.items.isEmpty ? 0 : spacing) + size.width
+            row.height = max(row.height, size.height)
+            row.items.append(index)
+            rows[rows.count - 1] = row
+        }
+        return rows
     }
 }
 
