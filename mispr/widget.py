@@ -52,12 +52,12 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import audio, context, draw, settings, setup, sounds, storage
+from . import audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import copy_text, paste_text
+from .paste import copy_text, paste_text, type_text
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -97,6 +97,8 @@ SCREEN_POLL_SECONDS = 0.5
 MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation after launch
 COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
 COPIED_NOTICE = "No text box · Copied to clipboard"
+INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
+INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -137,7 +139,7 @@ class Layout:
 
 def layout(state):
     if state == IDLE:
-        return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.35, 0.5))
+        return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.6, 0.35))  # darker, softer outline
     if state == HOVER:
         # Taller than the recording pills and lifted off the Dock, so they're easy to hit.
         h, bottom, gap = 36, 12, 5
@@ -255,12 +257,18 @@ class WidgetController:
         self.recorder = Recorder()
         self.transcriber = Transcriber()
         self.cleaner = Cleaner()
+        self.apply_prompts()
         self.setup_progress = 0.0
         self.setup_error = None
         self.rec_started_at = self.rec_ended_at = None
         self.rec_recorded_in = None  # context.frontmost() when the recording started
-        self.meeting_levels = FakeLevelSource()  # until the notetaker captures audio
+        self.meeting_levels = FakeLevelSource()  # replaced by real levels when the app records
         self.sounds = sounds.Sounds()
+        self.sounds.enabled = self.settings.sounds
+        self.on_saved = lambda path: None  # the Swift app refreshes its history from this
+        # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
+        self.on_note_requested = None
+        self.on_meeting_changed = lambda active: None
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -368,6 +376,20 @@ class WidgetController:
             log(f"saved {status} recording -> {path.parent.name}/{path.name}")
         except OSError as e:
             print(f"mispr: could not save recording: {e}", file=sys.stderr)
+            return
+        self.on_saved(path)
+
+    def reload_settings(self):
+        """Pick up settings.json after the main window changed it."""
+        self.settings = settings.load()
+        self.sounds.enabled = self.settings.sounds
+        self.apply_prompts()
+        log(f"settings reloaded: {self.settings}")
+
+    def apply_prompts(self):
+        """Use the prompts from the app's Prompts page (prompts.json), or the defaults."""
+        p = prompts.load()
+        self.cleaner.configure(p.full_system(), p.examples, p.guard)
 
     def begin_hold(self, source):
         self._drop_cancelled()
@@ -413,14 +435,21 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         if text:
             target = context.frontmost()  # where the text is about to land
-            if context.focused_text_target() == context.NO:
-                # ⌘V would do nothing (or paste something odd, like files in Finder).
-                copy_text(text)
+            where, why = context.focused_text_target()
+            log(f"text box: {where} ({why})")
+            incognito = self.settings.incognito
+            if where == context.NO:
+                # ⌘V would do nothing (or paste something odd, like files in Finder), so
+                # leave the text on the clipboard instead. In Incognito the clipboard is
+                # off-limits too: the words are simply dropped.
+                if not incognito:
+                    copy_text(text)
                 self.sounds.play(sounds.ERROR)
-                self.show_notice(COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+                self.show_notice(INCOGNITO_NOTICE if incognito else COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
                 status = storage.COPIED
             else:
-                paste_text(text)
+                # Incognito types the words in directly so they never pass through the clipboard.
+                (type_text if incognito else paste_text)(text)
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
@@ -543,12 +572,30 @@ class WidgetController:
             self.fn_consumed = True
             self.discard_quietly()
 
+    def request_note(self):
+        """The ◉ button and ⌥M: the app opens its note window and starts (or stops) the
+        recording; standalone, the widget's meeting pill toggles."""
+        if self.on_note_requested is not None:
+            if self.state == HOVER:
+                self.to_idle()
+            self.on_note_requested()
+        elif self.state == MEETING:
+            self.stop_meeting()
+        else:
+            self.begin_meeting()
+
     def begin_meeting(self):
+        if self.state not in (IDLE, HOVER):
+            return  # busy dictating, processing, or already in a meeting
         self.sounds.play(sounds.START)
         self.meeting_started = time.monotonic()
         self.set_state(MEETING)
+        self.on_meeting_changed(True)
 
     def stop_meeting(self):
+        if self.state != MEETING:
+            return
+        self.on_meeting_changed(False)
         self.sounds.play(sounds.STOP)
         if time.monotonic() - self.meeting_started < MIN_MEETING_SECONDS:
             self.set_state(MISTAKE)
@@ -588,7 +635,7 @@ class WidgetController:
             return
         action = {
             (HOVER, "mic"): self.begin_handsfree,
-            (HOVER, "note"): self.begin_meeting,
+            (HOVER, "note"): self.request_note,
             (HANDSFREE, "cancel"): self.cancel,
             (HANDSFREE, "finish"): self.finish,
             (MEETING, "stop"): self.stop_meeting,
@@ -664,6 +711,9 @@ class WidgetController:
 
         tip = TOOLTIPS.get((self.state, self.hovered))
         if tip is not None:
+            label = (self.settings.hotkey or {}).get("label") or "fn"
+            tip = [(label, bold) if (text, bold) == ("fn", True) else (text, bold) for text, bold in tip]
+        if tip is not None:
             self.tip = (tip, layout(self.state).elems[self.hovered])
         self.tip_a += ((1.0 if tip is not None else 0.0) - self.tip_a) * 0.3
 
@@ -695,7 +745,11 @@ class WidgetController:
         s = self.state
 
         draw.fill_round(r, shape.radius, white(0.0, shape.fill))
-        draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
+        if self.settings.incognito:
+            # A purple outline whenever Incognito is on, so you can tell at a glance.
+            draw.stroke_round(r, shape.radius, INCOGNITO_COLOR.colorWithAlphaComponent_(max(0.85, shape.stroke)), 1.5)
+        else:
+            draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
 
         if s == HOVER:
             draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)

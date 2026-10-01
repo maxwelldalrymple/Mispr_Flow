@@ -210,9 +210,19 @@ class TestTextTarget:
         focus["focused"] = TextTargetNode(role)
         assert context.text_target(1) == context.NO
 
-    def test_unfamiliar_role_gets_the_benefit_of_the_doubt(self, focus):
+    @pytest.mark.parametrize("role", ["AXGroup", "AXScrollArea", "AXSplitGroup"])
+    def test_any_non_text_focus_in_a_native_app_or_browser_is_no(self, focus, role):
+        # e.g. the Finder desktop, or a Chrome page with no field clicked
+        focus["focused"] = TextTargetNode(role)
+        assert context.text_target(1) == context.NO
+
+    def test_unfamiliar_role_in_electron_gets_the_benefit_of_the_doubt(self, focus):
         focus["focused"] = TextTargetNode("AXGroup")
-        assert context.text_target(1) == context.UNKNOWN
+        assert context.text_target(1, electron=True) == context.UNKNOWN
+
+    def test_known_non_text_role_in_electron_is_no(self, focus):
+        focus["focused"] = TextTargetNode("AXPopUpButton")
+        assert context.text_target(1, electron=True) == context.NO
 
     def test_nothing_focused(self, focus):
         assert context.text_target(1) == context.NO
@@ -237,7 +247,7 @@ class TestTextTarget:
 class TestFocusedTextTarget:
     def test_no_frontmost_app(self, monkeypatch):
         set_frontmost(monkeypatch, None)
-        assert context.focused_text_target() == context.NO
+        assert context.focused_text_target() == (context.NO, "no frontmost app")
 
     @pytest.mark.parametrize("has_framework", [True, False])
     def test_detects_electron_from_the_bundle(self, monkeypatch, tmp_path, has_framework):
@@ -253,7 +263,34 @@ class TestFocusedTextTarget:
         set_frontmost(monkeypatch, App())
         seen = []
         monkeypatch.setattr(context, "text_target", lambda pid, electron: seen.append((pid, electron)) or "x")
-        assert context.focused_text_target() == "x" and seen == [(42, has_framework)]
+        answer, why = context.focused_text_target()
+        assert answer == "x" and seen == [(42, has_framework)]
+        assert why == ("Google Chrome (Electron)" if has_framework else "Google Chrome")
+
+
+class TestTypeText:
+    def test_types_in_chunks_without_the_clipboard(self, board):
+        board, posted = board
+        before = board.changeCount()
+        events = []
+        text = "Hello there, this is a longer dictation."  # 40 chars -> 2 chunks
+        paste.type_text(text, post=events.append)
+        assert board.changeCount() == before and posted == []
+        downs = [e for e in events if Quartz.CGEventGetType(e) == Quartz.kCGEventKeyDown]
+        assert len(events) == 4 and len(downs) == 2
+        typed = "".join(Quartz.CGEventKeyboardGetUnicodeString(e, 64, None, None)[1] for e in downs)
+        assert typed == text
+
+    def test_handles_emoji_and_accents(self):
+        events = []
+        paste.type_text("café 👍", post=events.append)
+        down = [e for e in events if Quartz.CGEventGetType(e) == Quartz.kCGEventKeyDown][0]
+        assert Quartz.CGEventKeyboardGetUnicodeString(down, 64, None, None)[1] == "café 👍"
+
+    def test_no_modifier_flags(self):
+        events = []
+        paste.type_text("x", post=events.append)
+        assert all(Quartz.CGEventGetFlags(e) & Quartz.kCGEventFlagMaskCommand == 0 for e in events)
 
 
 class TestCopyText:

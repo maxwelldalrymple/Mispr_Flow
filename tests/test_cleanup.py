@@ -242,12 +242,12 @@ class TestCleanerClean:
 
 class TestCleanerMessages:
     def test_structure(self):
-        m = Cleaner._messages("text")
+        m = Cleaner()._messages("text")
         assert m[0] == {"role": "system", "content": cleanup.SYSTEM_PROMPT}
         assert len(m) == 1 + 2 * len(cleanup.EXAMPLES) + 1
 
     def test_examples_alternate_user_assistant(self):
-        m = Cleaner._messages("text")
+        m = Cleaner()._messages("text")
         for i, (raw, clean) in enumerate(cleanup.EXAMPLES):
             assert m[1 + 2 * i] == {"role": "user", "content": f"<dictation>{raw}</dictation>"}
             assert m[2 + 2 * i] == {"role": "assistant", "content": clean}
@@ -315,3 +315,39 @@ class TestCleanerLifecycle:
         monkeypatch.setattr(Cleaner, "_load", lambda self: loaded.append(True))
         Cleaner().load_async()
         assert loaded == [True] and inline_threads == ["cleanup-load"]
+
+
+class TestConfigurablePrompt:
+    def test_configure_changes_the_messages(self):
+        c = Cleaner()
+        c.configure("Be terse.", [["a um b", "a b"]], guard=True)
+        m = c._messages("x")
+        assert m[0] == {"role": "system", "content": "Be terse."}
+        assert m[1:3] == [{"role": "user", "content": "<dictation>a um b</dictation>"},
+                          {"role": "assistant", "content": "a b"}]
+        assert len(m) == 4
+
+    def test_per_call_override_leaves_the_configuration_alone(self):
+        c = Cleaner()
+        m = c._messages("x", system="Draft.", examples=[])
+        assert m == [{"role": "system", "content": "Draft."}, {"role": "user", "content": "<dictation>x</dictation>"}]
+        assert c._messages("x")[0]["content"] == cleanup.SYSTEM_PROMPT
+
+    def test_guard_off_allows_rewording(self, monkeypatch):
+        c = ready_cleaner(FakeLlm("Kindly send the report."))
+        c.configure("Make it polite.", [], guard=False)
+        text, info = c.clean("send the report")
+        assert text == "Kindly send the report." and info["applied"] and info["rejected"] is None
+
+    def test_guard_on_still_rejects_invented_words(self, monkeypatch):
+        c = ready_cleaner(FakeLlm("Kindly send the report."))
+        text, info = c.clean("send the report")
+        assert text == "send the report" and info["rejected"].startswith("invented words")
+
+    def test_guard_off_gives_more_room_to_write(self, monkeypatch):
+        c = ready_cleaner(FakeLlm("ok"), clock=Clock(0.0, 0.0, 0.0, 0.0))
+        c.clean("one two three")
+        on = c._llm.calls[-1]["max_tokens"]
+        c.configure(cleanup.SYSTEM_PROMPT, cleanup.EXAMPLES, guard=False)
+        c.clean("one two three")
+        assert c._llm.calls[-1]["max_tokens"] > on

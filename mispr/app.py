@@ -8,6 +8,7 @@ from pathlib import Path
 
 from AppKit import (
     NSApplication,
+    NSApplicationActivationPolicyAccessory,
     NSApplicationActivationPolicyRegular,
     NSApplicationWillTerminateNotification,
     NSImage,
@@ -23,7 +24,7 @@ from PyObjCTools import AppHelper
 
 from Foundation import NSObject
 
-from . import hotkey, onboarding, setup
+from . import host, hotkey, levels, meeting, onboarding, prompts, settings, setup, storage, threads
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -140,6 +141,42 @@ class _AppDelegate(NSObject):
         return True
 
 
+def _connect_host(app, widget, open_setup, fn=None):
+    """Wire the engine to the Swift app: announce where data lives, report each saved
+    dictation, and follow its commands. Quitting the app (stdin closes) quits the engine."""
+    quit_app = lambda: app.terminate_(None)
+    widget.on_saved = lambda path: host.send("saved", path=str(path))
+    widget.on_note_requested = lambda: host.send("open_note", start=True)
+    pushed = levels.PushedLevelSource()
+    widget.meeting_levels = pushed  # the app streams real levels while it records
+    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send)
+    widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
+    def reload_settings():
+        widget.reload_settings()
+        if fn is not None:
+            fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
+
+    host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
+                 "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
+                 "try_prompt": lambda **draft: try_prompt(widget.cleaner, **draft),
+                 "meeting_level": lambda level=0.0: pushed.push(level),
+                 "transcribe_chunk": worker.transcribe_chunk, "summarize": worker.summarize, "ask": worker.ask},
+                on_eof=quit_app)
+    host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH),
+              prompts_path=str(prompts.PROMPTS_PATH), default_prompts=prompts.defaults_payload())
+
+
+def try_prompt(cleaner, text="", system="", extra="", examples="", guard=True, start=threads.start_daemon):
+    """The Prompts page's Try it box: clean `text` with a draft prompt (not saved) on a worker
+    thread, and send back what the model wrote."""
+    def run():
+        draft = prompts.Prompts(system=system or prompts.Prompts().system, extra=extra,
+                                examples=prompts.parse_examples(examples), guard=bool(guard))
+        output, info = cleaner.clean(text, system=draft.full_system(), examples=draft.examples, guard=draft.guard)
+        host.send("tried", output=output, applied=info["applied"], rejected=info["rejected"], ms=info["ms"])
+    start(run, "try-prompt")
+
+
 def maintain_hotkey(fn):
     """Called every second: install the fn tap as soon as a permission allows it, and swap
     a listen-only tap for the active one once Accessibility is granted (no restart needed).
@@ -173,14 +210,19 @@ def _setup_flow(widget):
 
 def main():
     lock = _single_instance_lock()
+    hosted = host.hosted()  # run by the Swift app, which owns the Dock icon and main window
+    if hosted:
+        host.open_channel()  # before WidgetController starts loading the models
     _brand_process()
     app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyRegular)  # a Dock icon, like Wispr Flow
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory if hosted
+                             else NSApplicationActivationPolicyRegular)  # a Dock icon, like Wispr Flow
     icon = _app_icon()
     if icon is not None:
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
-    fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key)
+    fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
+                          trigger=widget.settings.hotkey, on_note=widget.request_note)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)
@@ -199,13 +241,16 @@ def main():
         window.show()
 
     _keepalive.append(add_setup_menu_item(status_item, open_setup))
-    menu_actions = _MenuActions.alloc().init()
-    menu_actions.open_setup = open_setup
-    app.setMainMenu_(_main_menu(menu_actions))
-    delegate = _AppDelegate.alloc().init()
-    delegate.on_reopen = open_setup  # TODO: the main window, once it exists
-    app.setDelegate_(delegate)
-    _keepalive.extend([menu_actions, delegate])
+    if hosted:
+        _connect_host(app, widget, open_setup, fn)
+    else:
+        menu_actions = _MenuActions.alloc().init()
+        menu_actions.open_setup = open_setup
+        app.setMainMenu_(_main_menu(menu_actions))
+        delegate = _AppDelegate.alloc().init()
+        delegate.on_reopen = open_setup
+        app.setDelegate_(delegate)
+        _keepalive.extend([menu_actions, delegate])
     if _setup_flow(widget).needed():
         open_setup()
 

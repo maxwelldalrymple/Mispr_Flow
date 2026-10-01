@@ -452,10 +452,12 @@ class TestHotkeyMaintenance:
 class TestDockApp:
     """Mispr Flow is a regular Dock app (like Wispr Flow): logo in the Dock, app menu, reopen."""
 
-    def test_is_a_regular_dock_app(self):
+    def test_is_a_regular_dock_app_unless_hosted(self):
         import inspect
         src = inspect.getsource(app.main)
-        assert "NSApplicationActivationPolicyRegular" in src and "Accessory" not in src
+        # Standalone: its own Dock icon. Hosted by the Swift app: that app owns the Dock icon.
+        assert "NSApplicationActivationPolicyAccessory if hosted" in src
+        assert "else NSApplicationActivationPolicyRegular" in src
 
     def test_process_is_named_mispr_flow(self, monkeypatch):
         info = {}

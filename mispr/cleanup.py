@@ -89,6 +89,15 @@ class Cleaner:
         self._llm = None
         self._ready = threading.Event()
         self._lock = threading.Lock()
+        # The prompt (see prompts.py; the app's Prompts page can change these at runtime).
+        self.system = SYSTEM_PROMPT
+        self.examples = EXAMPLES
+        self.guard = True
+
+    def configure(self, system, examples, guard):
+        """Use new instructions/examples from the next dictation on."""
+        with self._lock:
+            self.system, self.examples, self.guard = system, [tuple(p) for p in examples], guard
 
     def load_async(self):
         start_daemon(self._load, "cleanup-load")
@@ -113,17 +122,27 @@ class Cleaner:
                 self._llm.close()
                 self._llm = None
 
-    @staticmethod
-    def _messages(text):
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for raw, clean in EXAMPLES:
+    def _messages(self, text, system=None, examples=None):
+        messages = [{"role": "system", "content": self.system if system is None else system}]
+        for raw, clean in (self.examples if examples is None else examples):
             messages.append({"role": "user", "content": f"<dictation>{raw}</dictation>"})
             messages.append({"role": "assistant", "content": clean})
         messages.append({"role": "user", "content": f"<dictation>{text}</dictation>"})
         return messages
 
-    def clean(self, raw):
-        """Return (text, info). Falls back to `raw` on any failure or rejected output."""
+    def complete(self, messages, max_tokens=400, temperature=0.2):
+        """Free-form generation with the same model (meeting summaries and questions).
+        Returns the reply text, or None if the model isn't available."""
+        self._ready.wait()
+        if self._llm is None:
+            return None
+        with self._lock:
+            out = self._llm.create_chat_completion(messages, max_tokens=max_tokens, temperature=temperature)
+        return out["choices"][0]["message"]["content"]
+
+    def clean(self, raw, system=None, examples=None, guard=None):
+        """Return (text, info). Falls back to `raw` on any failure or rejected output.
+        system/examples/guard override the configured prompt (the app's Try it box)."""
         info = {"model": self.spec.filename, "applied": False, "ms": 0, "rejected": None}
         if not raw:
             return raw, info
@@ -133,14 +152,16 @@ class Cleaner:
             return raw, info
         started = self.clock()
         with self._lock:
+            guard = self.guard if guard is None else guard
             out = self._llm.create_chat_completion(
-                self._messages(raw),
-                max_tokens=len(raw.split()) * 2 + 24,
+                self._messages(raw, system, examples),
+                # Rewording prompts (guard off) can legitimately write more than was said.
+                max_tokens=len(raw.split()) * (2 if guard else 4) + (24 if guard else 96),
                 temperature=0,
             )
         cleaned = out["choices"][0]["message"]["content"].strip().strip('"')
         info["ms"] = round((self.clock() - started) * 1000)
-        info["rejected"] = check(raw, cleaned)
+        info["rejected"] = check(raw, cleaned) if guard else (None if cleaned else "empty")
         if info["rejected"]:
             return raw, info
         info["applied"] = True

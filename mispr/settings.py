@@ -2,7 +2,7 @@
 
 import json
 import sys
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 SETTINGS_PATH = Path.home() / "Library" / "Application Support" / "Mispr_Flow" / "settings.json"
@@ -15,6 +15,10 @@ class Settings:
     incognito: bool = False
     # LLM cleanup of transcripts (fillers, self-corrections, punctuation); off = raw Whisper text.
     cleanup: bool = True
+    # Sound cues (start, stop, paste...).
+    sounds: bool = True
+    # The dictation key; see hotkey.normalize_trigger. Default: fn.
+    hotkey: dict = field(default_factory=lambda: {"kind": "fn", "keycode": 63, "label": "fn"})
     # Set once the user finishes the first-run setup window.
     onboarded: bool = False
 

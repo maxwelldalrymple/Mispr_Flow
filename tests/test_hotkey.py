@@ -10,14 +10,15 @@ FLAGS_CHANGED, KEY_DOWN, KEY_UP = Quartz.kCGEventFlagsChanged, Quartz.kCGEventKe
 CMD = Quartz.kCGEventFlagMaskCommand
 
 
-def ev(keycode=0, flags=0):
-    return {"keycode": keycode, "flags": flags}
+def ev(keycode=0, flags=0, repeat=0):
+    return {"keycode": keycode, "flags": flags, "repeat": repeat}
 
 
 @pytest.fixture
 def fake_events(monkeypatch):
     enabled = []
-    monkeypatch.setattr(hotkey.Quartz, "CGEventGetIntegerValueField", lambda e, field: e["keycode"])
+    monkeypatch.setattr(hotkey.Quartz, "CGEventGetIntegerValueField",
+                        lambda e, field: e["repeat"] if field == Quartz.kCGKeyboardEventAutorepeat else e["keycode"])
     monkeypatch.setattr(hotkey.Quartz, "CGEventGetFlags", lambda e: e["flags"])
     monkeypatch.setattr(hotkey.Quartz, "CGEventTapEnable", lambda tap, on: enabled.append((tap, on)))
     return enabled
@@ -284,3 +285,113 @@ class TestInstall:
         m = FnMonitor(None, None, None)
         m._tap, m._source = "OLD", "SRC"
         assert m.upgrade() is False and m.active is False and m._tap == "LISTEN"
+
+
+# --- Custom dictation key (Settings > General > Shortcuts) ------------------------------
+
+RIGHT_OPTION, F5 = 61, 96
+
+
+class TestNormalizeTrigger:
+    @pytest.mark.parametrize("bad", [None, "fn", {}, {"kind": "modifier", "keycode": 12},
+                                     {"kind": "key", "keycode": GLOBE_KEYCODE}, {"kind": "key", "keycode": "x"},
+                                     {"kind": "chord", "keycode": 5}])
+    def test_malformed_means_fn(self, bad):
+        assert hotkey.normalize_trigger(bad) == hotkey.FN_TRIGGER
+
+    def test_valid_triggers_kept(self):
+        assert hotkey.normalize_trigger({"kind": "modifier", "keycode": RIGHT_OPTION, "label": "Right ⌥"}) == \
+            {"kind": "modifier", "keycode": RIGHT_OPTION, "label": "Right ⌥"}
+        assert hotkey.normalize_trigger({"kind": "key", "keycode": F5})["label"] == "key"
+
+
+class TestModifierTrigger:
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.set_trigger({"kind": "modifier", "keycode": RIGHT_OPTION, "label": "Right ⌥"})
+        return monitor
+
+    def test_press_and_release_swallowed(self, m):
+        assert cb(m, FLAGS_CHANGED, ev(RIGHT_OPTION, Quartz.kCGEventFlagMaskAlternate | 0x40)) is None
+        assert cb(m, FLAGS_CHANGED, ev(RIGHT_OPTION, 0)) is None
+        assert m.calls == ["down", "up"]
+
+    def test_left_option_passes_and_does_nothing(self, m):
+        event = ev(58, Quartz.kCGEventFlagMaskAlternate | 0x20)
+        assert cb(m, FLAGS_CHANGED, event) is event and m.calls == []
+
+    def test_fn_no_longer_dictates(self, m):
+        event = ev(63, FN_MASK)
+        assert cb(m, FLAGS_CHANGED, event) is event and m.calls == []
+
+    def test_globe_key_passes_when_fn_is_not_the_trigger(self, m):
+        event = ev(GLOBE_KEYCODE)
+        assert cb(m, KEY_DOWN, event) is event
+
+    def test_key_while_held_is_a_combo(self, m):
+        cb(m, FLAGS_CHANGED, ev(RIGHT_OPTION, 0x40))
+        cb(m, KEY_DOWN, ev(0))
+        assert m.calls == ["down", "combo"]
+
+
+class TestKeyTrigger:
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.set_trigger({"kind": "key", "keycode": F5, "label": "F5"})
+        return monitor
+
+    def test_press_hold_release(self, m):
+        assert cb(m, KEY_DOWN, ev(F5)) is None
+        assert cb(m, KEY_DOWN, ev(F5, repeat=1)) is None  # auto-repeat while held
+        assert cb(m, KEY_UP, ev(F5)) is None
+        assert m.calls == ["down", "up"]
+
+    def test_listen_only_passes_the_key(self, m):
+        m.active = False
+        event = ev(F5)
+        assert cb(m, KEY_DOWN, event) is event and m.calls == ["down"]
+
+    def test_other_key_while_held_is_a_combo(self, m):
+        cb(m, KEY_DOWN, ev(F5))
+        event = ev(0)
+        assert cb(m, KEY_DOWN, event) is event and m.calls == ["down", "combo"]
+
+    def test_fn_flag_ignored(self, m):
+        event = ev(63, FN_MASK)
+        assert cb(m, FLAGS_CHANGED, event) is event and m.calls == []
+
+
+class TestSetTrigger:
+    def test_switching_mid_press_releases(self, monitor):
+        cb(monitor, FLAGS_CHANGED, ev(63, FN_MASK))
+        monitor.set_trigger({"kind": "key", "keycode": F5})
+        assert monitor.calls == ["down", "up"] and not monitor.fn_down
+
+    def test_same_trigger_is_a_no_op(self, monitor):
+        cb(monitor, FLAGS_CHANGED, ev(63, FN_MASK))
+        monitor.set_trigger(hotkey.FN_TRIGGER)
+        assert monitor.calls == ["down"] and monitor.fn_down
+
+
+class TestNoteShortcut:
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.on_note = lambda: monitor.calls.append("note")
+        return monitor
+
+    def test_option_m_opens_a_note_and_is_swallowed(self, m):
+        assert cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate)) is None
+        assert cb(m, KEY_UP, ev(hotkey.KEY_M)) is None
+        assert m.calls == ["note"]
+
+    def test_plain_m_and_cmd_option_m_pass(self, m):
+        plain = ev(hotkey.KEY_M)
+        assert cb(m, KEY_DOWN, plain) is plain
+        cmd = ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate | CMD)
+        assert cb(m, KEY_DOWN, cmd) is cmd
+        assert "note" not in m.calls
+
+    def test_auto_repeat_opens_once(self, m):
+        cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate))
+        cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate, repeat=1))
+        assert m.calls == ["note"]

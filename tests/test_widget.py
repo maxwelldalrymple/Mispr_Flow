@@ -407,7 +407,7 @@ class TestSaving:
         controller.begin_handsfree()
         controller.finish()
         finish_transcription(controller)
-        assert saved_json(isolated_paths) == [] and controller.pasted == ["Hello world."]
+        assert saved_json(isolated_paths) == [] and controller.typed == ["Hello world."] and controller.pasted == []
 
     def test_cancelled_recording_saved_on_expiry(self, controller, speech, clock, isolated_paths):
         controller.recorder.audio_data = speech
@@ -810,14 +810,14 @@ class TestSoundCues:
 
     @pytest.mark.parametrize("target", ["yes", "unknown"])
     def test_pastes_unless_sure_there_is_no_text_box(self, controller, monkeypatch, target):
-        monkeypatch.setattr(W.context, "focused_text_target", lambda: target)
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))
         controller.begin_handsfree()
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
         assert controller.pasted == ["Hi."] and controller.copied == [] and controller.sounds.played[-1] == "paste"
 
     def test_no_text_box_copies_instead_with_error_sound(self, controller, monkeypatch, clock):
-        monkeypatch.setattr(W.context, "focused_text_target", lambda: W.context.NO)
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
         saved = []
         monkeypatch.setattr(controller, "_save", lambda status, text, **kw: saved.append((status, text)))
         controller.begin_handsfree()
@@ -1366,3 +1366,114 @@ def test_copied_notice_matches_golden_image(controller, clock, golden_image):
     _prepare_render(controller, W.IDLE)
     pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
     golden_image("widget_idle_copied_notice", pixels, rep)
+
+
+class TestHostHooks:
+    def test_saved_recordings_are_reported(self, controller, monkeypatch, tmp_path, clock, speech):
+        controller.recorder.audio_data = speech
+        reported = []
+        controller.on_saved = reported.append
+        monkeypatch.setattr(W.storage, "save_recording", lambda audio, **kw: tmp_path / "a.wav")
+        controller.begin_handsfree()
+        clock.advance(2)
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert reported == [tmp_path / "a.wav"]
+
+    def test_nothing_reported_in_incognito(self, controller, monkeypatch, clock, speech):
+        controller.recorder.audio_data = speech
+        reported = []
+        controller.on_saved = reported.append
+        controller.settings.incognito = True
+        controller.begin_handsfree()
+        clock.advance(2)
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert reported == []
+
+    def test_reload_settings_applies_sounds_switch(self, controller, monkeypatch):
+        monkeypatch.setattr(W.settings, "load", lambda: W.settings.Settings(sounds=False, cleanup=False))
+        controller.reload_settings()
+        assert controller.sounds.enabled is False and controller.settings.cleanup is False
+
+
+class TestNoteWindowHooks:
+    def test_note_button_starts_a_meeting_when_standalone(self, controller):
+        controller.set_state(W.HOVER)
+        click(controller, "note")
+        assert controller.state == W.MEETING
+
+    def test_option_m_toggles_the_meeting_when_standalone(self, controller, clock):
+        controller.request_note()
+        assert controller.state == W.MEETING
+        clock.advance(30)
+        controller.request_note()
+        assert controller.state == W.IDLE
+
+    def test_option_m_asks_the_app_from_any_state_when_hosted(self, controller):
+        asked = []
+        controller.on_note_requested = lambda: asked.append(True)
+        controller.state = W.MEETING
+        controller.request_note()
+        assert asked == [True] and controller.state == W.MEETING  # the app decides to stop
+
+    def test_note_button_asks_the_app_when_hosted(self, controller):
+        asked = []
+        controller.on_note_requested = lambda: asked.append(True)
+        controller.set_state(W.HOVER)
+        click(controller, "note")
+        assert asked == [True] and controller.state == W.IDLE and controller.sounds.played == []
+
+    def test_meeting_changes_are_reported(self, controller, clock):
+        seen = []
+        controller.on_meeting_changed = seen.append
+        controller.begin_meeting()
+        clock.advance(30)
+        controller.stop_meeting()
+        assert seen == [True, False]
+
+    @pytest.mark.parametrize("state", [W.HOLD, W.HANDSFREE, W.PROCESSING, W.MEETING, W.SETUP])
+    def test_start_meeting_ignored_while_busy(self, controller, state):
+        controller.state = state
+        controller.begin_meeting()
+        assert controller.state == state and controller.sounds.played == []
+
+    def test_stop_meeting_ignored_when_not_in_one(self, controller):
+        seen = []
+        controller.on_meeting_changed = seen.append
+        controller.stop_meeting()
+        assert controller.state == W.IDLE and seen == [] and controller.sounds.played == []
+
+
+class TestIncognitoNeverUsesTheClipboard:
+    def deliver(self, controller, monkeypatch, target):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))
+        controller.settings.incognito = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Secret.", "secret", None, 1.0, "finished")
+
+    @pytest.mark.parametrize("target", ["yes", "unknown"])
+    def test_types_instead_of_pasting(self, controller, monkeypatch, target):
+        self.deliver(controller, monkeypatch, target)
+        assert controller.typed == ["Secret."] and controller.pasted == [] and controller.copied == []
+        assert controller.sounds.played[-1] == "paste"
+
+    def test_no_text_box_drops_the_words(self, controller, monkeypatch):
+        self.deliver(controller, monkeypatch, "no")
+        assert controller.typed == controller.pasted == controller.copied == []
+        assert controller.sounds.played[-1] == "error"
+        assert controller.notice[0] == "No text box · Incognito, nothing copied"
+
+    def test_normal_mode_still_pastes(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and controller.typed == []
+
+
+def test_incognito_outline_matches_golden_image(controller, clock, golden_image):
+    controller.settings.incognito = True
+    _prepare_render(controller, W.HOLD)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_hold_incognito", pixels, rep)
