@@ -2,11 +2,21 @@ import AVFoundation
 import MisprCore
 import ScreenCaptureKit
 
+/// What NoteModel needs from a recorder (tests use a fake that emits chunks on demand).
+protocol MeetingRecording: AnyObject {
+    var onChunk: (_ stream: String, _ start: Double, _ samples: [Float]) -> Void { get set }
+    var onLevel: (Float) -> Void { get set }
+    var onError: (String) -> Void { get set }
+    func start(systemAudio: Bool, saveTo: URL?) async throws -> String?
+    func stop()
+    func inProgress() -> [(stream: String, start: Double, samples: [Float])]
+}
+
 /// Records a meeting from two sources at once: the microphone ("you") and the Mac's sound
 /// output ("them": the other people on a call, via ScreenCaptureKit, no video). Each stream
 /// is converted to 16 kHz mono, cut into chunks at pauses, and handed to `onChunk`; the full
 /// streams can also be saved as WAV files.
-final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
+final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, MeetingRecording {
     var onChunk: (_ stream: String, _ start: Double, _ samples: [Float]) -> Void = { _, _, _ in }
     var onLevel: (Float) -> Void = { _ in }
     var onError: (String) -> Void = { _ in }
@@ -115,6 +125,11 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     // MARK: - Shared
+
+    /// Feed 16 kHz samples as if captured (tests; the capture callbacks use `take`).
+    func ingest(_ stream: String, _ samples: [Float]) {
+        queue.sync { take(stream, samples) }
+    }
 
     /// On `queue`: save, chunk, and meter one batch of 16 kHz samples.
     private func take(_ stream: String, _ samples: [Float]) {

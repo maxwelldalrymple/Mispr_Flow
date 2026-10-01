@@ -16,11 +16,15 @@ final class NoteWindowController {
         self.model = model
     }
 
+    /// Docked to the right edge of the visible screen area, full height, with a margin.
+    static func dockedFrame(in visible: NSRect) -> NSRect {
+        NSRect(x: visible.maxX - width - margin, y: visible.minY + margin, width: width, height: visible.height - 2 * margin)
+    }
+
     func show() {
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
         let visible = screen.visibleFrame
-        let target = NSRect(x: visible.maxX - Self.width - Self.margin, y: visible.minY + Self.margin,
-                            width: Self.width, height: visible.height - 2 * Self.margin)
+        let target = Self.dockedFrame(in: visible)
         let window = self.window ?? makeWindow()
         self.window = window
         model.note.refreshPermission()
@@ -113,7 +117,16 @@ final class NoteModel: ObservableObject {
     var onSaved: () -> Void = {}
 
     private(set) var meetingID = Meeting.newID()
-    private var recorder: MeetingRecorder?
+    private var recorder: MeetingRecording?
+    /// Tests swap these for fakes (no microphone, no real system checks).
+    var makeRecorder: () -> MeetingRecording = { MeetingRecorder() }
+    var probe: () -> SystemSnapshot = { SystemProbe.snapshot() }
+    var permissionCheck: () -> Bool = { CGPreflightScreenCaptureAccess() }
+    /// Asks macOS (shows its prompt, adds the app to the list); tests swap in a fake.
+    var permissionRequest: () -> Bool = { CGRequestScreenCaptureAccess() }
+    var openSettingsPane: () -> Void = {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+    }
     /// Seconds already recorded before this stretch (Resume continues the same note).
     private var offsetBase = 0.0
     private var stretchStart: Date?
@@ -132,17 +145,15 @@ final class NoteModel: ObservableObject {
     // MARK: - Permission
 
     func refreshPermission() {
-        screenAudioAllowed = CGPreflightScreenCaptureAccess()
+        screenAudioAllowed = permissionCheck()
     }
 
     /// "Turn on": ask macOS (adds Mispr Flow to the list), open the settings pane, and
     /// watch for the switch so the card disappears as soon as it's on.
-    func requestPermission() {
-        if !CGRequestScreenCaptureAccess() {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-        }
+    func requestPermission(every interval: TimeInterval = 1) {
+        if !permissionRequest() { openSettingsPane() }
         poll?.invalidate()
-        poll = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+        poll = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] timer in
             guard let self else { return timer.invalidate() }
             self.refreshPermission()
             if self.screenAudioAllowed { timer.invalidate() }
@@ -163,10 +174,10 @@ final class NoteModel: ObservableObject {
         detectTimer = nil
     }
 
-    private func detect() {
+    func detect() {
         guard phase == .ready || phase == .done else { return }  // fixed once recording
         DispatchQueue.global(qos: .utility).async {
-            let found = MeetingDetector.detect(SystemProbe.snapshot())
+            let found = MeetingDetector.detect(self.probe())
             DispatchQueue.main.async {
                 guard self.phase == .ready || self.phase == .done else { return }
                 self.detection = found
@@ -196,7 +207,7 @@ final class NoteModel: ObservableObject {
         let audioDir = incognito() ? nil : meetingsDir()?.appendingPathComponent(String(meetingID.prefix(10)))
             .appendingPathComponent(meetingID)
         try? FileManager.default.createDirectory(at: chunkDir, withIntermediateDirectories: true)
-        let recorder = MeetingRecorder()
+        let recorder = makeRecorder()
         recorder.onChunk = { [weak self] stream, start, samples in self?.chunk(stream, start, samples) }
         recorder.onLevel = { [weak self] level in self?.engine?.send(.meetingLevel, ["level": Double(level)]) }
         recorder.onError = { [weak self] message in DispatchQueue.main.async { self?.error = message } }
@@ -258,7 +269,7 @@ final class NoteModel: ObservableObject {
     }
 
     /// Every 0.8 s: send each stream's in-progress phrase for live text (only if it grew).
-    private func preview() {
+    func preview() {
         guard recording, let recorder else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             for current in recorder.inProgress() {
@@ -387,7 +398,7 @@ struct NoteView: View {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 if note.needsPermission && !setupDismissed && note.phase != .recording {
                     Color.black.opacity(0.18).ignoresSafeArea()
-                    SetupCard(back: { setupDismissed = true }, turnOn: note.requestPermission)
+                    SetupCard(back: { setupDismissed = true }, turnOn: { note.requestPermission() })
                         .padding(.horizontal, 18).padding(.top, 2)
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
@@ -611,30 +622,9 @@ struct NoteView: View {
         }
     }
 
-    private var elapsed: String {
-        let s = Int(note.duration)
-        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
-    }
-
-    private var matchCount: Int {
-        let q = note.search.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return 0 }
-        return note.transcript.lines.reduce(0) { $0 + $1.text.lowercased().components(separatedBy: q.lowercased()).count - 1 }
-    }
-
-    /// The text with search matches highlighted.
-    private func highlighted(_ text: String) -> Text {
-        let q = note.search.trimmingCharacters(in: .whitespaces)
-        var attributed = AttributedString(text)
-        if !q.isEmpty {
-            var searchRange = attributed.startIndex..<attributed.endIndex
-            while let range = attributed[searchRange].range(of: q, options: .caseInsensitive) {
-                attributed[range].backgroundColor = .orange.opacity(0.55)
-                searchRange = range.upperBound..<attributed.endIndex
-            }
-        }
-        return Text(attributed)
-    }
+    private var elapsed: String { TranscriptText.elapsed(note.duration) }
+    private var matchCount: Int { TranscriptText.matchCount(note.transcript.lines, note.search) }
+    private func highlighted(_ text: String) -> Text { Text(TranscriptText.highlight(text, note.search)) }
 
     // MARK: - Summary
 
@@ -904,5 +894,34 @@ struct SourceChip: View {
 
     private var helpText: String {
         note.chosenSource == nil ? note.detection.evidence : "You chose this. Pick Detect automatically to go back."
+    }
+}
+
+/// Text helpers for the live transcript: the timer, search matches, and highlighting.
+enum TranscriptText {
+    /// "0:07", "12:30", "1:02:03".
+    static func elapsed(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    /// How many times `query` appears across the lines (case-insensitive).
+    static func matchCount(_ lines: [LiveTranscript.Line], _ query: String) -> Int {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return 0 }
+        return lines.reduce(0) { $0 + $1.text.lowercased().components(separatedBy: q).count - 1 }
+    }
+
+    /// The text with every match of `query` given an orange background.
+    static func highlight(_ text: String, _ query: String) -> AttributedString {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        var attributed = AttributedString(text)
+        guard !q.isEmpty else { return attributed }
+        var searchRange = attributed.startIndex..<attributed.endIndex
+        while let range = attributed[searchRange].range(of: q, options: .caseInsensitive) {
+            attributed[range].backgroundColor = .orange.opacity(0.55)
+            searchRange = range.upperBound..<attributed.endIndex
+        }
+        return attributed
     }
 }

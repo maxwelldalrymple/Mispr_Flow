@@ -5,12 +5,19 @@ import SwiftUI
 /// meeting opens its summary, transcript, insights, and your own notes.
 struct NotesView: View {
     @EnvironmentObject var model: AppModel
-    @State private var tab = ProcessInfo.processInfo.environment["MISPR_PEOPLE"] == nil ? 0 : 1
+    @State private var tab: Int
     @State private var open: Meeting?
     @State private var query = ""
     // Development: MISPR_PEOPLE="Priya Shah,Jordan Lee" opens People with them selected (screenshots).
     @State private var selectedPeople: Set<String> = Set((ProcessInfo.processInfo.environment["MISPR_PEOPLE"] ?? "")
         .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+
+    /// `initialTab`: 0 notes, 1 people, 2 insights (tests; MISPR_PEOPLE opens People).
+    init(initialTab: Int? = nil, people: Set<String>? = nil) {
+        let env = ProcessInfo.processInfo.environment["MISPR_PEOPLE"]
+        _tab = State(initialValue: initialTab ?? (env == nil ? 0 : 1))
+        if let people { _selectedPeople = State(initialValue: people) }
+    }
 
     var body: some View {
         if let open {
@@ -56,9 +63,12 @@ struct NotesView: View {
 
     /// Open someone's page from anywhere in Notetaker.
     private func showPerson(_ name: String) {
-        open = nil
-        selectedPeople = [name]
-        tab = 1
+        (tab, open, selectedPeople) = Self.personPage(name)
+    }
+
+    /// Where clicking a person goes: the People tab, with only them selected, no meeting open.
+    static func personPage(_ name: String) -> (tab: Int, open: Meeting?, selected: Set<String>) {
+        (1, nil, [name])
     }
 
     private func tabButton(_ title: String, _ index: Int) -> some View {
@@ -242,7 +252,14 @@ struct MeetingDetailView: View {
     let meeting: Meeting
     let back: () -> Void
     var person: (String) -> Void = { _ in }
-    @State private var tab = "Summary"
+    @State private var tab: String
+
+    init(meeting: Meeting, back: @escaping () -> Void, person: @escaping (String) -> Void = { _ in }, initialTab: String = "Summary") {
+        self.meeting = meeting
+        self.back = back
+        self.person = person
+        _tab = State(initialValue: initialTab)
+    }
     private var insights: MeetingInsights { MeetingInsights(meeting) }
 
     var body: some View {

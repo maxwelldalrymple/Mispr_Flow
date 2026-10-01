@@ -7,10 +7,13 @@ import Foundation
 public struct EngineConfig: Equatable {
     public var python: URL
     public var projectRoot: URL
+    /// What to run with `python` (tests run a stand-in script instead of the engine).
+    public var arguments = ["-u", "-m", "mispr"]
 
-    public init(python: URL, projectRoot: URL) {
+    public init(python: URL, projectRoot: URL, arguments: [String]? = nil) {
         self.python = python
         self.projectRoot = projectRoot
+        if let arguments { self.arguments = arguments }
     }
 
     public static func resolve(info: [String: Any], env: [String: String]) -> EngineConfig? {
@@ -74,7 +77,7 @@ public final class Engine: ObservableObject {
         state = .starting
         let process = Process()
         process.executableURL = config.python
-        process.arguments = ["-u", "-m", "mispr"]
+        process.arguments = config.arguments
         process.currentDirectoryURL = config.projectRoot
         var env = ProcessInfo.processInfo.environment
         env["MISPR_HOSTED"] = "1"
@@ -102,7 +105,11 @@ public final class Engine: ObservableObject {
         }
     }
 
+    /// Tests: receives every command instead of the engine process.
+    public var sendHook: ((EngineCommand, [String: Any]) -> Void)?
+
     public func send(_ command: EngineCommand, _ args: [String: Any] = [:]) {
+        if let sendHook { return sendHook(command, args) }
         guard let input, process?.isRunning == true else { return }
         try? input.write(contentsOf: Data(command.line(args).utf8))
     }

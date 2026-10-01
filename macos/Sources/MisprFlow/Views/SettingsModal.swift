@@ -354,30 +354,49 @@ struct KeyRecorder: View {
     }
 
     private func handle(_ event: NSEvent) {
-        let code = Int(event.keyCode)
-        if event.type == .keyDown {
-            if code == 53 { stop(); message = nil; return }  // Esc
-            guard let key = DictationKey.key(keycode: code, characters: event.charactersIgnoringModifiers) else {
-                message = "That key is needed for hands-free or by macOS. Pick another."
-                return
-            }
+        switch Self.pick(keyDown: event.type == .keyDown, keyCode: Int(event.keyCode),
+                         characters: event.type == .keyDown ? event.charactersIgnoringModifiers : nil, flags: event.modifierFlags) {
+        case .cancel:
+            stop()
+            message = nil
+        case let .refuse(reason):
+            message = reason
+        case let .choose(key, warning):
             choose(key)
-            if key.typesCharacters { message = "“\(key.label)” won't type while Mispr Flow is running." }
-        } else if let key = DictationKey.modifier(keycode: code), isPress(event, keycode: code) {
-            choose(key)
+            message = warning
+        case .ignore:
+            break
         }
     }
 
-    /// flagsChanged fires on press and release; only a press picks the key.
-    private func isPress(_ event: NSEvent, keycode: Int) -> Bool {
-        let flag: NSEvent.ModifierFlags = switch keycode {
+    enum Pick: Equatable {
+        case cancel, ignore
+        case refuse(String)
+        case choose(DictationKey, warning: String?)
+    }
+
+    /// What a key event means while picking: Esc cancels, blocked keys are refused, a modifier
+    /// counts on press (flagsChanged also fires on release), and a typing key comes with a warning.
+    static func pick(keyDown: Bool, keyCode: Int, characters: String?, flags: NSEvent.ModifierFlags) -> Pick {
+        if keyDown {
+            if keyCode == 53 { return .cancel }
+            guard let key = DictationKey.key(keycode: keyCode, characters: characters) else {
+                return .refuse("That key is needed for hands-free or by macOS. Pick another.")
+            }
+            return .choose(key, warning: key.typesCharacters ? "“\(key.label)” won't type while Mispr Flow is running." : nil)
+        }
+        guard let key = DictationKey.modifier(keycode: keyCode), flags.contains(modifierFlag(keyCode)) else { return .ignore }
+        return .choose(key, warning: nil)
+    }
+
+    static func modifierFlag(_ keyCode: Int) -> NSEvent.ModifierFlags {
+        switch keyCode {
         case 59, 62: .control
         case 56, 60: .shift
         case 58, 61: .option
         case 54, 55: .command
         default: .function
         }
-        return event.modifierFlags.contains(flag)
     }
 
     private func choose(_ key: DictationKey) {

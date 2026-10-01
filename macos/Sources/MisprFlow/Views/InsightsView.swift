@@ -4,7 +4,12 @@ import SwiftUI
 
 struct InsightsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var tab = ProcessInfo.processInfo.environment["MISPR_PAGE"] == "Voice" ? 1 : 0  // dev screenshots
+    @State private var tab: Int
+
+    /// `initialTab`: 0 usage, 1 your voice (tests and MISPR_PAGE=Voice screenshots).
+    init(initialTab: Int? = nil) {
+        _tab = State(initialValue: initialTab ?? (ProcessInfo.processInfo.environment["MISPR_PAGE"] == "Voice" ? 1 : 0))
+    }
 
     var body: some View {
         ScrollView {
@@ -323,12 +328,17 @@ struct FlowLayout: Layout {
         }
     }
 
-    private struct Row { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+    struct Row: Equatable { var items: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
 
     private func arrange(width: CGFloat, subviews: Subviews) -> [Row] {
+        arrange(width: width, sizes: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    /// Which items go on which line, given each item's size.
+    func arrange(width: CGFloat, sizes: [CGSize]) -> [Row] {
         var rows = [Row()]
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+        for index in sizes.indices {
+            let size = sizes[index]
             if !rows[rows.count - 1].items.isEmpty && rows[rows.count - 1].width + spacing + size.width > width {
                 rows.append(Row())
             }
@@ -426,7 +436,7 @@ struct MoreInsightsView: View {
                 fact("trophy", more.biggestDay.map { $0.words.formatted() } ?? "–", "Biggest day",
                      more.biggestDay.map { $0.day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()) } ?? "No dictations yet.")
                 fact("hare", more.fastest.map { "\($0.wpm) wpm" } ?? "–", "Fastest dictation",
-                     more.fastest.map { "“\(snippet($0.text))”" } ?? "Needs a dictation of 10+ words.")
+                     more.fastest.map { "“\(Self.snippet($0.text))”" } ?? "Needs a dictation of 10+ words.")
                 fact("text.alignleft", more.longest.map { "\($0.words) words" } ?? "–", "Longest dictation",
                      more.longest.map { "\(Int($0.seconds.rounded())) seconds without stopping." } ?? "No dictations yet.")
                 fact("quote.bubble", more.catchphrase.map { "“\($0)”" } ?? "–", "Your catchphrase",
@@ -444,7 +454,8 @@ struct MoreInsightsView: View {
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : minutes > 0 ? "\(minutes) min" : "\(Int(more.talkSeconds)) s"
     }
 
-    private func snippet(_ text: String) -> String {
+    /// A long dictation shortened for a card: 57 characters and an ellipsis.
+    static func snippet(_ text: String) -> String {
         text.count > 60 ? String(text.prefix(57)) + "…" : text
     }
 

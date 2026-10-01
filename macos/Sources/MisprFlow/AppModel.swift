@@ -33,16 +33,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var meetings: [Meeting] = []
     @Published private(set) var settingsError: String?
     let note = NoteModel()
-    let profile = Profile()
+    let profile: Profile
     @Published var settingsSection: SettingsModal.Section = .profile
     /// Set by AppDelegate: shows the note side window.
     var openNote: () -> Void = {}
     private var cancellables: Set<AnyCancellable> = []
 
-    init() {
+    /// Tests pass their own engine (no process) and profile (scratch preferences).
+    init(engine injected: Engine? = nil, profile customProfile: Profile? = nil) {
         let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Mispr Flow/engine.log")
-        engine = Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment),
-                        logURL: logs)
+        self.engine = injected ?? Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment),
+                                       logURL: logs)
+        self.profile = customProfile ?? Profile()
         engine.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.$recordingsDir.compactMap { $0 }.sink { [weak self] _ in
             DispatchQueue.main.async { self?.reloadRecordings() }
