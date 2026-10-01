@@ -348,3 +348,23 @@ class TestSpotlightAndAccess:
         finally:
             locked.chmod(0o600)
         assert apps.full_disk_access(tmp_path / "missing") is True
+
+
+class TestSystemHelpersSafely:
+    """Window, tab, quit and open helpers, run where they can't change anything."""
+
+    NO_WINDOWS = 999_999  # no such process: nothing to find or change
+
+    def test_window_helpers_answer_no_window(self):
+        assert apps._window(self.NO_WINDOWS) is None
+        assert apps.window_action(self.NO_WINDOWS, "close") is False
+        assert apps.window_action(self.NO_WINDOWS, "frame", (0, 0, 100, 100)) is False
+        assert apps.mute_tab(self.NO_WINDOWS) is False
+
+    def test_quit_needs_a_real_app(self):
+        assert apps.quit_app(self.NO_WINDOWS) is False
+
+    def test_open_path_uses_open(self):
+        ran = []
+        apps.open_path("/Users/me/Docs", run=ran.append)
+        assert ran == [["open", "/Users/me/Docs"]]
