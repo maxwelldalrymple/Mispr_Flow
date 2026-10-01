@@ -109,7 +109,7 @@
   },
   "idle": {
     "bg": {
-      "fill": 0.35,
+      "fill": 0.6,
       "radius": 4,
       "rect": [
         220.0,
@@ -117,7 +117,7 @@
         40,
         8
       ],
-      "stroke": 0.5
+      "stroke": 0.35
     },
     "elems": {},
     "interactive": []

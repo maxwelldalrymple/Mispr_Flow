@@ -139,7 +139,7 @@ class Layout:
 
 def layout(state):
     if state == IDLE:
-        return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.35, 0.5))
+        return Layout(Shape(Rect.centered(CX, BASE, 40, 8), 4, 0.6, 0.35))  # darker, softer outline
     if state == HOVER:
         # Taller than the recording pills and lifted off the Dock, so they're easy to hit.
         h, bottom, gap = 36, 12, 5
