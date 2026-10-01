@@ -167,8 +167,9 @@ class TestSound:
         ("volume 40%", ("volume", 40)), ("set volume to thirty percent", ("volume", 30)),
         ("mute", ("volume", "mute")), ("unmute the sound", ("volume", "unmute")),
         ("Mute mic.", ("mic", True)), ("unmute my microphone", ("mic", False)),
-        ("mute tab", ("mute_tab", None)), ("mute this tab in chrome", ("mute_tab", "chrome")),
-        ("mute Spotify", ("mute_app", "spotify")),
+        ("mute tab", ("mute_tab", None, True)), ("mute this tab in chrome", ("mute_tab", "chrome", True)),
+        ("unmute tab", ("mute_tab", None, False)), ("unmute the site in chrome", ("mute_tab", "chrome", False)),
+        ("mute Spotify", ("mute_app", "spotify", True)), ("unmute spotify", ("mute_app", "spotify", False)),
     ])
     def test_commands(self, said, expected):
         assert apps.parse(said) == expected

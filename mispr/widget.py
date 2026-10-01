@@ -648,14 +648,17 @@ class WidgetController:
                 return self._switch_done("Mic on")
             return self._switch_done("Mic already " + ("muted" if command[1] else "on"))
         if kind in ("mute_tab", "mute_app"):
-            name = command[1]
+            name, mute = command[1], command[2]
             hit = find(name) if name else None
             if name and hit is None:
                 return self._switch_failed(f"No app called “{name}”")
             pid = apps.pid_for(hit[1]) if hit else apps.frontmost_pid()
             label = hit[0] if hit else "this tab"
-            if pid and apps.mute_tab(pid):
-                return self._switch_done(f"Muted / unmuted {label}")
+            done = apps.mute_tab(pid, mute) if pid else False
+            if done:
+                return self._switch_done(f"{'Muted' if mute else 'Unmuted'} {label}")
+            if done is None:
+                return self._switch_done(f"{label[0].upper() + label[1:]} is already {'muted' if mute else 'unmuted'}")
             if kind == "mute_app":
                 return self._switch_failed("macOS can't mute one app. Say “pause”, or “mute tab” in a browser")
             return self._switch_failed("No tab to mute here")

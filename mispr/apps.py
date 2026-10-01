@@ -85,8 +85,9 @@ _SOUND = (
     (re.compile(r"^(?:set\s+)?volume\s+(?:to\s+)?(?P<n>\d{1,3})(?:\s*percent)?$"), lambda m: ("volume", min(100, int(m["n"])))),
     (re.compile(r"^(?P<un>un)?mute\s+(?:my\s+|the\s+)?(?:mic|microphone)$"), lambda m: ("mic", not m["un"])),
     (re.compile(r"^(?P<un>un)?mute(?:\s+(?:the\s+)?(?:sound|volume|audio|speakers?|computer|mac))?$"), lambda m: ("volume", "unmute" if m["un"] else "mute")),
-    (re.compile(r"^(?:un)?mute\s+(?:this\s+|the\s+)?(?:tab|site)(?:\s+(?:in|on)\s+(?P<app>.+))?$"), lambda m: ("mute_tab", m["app"])),
-    (re.compile(r"^(?:un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"])),
+    (re.compile(r"^(?P<un>un)?mute\s+(?:this\s+|the\s+)?(?:tab|site)(?:\s+(?:in|on)\s+(?P<app>.+))?$"),
+     lambda m: ("mute_tab", m["app"], not m["un"])),
+    (re.compile(r"^(?P<un>un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"], not m["un"])),
 )
 
 MEDIA_KEYS = {"play": 16, "next": 17, "previous": 18}  # NX_KEYTYPE_PLAY / NEXT / PREVIOUS
@@ -133,8 +134,9 @@ def set_mic_level(level, run=None):
     _osascript(f"set volume input volume {int(level)}", run)
 
 
-def mute_tab(pid):
-    """Chrome-style browsers: the selected tab's own menu has "Mute site"/"Unmute site". True if pressed."""
+def mute_tab(pid, mute=True):
+    """Chrome-style browsers: press "Mute site" (or "Unmute site") in the selected tab's menu.
+    True if done, None if it was already that way (the other item is there), False if no tab menu."""
     import ApplicationServices as AS
     def attr(el, name):
         err, v = AS.AXUIElementCopyAttributeValue(el, name, None)
@@ -154,9 +156,17 @@ def mute_tab(pid):
                and attr(attr(e, "AXParent"), "AXRole") == "AXTabGroup")
     if tab is None or AS.AXUIElementPerformAction(tab, "AXShowMenu") != 0:
         return False
-    menu = find(AS.AXUIElementCreateApplication(pid), lambda e: attr(e, "AXRole") == "AXMenuItem"
-                and str(attr(e, "AXTitle") or "").lower() in ("mute site", "unmute site", "mute tab", "unmute tab"))
-    return menu is not None and AS.AXUIElementPerformAction(menu, "AXPress") == 0
+    wanted = ("mute site", "mute tab") if mute else ("unmute site", "unmute tab")
+    other = ("unmute site", "unmute tab") if mute else ("mute site", "mute tab")
+    root = AS.AXUIElementCreateApplication(pid)
+    title = lambda e: str(attr(e, "AXTitle") or "").lower()
+    item = find(root, lambda e: attr(e, "AXRole") == "AXMenuItem" and title(e) in wanted)
+    if item is not None:
+        return AS.AXUIElementPerformAction(item, "AXPress") == 0
+    if find(root, lambda e: attr(e, "AXRole") == "AXMenuItem" and title(e) in other) is not None:
+        AS.AXUIElementPerformAction(tab, "AXCancel")  # close the menu again
+        return None
+    return False
 
 
 # Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).

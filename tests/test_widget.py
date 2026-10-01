@@ -1639,9 +1639,22 @@ class TestAppSwitcher:
 
     def test_mute_tab_and_mute_app(self, controller, clock, fronted, monkeypatch, windows):
         tabs = []
-        monkeypatch.setattr(W.apps, "mute_tab", lambda pid: tabs.append(pid) or pid == 11)
+        state = {"muted": False}
+        def mute_tab(pid, mute):
+            tabs.append((pid, mute))
+            if pid != 11:
+                return False
+            if state["muted"] == mute:
+                return None  # already that way
+            state["muted"] = mute
+            return True
+        monkeypatch.setattr(W.apps, "mute_tab", mute_tab)
         self.say(controller, clock, "mute tab in chrome")
-        assert tabs == [11] and controller.notice[0] == "Muted / unmuted Google Chrome"
+        assert controller.notice[0] == "Muted Google Chrome"
+        self.say(controller, clock, "mute tab in chrome")
+        assert controller.notice[0] == "Google Chrome is already muted"  # never toggles back by mistake
+        self.say(controller, clock, "unmute tab in chrome")
+        assert controller.notice[0] == "Unmuted Google Chrome" and tabs[-1] == (11, False)
         self.say(controller, clock, "mute terminal")
         assert "can't mute one app" in controller.notice[0]
 
