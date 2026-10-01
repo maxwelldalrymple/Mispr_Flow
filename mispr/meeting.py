@@ -50,8 +50,40 @@ class VoiceClusters:
     SAME_SPEAKER = 0.93  # cosine similarity above which two chunks are one voice
     MAX_SPEAKERS = 8
 
+    # Typical speaking pitch: men ~85-155 Hz, women ~165-255 Hz. In between, or no clear
+    # pitch (music, noise, a dog), the voice is just "person".
+    MALE_MAX, FEMALE_MIN = 155.0, 168.0
+
     def __init__(self):
-        self.centroids, self.counts = [], []
+        self.centroids, self.counts, self.pitches = [], [], []
+
+    @staticmethod
+    def pitch(audio, rate=16_000):
+        """Median fundamental frequency (Hz) of the voiced frames, or None."""
+        frame = 1024
+        if len(audio) < frame * 2:
+            return None
+        found = []
+        for start in range(0, len(audio) - frame, frame // 2):
+            x = audio[start:start + frame]
+            x = x - x.mean()
+            energy = float(x @ x)
+            if energy < 1e-4:
+                continue
+            ac = np.correlate(x, x, "full")[frame - 1:] / energy
+            lo, hi = int(rate / 300), int(rate / 70)  # 70-300 Hz
+            lag = lo + int(np.argmax(ac[lo:hi]))
+            if ac[lag] > 0.45:  # clearly periodic: a voice
+                found.append(rate / lag)
+        return float(np.median(found)) if len(found) >= 3 else None
+
+    def voice(self, speaker):
+        """"male", "female", or "person" for a 1-based speaker number."""
+        values = self.pitches[speaker - 1] if 0 < speaker <= len(self.pitches) else []
+        if len(values) == 0:
+            return "person"
+        f0 = float(np.median(values))
+        return "male" if f0 <= self.MALE_MAX else "female" if f0 >= self.FEMALE_MIN else "person"
 
     @classmethod
     def signature(cls, audio, rate=16_000):
@@ -80,6 +112,15 @@ class VoiceClusters:
 
     def assign(self, audio):
         """1-based speaker number for this chunk (1 when the voice can't be measured)."""
+        speaker = self._assign(audio)
+        f0 = self.pitch(audio)
+        while len(self.pitches) < speaker:
+            self.pitches.append([])
+        if f0 is not None:
+            self.pitches[speaker - 1].append(f0)
+        return speaker
+
+    def _assign(self, audio):
         sig = self.signature(audio)
         if sig is None:
             return 1 if not self.centroids else int(np.argmax(self.counts)) + 1
@@ -142,16 +183,18 @@ class MeetingWorker:
 
     def transcribe_chunk(self, id="", path="", stream="them", offset=0.0, delete=True):
         def job():
-            text, speaker = "", 0
+            text, speaker, voice = "", 0, "person"
             try:
                 audio = read_wav(path)
                 text = self.transcriber.transcribe(audio)
                 if text and stream == "them":
-                    speaker = self._voices.setdefault(id, VoiceClusters()).assign(audio)
+                    voices = self._voices.setdefault(id, VoiceClusters())
+                    speaker = voices.assign(audio)
+                    voice = voices.voice(speaker)
             finally:
                 if delete:
                     Path(path).unlink(missing_ok=True)
-                self.send("chunk_text", id=id, stream=stream, offset=offset, text=text, speaker=speaker)
+                self.send("chunk_text", id=id, stream=stream, offset=offset, text=text, speaker=speaker, voice=voice)
         self._jobs.put(job)
 
     def summarize(self, id="", lines=()):

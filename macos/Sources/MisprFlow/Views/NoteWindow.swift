@@ -253,9 +253,9 @@ final class NoteModel: ObservableObject {
 
     func handle(_ event: EngineEvent) {
         switch event {
-        case let .chunkText(id, stream, speaker, offset, text) where id == meetingID:
+        case let .chunkText(id, stream, speaker, offset, text, voice) where id == meetingID:
             pendingChunks = max(0, pendingChunks - 1)
-            transcript.add(stream: stream, speaker: speaker, offset: offset, text: text)
+            transcript.add(stream: stream, speaker: speaker, offset: offset, text: text, voice: voice)
         case let .summary(id, summary, suggested) where id == meetingID:
             summarizing = false
             self.summary = summary

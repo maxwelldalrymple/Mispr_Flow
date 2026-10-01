@@ -19,8 +19,8 @@ final class EngineProtocolTests: XCTestCase {
     func testNoteAndMeetingEvents() {
         XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note"}"#), .openNote(start: false))
         XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note", "start": true}"#), .openNote(start: true))
-        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "chunk_text", "id": "m", "stream": "them", "speaker": 2, "offset": 3.5, "text": "Hi."}"#),
-                       .chunkText(meeting: "m", stream: "them", speaker: 2, offset: 3.5, text: "Hi."))
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "chunk_text", "id": "m", "stream": "them", "speaker": 2, "offset": 3.5, "text": "Hi.", "voice": "female"}"#),
+                       .chunkText(meeting: "m", stream: "them", speaker: 2, offset: 3.5, text: "Hi.", voice: "female"))
         let summary = EngineEvent.parse(#"@mispr {"event": "summary", "id": "m", "summary": {"title": "Plan", "overview": "O", "decisions": ["D"], "action_items": [{"owner": "You", "task": "T", "due": ""}], "open_questions": []}}"#)
         XCTAssertEqual(summary, .summary(meeting: "m", summary: Meeting.Summary(overview: "O", decisions: ["D"],
                        actionItems: [.init(owner: "You", task: "T", due: nil)], openQuestions: []), title: "Plan"))
@@ -766,13 +766,15 @@ final class LiveMeetingTests: XCTestCase {
         t.add(stream: "them", speaker: 1, offset: 8, text: "Third.")
         t.add(stream: "you", speaker: 0, offset: 9, text: "  ")
         XCTAssertEqual(t.lines.map(\.text), ["First.", "Second.", "Third."])
-        XCTAssertEqual(t.groups.map(\.label), ["You", "Them"])
+        XCTAssertEqual(t.groups.map(\.label), ["You", "Person 1"])
         XCTAssertEqual(t.groups[1].lines.count, 2)
-        t.add(stream: "them", speaker: 2, offset: 12, text: "Fourth.")
-        XCTAssertEqual(t.groups.map(\.label), ["You", "Speaker 1", "Speaker 2"])
+        t.add(stream: "them", speaker: 2, offset: 12, text: "Fourth.", voice: "female")
+        t.add(stream: "them", speaker: 3, offset: 14, text: "Fifth.", voice: "female")
+        t.add(stream: "them", speaker: 4, offset: 16, text: "Sixth.", voice: "male")
+        XCTAssertEqual(t.groups.map(\.label), ["You", "Person 1", "Female 1", "Female 2", "Male 1"])
         t.names[2] = "Priya"
-        XCTAssertEqual(t.groups.last?.label, "Priya")
-        XCTAssertEqual(t.engineLines.last, ["speaker": "Priya", "text": "Fourth."])
+        XCTAssertEqual(t.groups[2].label, "Priya")
+        XCTAssertEqual(t.engineLines[3], ["speaker": "Priya", "text": "Fourth."])
     }
 
     func testSavesAsAMeetingTheNotesPageCanRead() throws {
@@ -783,7 +785,7 @@ final class LiveMeetingTests: XCTestCase {
         let meeting = t.meeting(id: Meeting.newID(start), title: "", startedAt: start, duration: 65, source: "Zoom",
                                 thoughts: "note", summary: nil)
         XCTAssertEqual(meeting.title, "Meeting")
-        XCTAssertEqual(meeting.participants.map(\.name), ["You", "Them"])
+        XCTAssertEqual(meeting.participants.map(\.name), ["You", "Person 1"])
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try meeting.save(in: dir)
         let loaded = MeetingStore.load(from: dir)

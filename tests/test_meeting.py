@@ -56,7 +56,7 @@ class TestTranscribeChunk:
         s = Sync()
         write_wav(tmp_path / "c.wav", tone(LOW))
         s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="you", offset=12.5)
-        assert s.sent == [("chunk_text", {"id": "m1", "stream": "you", "offset": 12.5, "text": "hello there", "speaker": 0})]
+        assert s.sent == [("chunk_text", {"id": "m1", "stream": "you", "offset": 12.5, "text": "hello there", "speaker": 0, "voice": "person"})]
         assert not (tmp_path / "c.wav").exists()
 
     def test_them_chunks_get_speaker_numbers(self, tmp_path):
@@ -149,3 +149,28 @@ class TestPushedLevels:
         p = levels.PushedLevelSource(clock=lambda: 0.0)
         p.push(5)
         assert p.level(0) == 1.0
+
+
+class TestVoiceKind:
+    def test_pitch_of_a_low_and_a_high_voice(self):
+        assert 100 < meeting.VoiceClusters.pitch(tone(LOW)) < 120
+        assert 245 < meeting.VoiceClusters.pitch(tone(HIGH)) < 275
+
+    def test_noise_has_no_pitch(self):
+        rng = np.random.default_rng(1)
+        assert meeting.VoiceClusters.pitch((0.2 * rng.standard_normal(32000)).astype(np.float32)) is None
+
+    def test_male_female_person(self):
+        v = meeting.VoiceClusters()
+        low, high = v.assign(tone(LOW)), v.assign(tone(HIGH))
+        assert (v.voice(low), v.voice(high)) == ("male", "female")
+        mid = [(160 * k, 1 / k) for k in range(1, 12)]  # in the overlap: don't guess
+        v2 = meeting.VoiceClusters()
+        assert v2.voice(v2.assign(tone(mid))) == "person"
+        assert v.voice(99) == "person"
+
+    def test_reported_with_each_chunk(self, tmp_path):
+        s = Sync()
+        write_wav(tmp_path / "c.wav", tone(HIGH))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="them", offset=0)
+        assert s.sent[0][1]["voice"] == "female"

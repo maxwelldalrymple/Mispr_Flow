@@ -97,12 +97,15 @@ public struct LiveTranscript: Equatable {
     }
 
     public private(set) var lines: [Line] = []
-    /// Names given to speakers (rename "Speaker 2" to "Priya").
+    /// Names given to speakers (rename "Female 1" to "Priya").
     public var names: [Int: String] = [:]
+    /// What each voice on the other side sounds like: "male", "female", or "person".
+    public private(set) var voices: [Int: String] = [:]
 
     public init() {}
 
-    public mutating func add(stream: String, speaker: Int, offset: Double, text: String) {
+    public mutating func add(stream: String, speaker: Int, offset: Double, text: String, voice: String = "person") {
+        if stream == "them" { voices[max(1, speaker)] = voice }  // the latest guess wins (it firms up over time)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let line = Line(stream: stream, speaker: stream == "you" ? 0 : max(1, speaker), offset: offset, text: trimmed)
@@ -112,11 +115,18 @@ public struct LiveTranscript: Equatable {
 
     public var themSpeakers: Set<Int> { Set(lines.filter { $0.stream == "them" }.map(\.speaker)) }
 
-    /// "You"; "Them" while only one other voice was heard; else "Speaker 2" (or the name given).
+    /// "You", a name you gave, or what the voice sounds like, numbered in order of first
+    /// appearance: "Male 1", "Female 1", "Male 2"; "Person 1" when it can't tell.
     public func label(_ line: Line) -> String {
         if line.stream == "you" { return "You" }
         if let name = names[line.speaker], !name.isEmpty { return name }
-        return themSpeakers.count > 1 ? "Speaker \(line.speaker)" : "Them"
+        let kind = voices[line.speaker] ?? "person"
+        var order: [Int] = []
+        for l in lines where l.stream == "them" && !order.contains(l.speaker) && (voices[l.speaker] ?? "person") == kind {
+            order.append(l.speaker)
+        }
+        let n = (order.firstIndex(of: line.speaker) ?? 0) + 1
+        return "\(kind.prefix(1).uppercased() + kind.dropFirst()) \(n)"
     }
 
     /// Consecutive lines from the same person, shown as one group of bubbles.
