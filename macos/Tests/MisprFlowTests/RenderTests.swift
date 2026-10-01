@@ -63,6 +63,22 @@ final class RenderTests: XCTestCase {
         for tab in ["Summary", "Transcript", "Insights", "My thoughts"] {
             check(MeetingDetailView(meeting: meeting, back: {}, initialTab: tab))
         }
+        check(MeetingDetailView(meeting: meeting, back: {}, delete: {}))  // with its Delete button
+    }
+
+    func testNoteRowsInSelectModeAndWithDelete() {
+        let meeting = t.model.meetings[0]
+        check(NoteRow(meeting: meeting, delete: {}).frame(width: 700))
+        check(NoteRow(meeting: meeting, selecting: true, picked: false).frame(width: 700))
+        check(NoteRow(meeting: meeting, selecting: true, picked: true).frame(width: 700))
+    }
+
+    func testPeopleWithContactDetailsAndTheEditor() {
+        t.model.saveContact(Contact(role: "Lead", company: "Acme", email: "p@acme.com", phone: "555 0100", notes: "Loves charts."),
+                            for: "Priya Shah")
+        check(NotesView(initialTab: 1, people: ["Priya Shah"]))
+        check(ContactEditor(name: "Priya Shah", card: Contact(), meetings: 2, save: { _, _ in }, cancel: {}))
+        check(ContactEditor(name: "Priya Shah", card: t.model.contacts["Priya Shah"]!, meetings: 1, save: { _, _ in }, cancel: {}))
     }
 
     func testNotetakerWithNoMeetings() {
@@ -167,6 +183,13 @@ final class RenderTests: XCTestCase {
         note.stop()
         check(NoteView(close: {}))  // finishing
         drainMain(0.8)
+        check(NoteView(close: {}))  // done: the Save note card
+        XCTAssertFalse(note.requestClose())
+        check(NoteView(close: {}))  // the "Save this note before closing?" card
+        check(SaveQuestionCard().frame(width: 400))
+        check(SaveNoteCard().frame(width: 440))
+        note.decide(.save)
+        check(SavedChip().padding())
         t.event(["event": "summary", "id": note.meetingID,
                  "summary": ["overview": "Talked.", "decisions": ["A"], "action_items": [["owner": "You", "task": "B", "due": "Fri"]],
                              "open_questions": ["C?"]]])

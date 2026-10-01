@@ -4,10 +4,14 @@ import SwiftUI
 /// Everyone from your meetings. Click a person to see them; ⌘-click (or the checkmarks) to
 /// pick several and see only the meetings you were all in.
 struct PeopleView: View {
+    @EnvironmentObject var model: AppModel
     let meetings: [Meeting]
     @Binding var selected: Set<String>
     let open: (Meeting) -> Void
     @State private var query = ""
+    /// The person whose card is open for editing, and the one waiting on "Remove?".
+    @State private var editing: String?
+    @State private var removing: String?
 
     private var people: [PeopleIndex.Person] {
         let all = PeopleIndex.people(meetings)
@@ -20,6 +24,33 @@ struct PeopleView: View {
             list.frame(width: 300)
             detail.frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .sheet(item: Binding(get: { editing.map(Named.init) }, set: { editing = $0?.name })) { person in
+            ContactEditor(name: person.name, card: model.contacts[person.name] ?? Contact(),
+                          meetings: PeopleIndex.people(meetings).first { $0.name == person.name }?.meetings ?? 0) { newName, card in
+                model.saveContact(card, for: person.name, newName: newName)
+                selected = Self.renamed(selected, person.name, to: newName)
+                editing = nil
+            } cancel: { editing = nil }
+        }
+        .alert(removing.map { "Remove \($0) from People?" } ?? "", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let name = removing {
+                    model.removePerson(name)
+                    selected.remove(name)
+                }
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: {
+            Text("Your notes with them are kept. In those transcripts their lines will show as “\(MeetingStore.unknownSpeaker)”, and their contact details are deleted.")
+        }
+    }
+
+    /// The selection after renaming someone in it.
+    static func renamed(_ selected: Set<String>, _ old: String, to new: String) -> Set<String> {
+        let new = new.trimmingCharacters(in: .whitespaces)
+        guard selected.contains(old), !new.isEmpty else { return selected }
+        return selected.subtracting([old]).union([new])
     }
 
     // MARK: - List
@@ -48,6 +79,11 @@ struct PeopleView: View {
                         } else {
                             selected = selected == [person.name] ? [] : [person.name]
                         }
+                    }
+                    .contextMenu {
+                        Button("Edit name & details…") { editing = person.name }
+                        Divider()
+                        Button("Remove from People…", role: .destructive) { removing = person.name }
                     }
                 }
             }
@@ -114,19 +150,56 @@ struct PeopleView: View {
     private func header(_ names: Set<String>, _ group: PeopleIndex.Group) -> some View {
         let sorted = names.sorted()
         let person = PeopleIndex.people(meetings).first { $0.name == sorted.first }
-        return HStack(spacing: 14) {
+        let card = sorted.count == 1 ? model.contacts[sorted[0]] : nil
+        return HStack(alignment: .top, spacing: 14) {
             PeopleStack(names: sorted, size: 44)
             VStack(alignment: .leading, spacing: 3) {
                 Text(sorted.count == 1 ? sorted[0] : sorted.joined(separator: ", ")).font(Theme.display(26)).lineLimit(2)
                 if sorted.count == 1, let person {
-                    Text([person.role, "First met \(person.firstMet.formatted(.dateTime.month(.abbreviated).day()))"]
-                            .compactMap { $0 }.joined(separator: " · "))
+                    Text(Self.subtitle(person, card))
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    if let card { contactLinks(card) }
                 } else {
                     Text("Meetings where all \(sorted.count) of them were present")
                         .font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
             }
+            Spacer()
+            if sorted.count == 1 {
+                Button { editing = sorted[0] } label: {
+                    Label(card == nil ? "Add details" : "Edit", systemImage: "person.text.rectangle").font(.system(size: 13))
+                }
+                .buttonStyle(OutlineButton()).help("Change their name, add an email, phone, company and notes")
+                Menu {
+                    Button("Edit name & details…") { editing = sorted[0] }
+                    Divider()
+                    Button("Remove from People…", role: .destructive) { removing = sorted[0] }
+                } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }
+        }
+    }
+
+    /// "Designer · Acme · First met Sep 3".
+    static func subtitle(_ person: PeopleIndex.Person, _ card: Contact?) -> String {
+        let role = card.map(\.role).flatMap { $0.isEmpty ? nil : $0 } ?? person.role
+        let company = card.map(\.company).flatMap { $0.isEmpty ? nil : $0 }
+        return [role, company, "First met \(person.firstMet.formatted(.dateTime.month(.abbreviated).day()))"]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    @ViewBuilder private func contactLinks(_ card: Contact) -> some View {
+        HStack(spacing: 14) {
+            if !card.email.isEmpty, let url = URL(string: "mailto:\(card.email)") {
+                Link(destination: url) { Label(card.email, systemImage: "envelope") }
+            }
+            if !card.phone.isEmpty {
+                Label(card.phone, systemImage: "phone").textSelection(.enabled)
+            }
+        }
+        .font(.system(size: 12)).foregroundStyle(Theme.accent).padding(.top, 4)
+        if !card.notes.isEmpty {
+            Text(card.notes).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(3).padding(.top, 2)
         }
     }
 
@@ -220,5 +293,91 @@ struct PersonRow: View {
         .contentShape(Rectangle())
         .onTapGesture { tap(false) }
         .onHover { hovering = $0 }
+    }
+}
+
+/// For `.sheet(item:)`: a person by name.
+struct Named: Identifiable {
+    let name: String
+    var id: String { name }
+}
+
+/// The contact card: rename someone everywhere and keep their details.
+struct ContactEditor: View {
+    @State var name: String
+    @State var card: Contact
+    let meetings: Int
+    let save: (_ name: String, _ card: Contact) -> Void
+    let cancel: () -> Void
+    private let original: String
+
+    init(name: String, card: Contact, meetings: Int, save: @escaping (String, Contact) -> Void, cancel: @escaping () -> Void) {
+        _name = State(initialValue: name)
+        _card = State(initialValue: card)
+        self.meetings = meetings
+        self.save = save
+        self.cancel = cancel
+        original = name
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                Initials(name: name.isEmpty ? original : name, size: 54)
+                VStack(alignment: .leading, spacing: 3) {
+                    TextField("Name", text: $name).textFieldStyle(.plain).font(Theme.display(24))
+                    Text("\(meetings) meeting\(meetings == 1 ? "" : "s") together").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                }
+            }
+            .padding(.bottom, 18)
+            VStack(spacing: 10) {
+                field("briefcase", "Role", $card.role)
+                field("building.2", "Company", $card.company)
+                field("envelope", "Email", $card.email)
+                field("phone", "Phone", $card.phone)
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "note.text").foregroundStyle(Theme.secondary).frame(width: 18).padding(.top, 8)
+                    TextEditor(text: $card.notes).font(.system(size: 13)).scrollContentBackground(.hidden)
+                        .frame(height: 70).padding(4)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+                        .overlay(alignment: .topLeading) {
+                            if card.notes.isEmpty {
+                                Text("Notes: how you met, what they care about…").font(.system(size: 13))
+                                    .foregroundStyle(Theme.secondary.opacity(0.7)).padding(.leading, 9).padding(.top, 4).allowsHitTesting(false)
+                            }
+                        }
+                }
+            }
+            if Self.isRename(original, name) {
+                Label("Renames \(original) to \(name.trimmingCharacters(in: .whitespaces)) in all \(meetings) note\(meetings == 1 ? "" : "s").",
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary).padding(.top, 12)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).buttonStyle(OutlineButton()).keyboardShortcut(.cancelAction)
+                Button { save(name.trimmingCharacters(in: .whitespaces), card) } label: { SaveLabel(title: "Save") }
+                    .buttonStyle(PressableButton()).keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .padding(.top, 20)
+        }
+        .padding(24)
+        .frame(width: 420)
+        .background(Theme.content)
+    }
+
+    static func isRename(_ original: String, _ name: String) -> Bool {
+        let new = name.trimmingCharacters(in: .whitespaces)
+        return !new.isEmpty && new != original
+    }
+
+    private func field(_ symbol: String, _ placeholder: String, _ text: Binding<String>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol).foregroundStyle(Theme.secondary).frame(width: 18)
+            TextField(placeholder, text: text).textFieldStyle(.plain).font(.system(size: 13))
+                .padding(.horizontal, 10).frame(height: 32)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        }
     }
 }

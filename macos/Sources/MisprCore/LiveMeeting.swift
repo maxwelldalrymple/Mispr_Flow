@@ -196,6 +196,18 @@ extension Meeting {
     public func save(in dir: URL) throws -> URL {
         let day = dir.appendingPathComponent(String(id.prefix(10)))
         try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let url = day.appendingPathComponent("\(id).json")
+        try write(to: url)
+        return url
+    }
+
+    /// Write back to the file it was loaded from (edits like renaming a person).
+    public func rewrite() throws {
+        guard let fileURL else { throw CocoaError(.fileNoSuchFile) }
+        try write(to: fileURL)
+    }
+
+    private func write(to url: URL) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let formatter = ISO8601DateFormatter()
@@ -204,15 +216,14 @@ extension Meeting {
             var container = encoder.singleValueContainer()
             try container.encode(formatter.string(from: date))
         }
-        let url = day.appendingPathComponent("\(id).json")
         try encoder.encode(self).write(to: url, options: .atomic)
-        return url
     }
 
-    /// "2026-09-30_23-16-04-000", like recordings.
+    /// "2026-09-30_23-16-04-123", like recordings (milliseconds, so a note started right after
+    /// discarding another never reuses its name).
     public static func newID(_ date: Date = Date()) -> String {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        return f.string(from: date) + "-000"
+        f.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
+        return f.string(from: date)
     }
 }

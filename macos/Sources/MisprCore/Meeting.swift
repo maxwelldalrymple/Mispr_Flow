@@ -133,6 +133,99 @@ public enum MeetingStore {
         }
         return meetings.sorted { $0.startedAt > $1.startedAt }
     }
+
+    /// Delete a note: its JSON and its audio folder (`<day>/<id>/`), if it has one.
+    public static func delete(_ meeting: Meeting, fileManager: FileManager = .default) throws {
+        guard let json = meeting.fileURL else { return }
+        let audio = json.deletingLastPathComponent().appendingPathComponent(meeting.id, isDirectory: true)
+        if fileManager.fileExists(atPath: audio.path) { try fileManager.removeItem(at: audio) }
+        if fileManager.fileExists(atPath: json.path) { try fileManager.removeItem(at: json) }
+    }
+
+    /// The speaker label for lines whose person was removed.
+    public static let unknownSpeaker = "Unknown speaker"
+
+    /// Rename someone everywhere: participants, transcript lines and action items, in every
+    /// note they're in. Renaming to someone already there merges the two. Returns notes changed.
+    @discardableResult
+    public static func rename(person old: String, to new: String, in meetings: [Meeting]) throws -> Int {
+        let new = new.trimmingCharacters(in: .whitespaces)
+        guard !new.isEmpty, new != old else { return 0 }
+        var changed = 0
+        for var m in meetings where m.participants.contains(where: { $0.name == old && $0.isMe != true }) {
+            var seen = Set<String>()
+            m.participants = m.participants.map { p in
+                var p = p
+                if p.name == old { p.name = new }
+                return p
+            }.filter { seen.insert($0.name).inserted }
+            m.transcript = m.transcript.map { var l = $0; if l.speaker == old { l.speaker = new }; return l }
+            if var summary = m.summary {
+                summary.actionItems = summary.actionItems.map { var i = $0; if i.owner == old { i.owner = new }; return i }
+                m.summary = summary
+            }
+            try m.rewrite()
+            changed += 1
+        }
+        return changed
+    }
+
+    /// Take someone out of your People: they leave every note's participants, and their lines
+    /// stay in the transcript as "Unknown speaker". The notes themselves are kept.
+    @discardableResult
+    public static func remove(person name: String, from meetings: [Meeting]) throws -> Int {
+        var changed = 0
+        for var m in meetings where m.participants.contains(where: { $0.name == name && $0.isMe != true }) {
+            m.participants.removeAll { $0.name == name && $0.isMe != true }
+            m.transcript = m.transcript.map { var l = $0; if l.speaker == name { l.speaker = unknownSpeaker }; return l }
+            try m.rewrite()
+            changed += 1
+        }
+        return changed
+    }
+}
+
+/// Contact details you add for people from your meetings: meeting-recordings/people.json.
+public struct Contact: Codable, Hashable {
+    public var role = ""
+    public var company = ""
+    public var email = ""
+    public var phone = ""
+    public var notes = ""
+
+    public init(role: String = "", company: String = "", email: String = "", phone: String = "", notes: String = "") {
+        self.role = role
+        self.company = company
+        self.email = email
+        self.phone = phone
+        self.notes = notes
+    }
+
+    public var isEmpty: Bool { [role, company, email, phone, notes].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty } }
+}
+
+public enum ContactBook {
+    public static func url(in meetingsDir: URL) -> URL { meetingsDir.appendingPathComponent("people.json") }
+
+    public static func load(from url: URL) -> [String: Contact] {
+        guard let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: Contact].self, from: data)) ?? [:]
+    }
+
+    /// Writes the book; empty cards are dropped.
+    public static func save(_ book: [String: Contact], to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(book.filter { !$0.value.isEmpty }).write(to: url, options: .atomic)
+    }
+
+    /// The book after renaming someone (their card moves; an existing card for the new name wins).
+    public static func renamed(_ book: [String: Contact], _ old: String, to new: String) -> [String: Contact] {
+        var book = book
+        if let card = book.removeValue(forKey: old), book[new] == nil { book[new] = card }
+        return book
+    }
 }
 
 /// Who talked how much in one meeting, and its shape.

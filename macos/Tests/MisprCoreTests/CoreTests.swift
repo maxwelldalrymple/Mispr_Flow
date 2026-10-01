@@ -914,3 +914,99 @@ final class LivePreviewTests: XCTestCase {
                        .chunkText(meeting: "m", stream: "you", speaker: 0, offset: 1.5, text: "Hel", voice: "", partial: true))
     }
 }
+
+/// Deleting notes, renaming and removing people across notes, and contact cards.
+final class NoteEditingTests: XCTestCase {
+    var dir: URL!
+
+    override func setUp() {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)")
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: dir) }
+
+    func note(_ id: String, people: [String], owner: String? = nil) throws -> Meeting {
+        var m = Meeting(id: "2026-10-01_09-00-00-\(id)", title: "Note \(id)", startedAt: Date(), durationS: 60,
+                        participants: [.init(name: "You", isMe: true)] + people.map { .init(name: $0) },
+                        transcript: [.init(speaker: "You", startS: 0, text: "Hi.")] + people.map { .init(speaker: $0, startS: 5, text: "Hello.") })
+        if let owner { m.summary = .init(overview: "O", decisions: [], actionItems: [.init(owner: owner, task: "T", due: nil)], openQuestions: []) }
+        try m.save(in: dir)
+        return m
+    }
+
+    func testDeleteRemovesTheJSONAndItsAudioFolder() throws {
+        _ = try note("a", people: ["Priya"])
+        _ = try note("b", people: ["Priya"])
+        let first = MeetingStore.load(from: dir).first { $0.title == "Note a" }!
+        let audio = first.fileURL!.deletingLastPathComponent().appendingPathComponent(first.id)
+        try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        try Data([1]).write(to: audio.appendingPathComponent("you.wav"))
+        try MeetingStore.delete(first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertEqual(MeetingStore.load(from: dir).map(\.title), ["Note b"])
+    }
+
+    func testDeletingANoteWithoutAFileDoesNothing() throws {
+        let m = Meeting(id: "x", title: "x", startedAt: Date(), durationS: 1, participants: [], transcript: [])
+        XCTAssertNoThrow(try MeetingStore.delete(m))
+    }
+
+    func testRenameChangesParticipantsLinesAndActionItemsEverywhere() throws {
+        _ = try note("a", people: ["Female 1"], owner: "Female 1")
+        _ = try note("b", people: ["Jordan"])
+        XCTAssertEqual(try MeetingStore.rename(person: "Female 1", to: " Priya ", in: MeetingStore.load(from: dir)), 1)
+        let a = MeetingStore.load(from: dir).first { $0.title == "Note a" }!
+        XCTAssertEqual(a.participants.map(\.name), ["You", "Priya"])
+        XCTAssertEqual(a.transcript.last?.speaker, "Priya")
+        XCTAssertEqual(a.summary?.actionItems.first?.owner, "Priya")
+    }
+
+    func testRenamingIntoSomeoneAlreadyThereMergesThem() throws {
+        _ = try note("a", people: ["Male 1", "Sam"])
+        try MeetingStore.rename(person: "Male 1", to: "Sam", in: MeetingStore.load(from: dir))
+        XCTAssertEqual(MeetingStore.load(from: dir)[0].participants.map(\.name), ["You", "Sam"])
+    }
+
+    func testRenameNeverTouchesYouOrBlankNames() throws {
+        _ = try note("a", people: ["Sam"])
+        let notes = MeetingStore.load(from: dir)
+        XCTAssertEqual(try MeetingStore.rename(person: "You", to: "Boss", in: notes), 0)
+        XCTAssertEqual(try MeetingStore.rename(person: "Sam", to: "  ", in: notes), 0)
+    }
+
+    func testRemoveKeepsTheNoteButMakesTheirLinesUnknown() throws {
+        _ = try note("a", people: ["Sam", "Priya"])
+        XCTAssertEqual(try MeetingStore.remove(person: "Sam", from: MeetingStore.load(from: dir)), 1)
+        let a = MeetingStore.load(from: dir)[0]
+        XCTAssertEqual(a.participants.map(\.name), ["You", "Priya"])
+        XCTAssertEqual(a.transcript.map(\.speaker), ["You", MeetingStore.unknownSpeaker, "Priya"])
+        XCTAssertFalse(PeopleIndex.people(MeetingStore.load(from: dir)).contains { $0.name == "Sam" })
+    }
+
+    func testRewriteNeedsAFile() {
+        let m = Meeting(id: "x", title: "x", startedAt: Date(), durationS: 1, participants: [], transcript: [])
+        XCTAssertThrowsError(try m.rewrite())
+    }
+
+    func testContactBookSavesLoadsAndDropsEmptyCards() throws {
+        let url = ContactBook.url(in: dir)
+        try ContactBook.save(["Priya": Contact(role: "Designer", email: "p@x.com"), "Sam": Contact(notes: "  ")], to: url)
+        XCTAssertEqual(ContactBook.load(from: url), ["Priya": Contact(role: "Designer", email: "p@x.com")])
+        XCTAssertEqual(MeetingStore.load(from: dir), [])  // people.json isn't mistaken for a note
+        XCTAssertEqual(ContactBook.load(from: dir.appendingPathComponent("missing.json")), [:])
+    }
+
+    func testNoteIDsHaveMillisecondsSoBackToBackNotesDiffer() {
+        let t = Date(timeIntervalSince1970: 1_790_800_000)
+        XCTAssertEqual(Meeting.newID(t).count, "2026-09-30_23-16-04-123".count)
+        XCTAssertTrue(Meeting.newID(t).hasSuffix("-000"))
+        XCTAssertNotEqual(Meeting.newID(t), Meeting.newID(t.addingTimeInterval(0.25)))
+        XCTAssertEqual(Meeting.newID(t).prefix(10).count, 10)  // the day folder
+    }
+
+    func testContactCardMovesWithARename() {
+        let card = Contact(company: "Acme")
+        XCTAssertEqual(ContactBook.renamed(["Female 1": card], "Female 1", to: "Priya"), ["Priya": card])
+        XCTAssertEqual(ContactBook.renamed(["A": card, "B": Contact(phone: "1")], "A", to: "B"), ["B": Contact(phone: "1")])
+    }
+}

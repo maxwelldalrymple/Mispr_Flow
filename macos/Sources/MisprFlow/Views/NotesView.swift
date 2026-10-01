@@ -8,6 +8,11 @@ struct NotesView: View {
     @State private var tab: Int
     @State private var open: Meeting?
     @State private var query = ""
+    /// Select mode: tick several notes and delete them together.
+    @State private var selecting = false
+    @State private var picked: Set<String> = []
+    /// Notes waiting on the "Delete?" confirmation.
+    @State private var confirming: [Meeting] = []
     // Development: MISPR_PEOPLE="Priya Shah,Jordan Lee" opens People with them selected (screenshots).
     @State private var selectedPeople: Set<String> = Set((ProcessInfo.processInfo.environment["MISPR_PEOPLE"] ?? "")
         .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
@@ -21,7 +26,8 @@ struct NotesView: View {
 
     var body: some View {
         if let open {
-            MeetingDetailView(meeting: open, back: { self.open = nil }, person: showPerson)
+            MeetingDetailView(meeting: open, back: { self.open = nil }, person: showPerson,
+                              delete: { model.deleteMeetings([open]); self.open = nil })
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -45,9 +51,23 @@ struct NotesView: View {
                                 TextField("Search notes", text: $query).textFieldStyle(.plain).frame(width: 170)
                             }
                             .font(.system(size: 13)).padding(.bottom, 8)
+                            if !model.meetings.isEmpty {
+                                Button(selecting ? "Done" : "Select") {
+                                    selecting.toggle()
+                                    picked = []
+                                }
+                                .buttonStyle(.plain).font(.system(size: 13, weight: selecting ? .semibold : .regular))
+                                .foregroundStyle(selecting ? Theme.accent : Theme.secondary).padding(.bottom, 8)
+                                .help("Pick several notes to delete")
+                            }
                         }
                     }
                     Divider().overlay(Theme.cardStroke).padding(.bottom, 22)
+                    if let error = model.notesError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.orange)
+                            .padding(.bottom, 14)
+                    }
+                    if tab == 0 && selecting { selectionBar }
                     switch tab {
                     case 0: list
                     case 1: PeopleView(meetings: model.meetings, selected: $selectedPeople) { open = $0 }
@@ -110,19 +130,79 @@ struct NotesView: View {
                     .font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
                     .padding(.top, 14).padding(.bottom, 8)
                 ForEach(days[day]!) { meeting in
-                    NoteRow(meeting: meeting).onTapGesture { open = meeting }
+                    NoteRow(meeting: meeting, selecting: selecting, picked: picked.contains(meeting.id),
+                            delete: { confirming = [meeting] })
+                        .onTapGesture {
+                            if selecting { picked.formSymmetricDifference([meeting.id]) } else { open = meeting }
+                        }
+                        .contextMenu {
+                            Button("Open") { open = meeting }
+                            Button("Select") { selecting = true; picked.insert(meeting.id) }
+                            Divider()
+                            Button("Delete…", role: .destructive) { confirming = [meeting] }
+                        }
                 }
             }
         }
+        .alert(Self.deleteTitle(confirming), isPresented: Binding(get: { !confirming.isEmpty }, set: { if !$0 { confirming = [] } })) {
+            Button("Delete", role: .destructive) {
+                model.deleteMeetings(confirming)
+                picked.subtract(confirming.map(\.id))
+                if model.meetings.isEmpty { selecting = false }
+                confirming = []
+            }
+            Button("Cancel", role: .cancel) { confirming = [] }
+        } message: {
+            Text(Self.deleteMessage)
+        }
     }
+
+    /// Select mode: how many are ticked, Select all, and Delete.
+    private var selectionBar: some View {
+        let chosen = filtered.filter { picked.contains($0.id) }
+        return HStack(spacing: 12) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+            Text(chosen.isEmpty ? "Click notes to select them" : "\(chosen.count) selected").font(.system(size: 13, weight: .medium))
+            Spacer()
+            Button(chosen.count == filtered.count ? "Select none" : "Select all") {
+                picked = chosen.count == filtered.count ? [] : Set(filtered.map(\.id))
+            }
+            .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.accent)
+            Button { confirming = chosen } label: {
+                Label("Delete", systemImage: "trash").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 14).frame(height: 30)
+                    .background(Capsule().fill(Color.red.opacity(chosen.isEmpty ? 0.35 : 0.9)))
+            }
+            .buttonStyle(PressableButton()).disabled(chosen.isEmpty)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card))
+        .padding(.bottom, 10)
+    }
+
+    /// "Delete “Standup”?" / "Delete 3 notes?".
+    static func deleteTitle(_ meetings: [Meeting]) -> String {
+        meetings.count == 1 ? "Delete “\(meetings[0].title)”?" : "Delete \(meetings.count) notes?"
+    }
+
+    static let deleteMessage = "The transcript, summary, your thoughts and the audio are removed from this Mac. This can't be undone."
 }
 
 struct NoteRow: View {
     let meeting: Meeting
+    var selecting = false
+    var picked = false
+    /// Shows a trash button on hover (nil: no delete here, e.g. on a person's page).
+    var delete: (() -> Void)?
     @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 14) {
+            if selecting {
+                Image(systemName: picked ? "checkmark.circle.fill" : "circle").font(.system(size: 18))
+                    .foregroundStyle(picked ? Theme.accent : Theme.secondary.opacity(0.6))
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
             Image(systemName: "doc.text").font(.system(size: 15)).foregroundStyle(Theme.secondary)
                 .frame(width: 36, height: 36).background(RoundedRectangle(cornerRadius: 9).fill(Theme.card))
             VStack(alignment: .leading, spacing: 3) {
@@ -136,10 +216,22 @@ struct NoteRow: View {
             }
             Spacer()
             PeopleStack(names: meeting.participants.map(\.name))
-            Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            if let delete, hovering, !selecting {
+                Button(action: delete) {
+                    Image(systemName: "trash").font(.system(size: 12)).foregroundStyle(.red.opacity(0.85))
+                        .frame(width: 28, height: 28).background(Circle().fill(Color.red.opacity(0.1)))
+                }
+                .buttonStyle(.plain).help("Delete this note")
+                .transition(.opacity)
+            }
+            if !selecting {
+                Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12).fill(hovering ? Theme.card : Color.clear))
+        .background(RoundedRectangle(cornerRadius: 12).fill(picked ? Theme.selection : hovering ? Theme.card : Color.clear))
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.15), value: selecting)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
@@ -252,12 +344,16 @@ struct MeetingDetailView: View {
     let meeting: Meeting
     let back: () -> Void
     var person: (String) -> Void = { _ in }
+    var delete: (() -> Void)?
     @State private var tab: String
+    @State private var confirming = false
 
-    init(meeting: Meeting, back: @escaping () -> Void, person: @escaping (String) -> Void = { _ in }, initialTab: String = "Summary") {
+    init(meeting: Meeting, back: @escaping () -> Void, person: @escaping (String) -> Void = { _ in },
+         delete: (() -> Void)? = nil, initialTab: String = "Summary") {
         self.meeting = meeting
         self.back = back
         self.person = person
+        self.delete = delete
         _tab = State(initialValue: initialTab)
     }
     private var insights: MeetingInsights { MeetingInsights(meeting) }
@@ -265,10 +361,20 @@ struct MeetingDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Button(action: back) {
-                    Label("All notes", systemImage: "chevron.left").font(.system(size: 13))
+                HStack {
+                    Button(action: back) {
+                        Label("All notes", systemImage: "chevron.left").font(.system(size: 13))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                    Spacer()
+                    if delete != nil {
+                        Button { confirming = true } label: {
+                            Label("Delete", systemImage: "trash").font(.system(size: 13)).foregroundStyle(.red)
+                        }
+                        .buttonStyle(OutlineButton()).help("Delete this note and its audio")
+                    }
                 }
-                .buttonStyle(.plain).foregroundStyle(Theme.secondary).padding(.bottom, 16)
+                .padding(.bottom, 16)
                 HStack(spacing: 8) {
                     Text(meeting.title).font(Theme.display(30))
                     if meeting.sample == true { Badge(text: "Sample") }
@@ -302,6 +408,12 @@ struct MeetingDetailView: View {
             .padding(.horizontal, 40).padding(.vertical, 30)
             .frame(maxWidth: 1000, alignment: .leading)
             .frame(maxWidth: .infinity)
+        }
+        .alert(NotesView.deleteTitle([meeting]), isPresented: $confirming) {
+            Button("Delete", role: .destructive) { delete?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(NotesView.deleteMessage)
         }
     }
 

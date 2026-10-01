@@ -134,7 +134,7 @@ final class NoteModelTests: XCTestCase {
 
     // MARK: stop, save, summary
 
-    func testStopSavesTheNoteAndAsksForASummary() throws {
+    func testStopAsksForASummaryButSavesNothingUntilSave() throws {
         note.start()
         drainMain()
         say("you", 0.5, "Let's ship Friday.", speaker: 0, voice: "")
@@ -144,17 +144,23 @@ final class NoteModelTests: XCTestCase {
         XCTAssertEqual(note.phase, .done)
         XCTAssertTrue(note.summarizing)
         XCTAssertEqual(t.commands.suffix(2), [.stopMeeting, .summarize])
+        XCTAssertTrue(MeetingStore.load(from: t.meetings).isEmpty)  // closing now would keep nothing
+        XCTAssertTrue(note.canSave)
+        note.saveNote()
+        XCTAssertTrue(note.kept)
+        XCTAssertFalse(note.canSave)
         let saved = MeetingStore.load(from: t.meetings)
         XCTAssertEqual(saved.count, 1)
         XCTAssertEqual(saved[0].transcript.map(\.text), ["Let's ship Friday."])
         XCTAssertEqual(saved[0].app, "In person")
     }
 
-    func testSummaryArrivesWithATitleAndIsSaved() throws {
+    func testSummaryArrivesWithATitleAndUpdatesTheSavedNote() throws {
         note.start()
         say("you", 0.5, "Ship Friday.", speaker: 0, voice: "")
         note.stop()
         drainMain(0.8)
+        note.saveNote()
         t.event(["event": "summary", "id": note.meetingID,
                  "summary": ["title": "Release plan", "overview": "Ship Friday.", "decisions": ["Friday"],
                              "action_items": [["owner": "You", "task": "Notes", "due": ""]], "open_questions": []]])
@@ -169,6 +175,7 @@ final class NoteModelTests: XCTestCase {
         say("you", 0.5, "Hi.", speaker: 0, voice: "")
         note.stop()
         drainMain(0.8)
+        note.saveNote()
         t.event(["event": "summary", "id": note.meetingID, "summary": ["title": "Something else", "overview": "O"]])
         XCTAssertEqual(note.title, "Board meeting")
     }
@@ -188,6 +195,7 @@ final class NoteModelTests: XCTestCase {
         say("you", 0.5, "Secret.", speaker: 0, voice: "")
         note.stop()
         drainMain(0.8)
+        note.saveNote()  // Save isn't offered in Incognito, and does nothing if called
         XCTAssertTrue(MeetingStore.load(from: t.meetings).isEmpty)
     }
 
@@ -212,10 +220,127 @@ final class NoteModelTests: XCTestCase {
         let first = note.meetingID
         note.toggle()  // stop
         drainMain(1.2)
+        note.saveNote()
         note.toggle()  // a new note
         XCTAssertNotEqual(note.meetingID, first)
         XCTAssertTrue(note.transcript.lines.isEmpty)
         XCTAssertTrue(note.recording)
+    }
+
+    // MARK: save or discard
+
+    func testSaveWhileRecordingStopsAndSavesOnceTheWordsAreIn() {
+        note.start()
+        drainMain()
+        say("them", 1, "Hello.")
+        note.saveNote()
+        XCTAssertEqual(recorder.stopped, 1)
+        XCTAssertNotEqual(note.phase, .recording)
+        drainMain(0.8)
+        XCTAssertEqual(MeetingStore.load(from: t.meetings).count, 1)
+    }
+
+    func testDiscardDeletesTheAudioAndStartsFresh() throws {
+        note.start()
+        drainMain()
+        let audio = try XCTUnwrap(recorder.started?.saveTo)
+        try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        say("them", 1, "Hello.")
+        let first = note.meetingID
+        note.discard()
+        XCTAssertEqual(recorder.stopped, 1)
+        XCTAssertEqual(t.commands.last, .stopMeeting)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertEqual(note.phase, .ready)
+        XCTAssertNotEqual(note.meetingID, first)
+        XCTAssertTrue(note.transcript.lines.isEmpty)
+        drainMain(0.8)
+        XCTAssertTrue(MeetingStore.load(from: t.meetings).isEmpty)
+    }
+
+    func testDiscardWhileFinishingIgnoresTheLateWords() {
+        note.start()
+        drainMain()
+        recorder.onChunk("you", 0, speech())  // a chunk still being transcribed
+        drainMain()
+        note.stop()
+        XCTAssertEqual(note.phase, .finishing)
+        note.discard()
+        drainMain(0.8)
+        XCTAssertEqual(note.phase, .ready)  // the old note's wait doesn't come back to finish
+        XCTAssertFalse(t.commands.contains(.summarize))
+    }
+
+    func testClosingAnEmptyOrSavedNoteJustCloses() {
+        XCTAssertTrue(note.requestClose())
+        note.start()
+        say("you", 0.5, "Hi.", speaker: 0, voice: "")
+        note.stop()
+        drainMain(0.8)
+        note.saveNote()
+        XCTAssertTrue(note.requestClose())
+        XCTAssertNil(note.pending)
+    }
+
+    func testClosingWithUnsavedWordsAsksAndEachAnswerWorks() {
+        var closed = 0
+        note.closePanel = { closed += 1 }
+        note.start()
+        say("you", 0.5, "Hi.", speaker: 0, voice: "")
+        note.stop()
+        drainMain(0.8)
+        XCTAssertFalse(note.requestClose())
+        XCTAssertEqual(note.pending, .close)
+        note.decide(.cancel)  // Keep editing
+        XCTAssertNil(note.pending)
+        XCTAssertEqual(closed, 0)
+        XCTAssertFalse(note.requestClose())
+        note.decide(.save)
+        XCTAssertEqual(closed, 1)
+        XCTAssertEqual(MeetingStore.load(from: t.meetings).count, 1)
+    }
+
+    func testDiscardFromTheQuestionClosesWithoutSaving() {
+        var closed = 0
+        note.closePanel = { closed += 1 }
+        note.start()
+        drainMain()
+        say("you", 0.5, "Hi.", speaker: 0, voice: "")
+        XCTAssertFalse(note.requestClose())  // recording counts as unsaved
+        note.decide(.discard)
+        XCTAssertEqual(closed, 1)
+        XCTAssertEqual(recorder.stopped, 1)
+        drainMain(0.8)
+        XCTAssertTrue(MeetingStore.load(from: t.meetings).isEmpty)
+    }
+
+    func testStartingANewNoteOverAnUnsavedOneAsksFirst() {
+        note.start()
+        say("you", 0.5, "First.", speaker: 0, voice: "")
+        let first = note.meetingID
+        note.stop()
+        drainMain(0.8)
+        note.toggle()  // ⌥M: would start a new note
+        XCTAssertEqual(note.pending, .newNote)
+        XCTAssertEqual(note.meetingID, first)
+        XCTAssertFalse(note.recording)
+        note.decide(.save)
+        XCTAssertEqual(MeetingStore.load(from: t.meetings).first?.transcript.map(\.text), ["First."])
+        XCTAssertNotEqual(note.meetingID, first)
+        XCTAssertTrue(note.recording)
+    }
+
+    func testIncognitoNotesOnlyAskWhileRecording() {
+        t.model.setSetting("incognito", true)
+        note.start()
+        drainMain()
+        say("you", 0.5, "Secret.", speaker: 0, voice: "")
+        XCTAssertFalse(note.canSave)
+        XCTAssertFalse(note.requestClose())
+        note.decide(.cancel)
+        note.stop()
+        drainMain(0.8)
+        XCTAssertTrue(note.requestClose())  // nothing could be saved anyway
     }
 
     func testStopForQuitStopsTheRecorder() {

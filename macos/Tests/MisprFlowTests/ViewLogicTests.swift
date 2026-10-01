@@ -131,3 +131,41 @@ final class DevToolsTests: XCTestCase {
         XCTAssertEqual(DevTools.segmentReport(wav: Data()), "not a WAV with audio")
     }
 }
+
+/// Wording and small rules behind the save, delete and people screens.
+final class NotesWordingTests: XCTestCase {
+    func testDeleteConfirmationTitles() {
+        XCTAssertEqual(NotesView.deleteTitle([Samples.meeting("Standup")]), "Delete “Standup”?")
+        XCTAssertEqual(NotesView.deleteTitle([Samples.meeting(), Samples.meeting(), Samples.meeting()]), "Delete 3 notes?")
+    }
+
+    func testSaveCardDetail() {
+        XCTAssertEqual(SaveNoteCard.detail(lines: 1, seconds: 10), "1 line · 1 min · not saved yet")
+        XCTAssertEqual(SaveNoteCard.detail(lines: 14, seconds: 720), "14 lines · 12 min · not saved yet")
+    }
+
+    func testSaveQuestionTitles() {
+        XCTAssertEqual(SaveQuestionCard.title(recording: true, newNote: false), "Stop and save this note?")
+        XCTAssertEqual(SaveQuestionCard.title(recording: false, newNote: false), "Save this note before closing?")
+        XCTAssertEqual(SaveQuestionCard.title(recording: false, newNote: true), "Save this note before starting a new one?")
+    }
+
+    func testSelectionFollowsARename() {
+        XCTAssertEqual(PeopleView.renamed(["Female 1", "Sam"], "Female 1", to: " Priya "), ["Priya", "Sam"])
+        XCTAssertEqual(PeopleView.renamed(["Sam"], "Female 1", to: "Priya"), ["Sam"])
+        XCTAssertEqual(PeopleView.renamed(["Sam"], "Sam", to: ""), ["Sam"])
+    }
+
+    func testPersonSubtitlePrefersTheirCard() {
+        let person = PeopleIndex.Person(name: "Priya", role: "Design", meetings: 2, seconds: 60,
+                                        firstMet: Date(timeIntervalSince1970: 1_756_900_000), lastMet: Date())
+        XCTAssertTrue(PeopleView.subtitle(person, nil).hasPrefix("Design · First met "))
+        XCTAssertTrue(PeopleView.subtitle(person, Contact(role: "Lead", company: "Acme")).hasPrefix("Lead · Acme · First met "))
+    }
+
+    func testContactEditorKnowsARename() {
+        XCTAssertTrue(ContactEditor.isRename("Female 1", " Priya "))
+        XCTAssertFalse(ContactEditor.isRename("Priya", "Priya "))
+        XCTAssertFalse(ContactEditor.isRename("Priya", "  "))
+    }
+}

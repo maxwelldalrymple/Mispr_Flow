@@ -169,4 +169,24 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(window?.isVisible ?? true)
         controller.close()  // closing twice is harmless
     }
+
+    func testClosingWithAnUnsavedNoteKeepsThePanelAndAsks() {
+        let t = TestApp()
+        t.model.note.probe = { SystemSnapshot() }
+        t.model.note.permissionCheck = { true }
+        t.model.note.chosenSource = .inPerson
+        let recorder = FakeRecorder()
+        t.model.note.makeRecorder = { recorder }
+        let controller = NoteWindowController(model: t.model)
+        controller.show()
+        t.model.note.start()
+        drainMain(0.5)
+        let window = NSApp.windows.first { $0.title == "New note" }
+        XCTAssertFalse(window?.delegate?.windowShouldClose?(window!) ?? true)  // the red button never closes directly
+        XCTAssertEqual(t.model.note.pending, .close)
+        XCTAssertTrue(window?.isVisible ?? false)
+        t.model.note.decide(.discard)  // Discard closes it
+        drainMain(0.5)
+        XCTAssertFalse(window?.isVisible ?? true)
+    }
 }

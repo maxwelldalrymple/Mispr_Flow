@@ -251,3 +251,57 @@ final class ThemeTests: XCTestCase {
         _ = Theme.display(20)  // builds (used for every headline)
     }
 }
+
+/// Deleting notes, and renaming, removing and adding details for people, from the app.
+final class NotesAndPeopleActionsTests: XCTestCase {
+    var t: TestApp!
+
+    override func setUp() {
+        t = TestApp()
+        try? Samples.meeting("A", people: ["Priya Shah", "Jordan Lee"]).save(in: t.meetings)
+        try? Samples.meeting("B", people: ["Priya Shah"], daysAgo: 2).save(in: t.meetings)
+        t.model.reloadRecordings()
+        drainMain(0.5)
+        XCTAssertEqual(t.model.meetings.count, 2)
+    }
+
+    func testDeleteMeetingsRemovesThemAtOnceAndOnDisk() {
+        t.model.deleteMeetings(t.model.meetings)
+        XCTAssertTrue(t.model.meetings.isEmpty)
+        XCTAssertTrue(MeetingStore.load(from: t.meetings).isEmpty)
+        XCTAssertNil(t.model.notesError)
+    }
+
+    func testRenamePersonEverywhereAndMoveTheirCard() {
+        t.model.saveContact(Contact(email: "p@x.com"), for: "Priya Shah")
+        t.model.renamePerson("Priya Shah", to: "Priya S.")
+        drainMain(0.5)
+        XCTAssertEqual(PeopleIndex.people(t.model.meetings).first?.name, "Priya S.")
+        XCTAssertEqual(PeopleIndex.people(t.model.meetings).first?.meetings, 2)
+        XCTAssertEqual(t.model.contacts["Priya S."]?.email, "p@x.com")
+        XCTAssertNil(t.model.contacts["Priya Shah"])
+    }
+
+    func testSaveContactWithANewNameRenamesToo() {
+        t.model.saveContact(Contact(company: "Acme"), for: "Jordan Lee", newName: "Jordan")
+        drainMain(0.5)
+        XCTAssertEqual(t.model.contacts, ["Jordan": Contact(company: "Acme")])
+        XCTAssertTrue(PeopleIndex.people(t.model.meetings).contains { $0.name == "Jordan" })
+        XCTAssertEqual(ContactBook.load(from: ContactBook.url(in: t.meetings)), ["Jordan": Contact(company: "Acme")])
+    }
+
+    func testRemovePersonKeepsTheNotesAndDropsTheirCard() {
+        t.model.saveContact(Contact(phone: "555"), for: "Priya Shah")
+        t.model.removePerson("Priya Shah")
+        drainMain(0.5)
+        XCTAssertEqual(t.model.meetings.count, 2)
+        XCTAssertFalse(PeopleIndex.people(t.model.meetings).contains { $0.name == "Priya Shah" })
+        XCTAssertTrue(t.model.contacts.isEmpty)
+    }
+
+    func testFailuresShowAMessage() throws {
+        try FileManager.default.removeItem(at: t.meetings)  // the files vanished under us
+        t.model.renamePerson("Priya Shah", to: "P")
+        XCTAssertNotNil(t.model.notesError)
+    }
+}

@@ -9,6 +9,7 @@ import SwiftUI
 final class NoteWindowController {
     private var window: NSWindow?
     private let model: AppModel
+    private let closer = CloseButtonHandler()
     static let width: CGFloat = 470
     static let margin: CGFloat = 8
 
@@ -46,7 +47,13 @@ final class NoteWindowController {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// The ✕/‹ button, the window's close button: an unsaved note asks Save / Discard first.
     func close() {
+        guard model.note.requestClose() else { return show() }  // the question card is up
+        hide()
+    }
+
+    func hide() {
         guard let window, window.isVisible else { return }
         let off = window.frame.offsetBy(dx: Self.width + Self.margin * 2, dy: 0)
         NSAnimationContext.runAnimationGroup({ context in
@@ -67,6 +74,9 @@ final class NoteWindowController {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
+        window.delegate = closer
+        closer.close = { [weak self] in self?.close() }
+        model.note.closePanel = { [weak self] in self?.hide() }
         window.minSize = NSSize(width: 380, height: 480)
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         let host = NSHostingView(rootView: ThemedRoot { NoteView(close: { [weak self] in self?.close() }) }
@@ -76,6 +86,16 @@ final class NoteWindowController {
         host.sizingOptions = []
         window.contentView = host
         return window
+    }
+}
+
+/// The window's red close button goes through the same Save / Discard question as ‹.
+final class CloseButtonHandler: NSObject, NSWindowDelegate {
+    var close: () -> Void = {}
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        close()
+        return false
     }
 }
 
@@ -89,6 +109,9 @@ final class NoteModel: ObservableObject {
     }
 
     enum Phase: Equatable { case ready, recording, finishing, done }
+    /// Waiting on Save / Discard before: closing the panel, or starting a new note.
+    enum Pending: Equatable { case close, newNote }
+    enum Choice { case save, discard, cancel }
 
     @Published var tab: Tab = .transcript
     @Published var thoughts = ""
@@ -109,12 +132,18 @@ final class NoteModel: ObservableObject {
     /// What the Mac says the meeting is (refreshed until Start), and the user's pick, if any.
     @Published private(set) var detection = MeetingDetection(source: .inPerson, title: nil, evidence: "Checking…")
     @Published var chosenSource: MeetingSource?
+    /// The user pressed Save: only then is the note written (and kept up to date after).
+    @Published private(set) var kept = false
+    /// Shows the "Save this note?" card.
+    @Published var pending: Pending?
 
     /// Set by AppModel.
     weak var engine: Engine?
     var meetingsDir: () -> URL? = { nil }
     var incognito: () -> Bool = { false }
     var onSaved: () -> Void = {}
+    /// Hides the panel (set by NoteWindowController).
+    var closePanel: () -> Void = {}
 
     private(set) var meetingID = Meeting.newID()
     private var recorder: MeetingRecording?
@@ -134,6 +163,7 @@ final class NoteModel: ObservableObject {
     private var previewed: [String: (start: Double, samples: Int)] = [:]  // per stream: the phrase and how much of it was sent
     private var pendingChunks = 0
     private var savedURL: URL?
+    private var audioDir: URL?
     private var poll: Timer?
     private var detectTimer: Timer?
     private let chunkDir = FileManager.default.temporaryDirectory.appendingPathComponent("mispr-meeting-chunks")
@@ -141,6 +171,64 @@ final class NoteModel: ObservableObject {
     var source: MeetingSource { chosenSource ?? detection.source }
     var needsPermission: Bool { source.needsSystemAudio && !screenAudioAllowed }
     var recording: Bool { phase == .recording }
+    /// There's something that would be lost: recording, or words not saved yet. Incognito
+    /// notes are never saved, so only a running recording counts there.
+    var unsaved: Bool {
+        if recording || phase == .finishing { return !kept }
+        return !kept && !incognito() && !transcript.lines.isEmpty
+    }
+    var canSave: Bool { !kept && !incognito() && (recording || phase == .finishing || !transcript.lines.isEmpty) }
+
+    // MARK: - Save or discard
+
+    /// May the panel close now? If not, the "Save this note?" card is shown instead.
+    func requestClose() -> Bool {
+        guard unsaved else { return true }
+        pending = .close
+        return false
+    }
+
+    /// Keep this note: it's written now (or when the last words are in) and from then on every
+    /// change (summary, title, speaker names) updates it. Saving while recording stops first.
+    func saveNote() {
+        guard canSave else { return }
+        kept = true
+        if recording { stop() } else if phase == .done { save() }
+    }
+
+    /// Throw this note away: stop recording, delete its audio, and start fresh.
+    func discard() {
+        if recording {
+            previewTimer?.invalidate()
+            previewTimer = nil
+            recorder?.stop()
+            recorder = nil
+            engine?.send(.stopMeeting)
+        }
+        if let audioDir { try? FileManager.default.removeItem(at: audioDir) }
+        if let savedURL { try? FileManager.default.removeItem(at: savedURL) }
+        resetForNewNote()
+        pendingChunks = 0
+        summarizing = false
+        phase = .ready
+        onSaved()
+    }
+
+    /// The answer on the "Save this note?" card.
+    func decide(_ choice: Choice) {
+        let after = pending
+        pending = nil
+        switch choice {
+        case .cancel: return
+        case .save: saveNote()
+        case .discard: discard()
+        }
+        switch after {
+        case .close: closePanel()
+        case .newNote: start()
+        case nil: break
+        }
+    }
 
     // MARK: - Permission
 
@@ -198,7 +286,10 @@ final class NoteModel: ObservableObject {
         guard phase != .recording && phase != .finishing else { return }
         refreshPermission()
         guard !needsPermission else { tab = .transcript; return }  // the setup card asks first
-        if phase == .done && !resume { resetForNewNote() }
+        if phase == .done && !resume {
+            guard !unsaved else { pending = .newNote; return }
+            resetForNewNote()
+        }
         offsetBase = resume ? (finishedDuration ?? 0) : 0
         // Always try to record the Mac's sound, not only for detected calls: a call in a
         // background browser tab can look "in person", and missing the other side is worse than
@@ -206,6 +297,7 @@ final class NoteModel: ObservableObject {
         let systemAudio = true
         let audioDir = incognito() ? nil : meetingsDir()?.appendingPathComponent(String(meetingID.prefix(10)))
             .appendingPathComponent(meetingID)
+        self.audioDir = audioDir
         try? FileManager.default.createDirectory(at: chunkDir, withIntermediateDirectories: true)
         let recorder = makeRecorder()
         recorder.onChunk = { [weak self] stream, start, samples in self?.chunk(stream, start, samples) }
@@ -249,7 +341,7 @@ final class NoteModel: ObservableObject {
         recorder?.stop()  // flushes the last chunks
         recorder = nil
         engine?.send(.stopMeeting)
-        finishWhenTranscribed(deadline: Date().addingTimeInterval(30))
+        finishWhenTranscribed(id: meetingID, deadline: Date().addingTimeInterval(30))
     }
 
     /// The engine reported the meeting stopped (the widget's ■): follow it.
@@ -308,14 +400,15 @@ final class NoteModel: ObservableObject {
         }
     }
 
-    private func finishWhenTranscribed(deadline: Date) {
+    private func finishWhenTranscribed(id: String, deadline: Date) {
+        guard id == meetingID, phase == .finishing else { return }  // discarded meanwhile
         if pendingChunks > 0 && Date() < deadline {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.finishWhenTranscribed(deadline: deadline) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.finishWhenTranscribed(id: id, deadline: deadline) }
             return
         }
         phase = .done
         if transcript.lines.isEmpty { return }  // nothing was said: nothing to keep
-        save()
+        save()  // only if Save was pressed; otherwise the note waits for Save or Discard
         summarizing = true
         engine?.send(.summarize, ["id": meetingID, "lines": transcript.engineLines])
     }
@@ -324,9 +417,10 @@ final class NoteModel: ObservableObject {
         recording ? offsetBase + Date().timeIntervalSince(stretchStart ?? Date()) : (finishedDuration ?? 0)
     }
 
-    /// Write the note (unless Incognito); called again when the summary arrives or the title changes.
+    /// Write the note once Save was pressed (never in Incognito); called again when the
+    /// summary arrives or the title or a speaker's name changes.
     func save() {
-        guard phase == .done, !transcript.lines.isEmpty, !incognito(), let dir = meetingsDir(), let startedAt else { return }
+        guard kept, phase == .done, !transcript.lines.isEmpty, !incognito(), let dir = meetingsDir(), let startedAt else { return }
         let length = finishedDuration ?? Date().timeIntervalSince(startedAt)
         let meeting = transcript.meeting(id: meetingID, title: title, startedAt: startedAt, duration: length,
                                          source: source.rawValue, thoughts: thoughts, summary: summary)
@@ -357,6 +451,9 @@ final class NoteModel: ObservableObject {
         startedAt = nil
         finishedDuration = nil
         savedURL = nil
+        audioDir = nil
+        kept = false
+        pending = nil
         chosenSource = nil
     }
 
@@ -396,7 +493,11 @@ struct NoteView: View {
             Divider().overlay(Theme.cardStroke)
             ZStack {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                if note.needsPermission && !setupDismissed && note.phase != .recording {
+                if note.pending != nil {
+                    Color.black.opacity(0.25).ignoresSafeArea().onTapGesture { note.decide(.cancel) }
+                    SaveQuestionCard().padding(.horizontal, 22)
+                        .transition(.scale(scale: 0.96).combined(with: .opacity))
+                } else if note.needsPermission && !setupDismissed && note.phase != .recording {
                     Color.black.opacity(0.18).ignoresSafeArea()
                     SetupCard(back: { setupDismissed = true }, turnOn: { note.requestPermission() })
                         .padding(.horizontal, 18).padding(.top, 2)
@@ -419,6 +520,8 @@ struct NoteView: View {
         .background(Theme.content)
         .foregroundStyle(Theme.text)
         .ignoresSafeArea()
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: note.pending)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: note.kept)
         .alert("Rename speaker", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)
             Button("Rename") { if let r = renaming { note.rename(speaker: r, to: newName) }; renaming = nil }
@@ -680,6 +783,11 @@ struct NoteView: View {
                 .frame(maxHeight: 150)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Theme.card))
             }
+            if note.phase == .done && note.canSave {
+                SaveNoteCard()
+            } else if note.kept && note.phase == .done {
+                SavedChip()
+            }
             Text("Always let people know when you're transcribing them.")
                 .font(.system(size: 11)).foregroundStyle(Theme.secondary)
             HStack(spacing: 10) {
@@ -837,6 +945,135 @@ struct SettingsIllustration: View {
         }
         .padding(.horizontal, 5).padding(.vertical, 3)
         .background(RoundedRectangle(cornerRadius: 3).fill(highlight ? Color.white.opacity(0.14) : .clear))
+    }
+}
+
+/// After Stop: keep this note, or throw it away. Nothing is saved until you choose Save.
+struct SaveNoteCard: View {
+    @EnvironmentObject var note: NoteModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "doc.badge.plus").font(.system(size: 17, weight: .medium)).foregroundStyle(Theme.accent)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Theme.accent.opacity(0.14)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Keep this note?").font(.system(size: 13, weight: .semibold))
+                Text(Self.detail(lines: note.transcript.lines.count, seconds: note.duration))
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
+            Spacer(minLength: 6)
+            Button("Discard") { note.discard() }
+                .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                .help("Delete this note and its audio")
+            Button { note.saveNote() } label: { SaveLabel() }
+                .buttonStyle(PressableButton())
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save to Notetaker (⌘S)")
+        }
+        .padding(.leading, 12).padding(.trailing, 8).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.accent.opacity(0.35)))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// "14 lines · 12 min · not saved yet".
+    static func detail(lines: Int, seconds: Double) -> String {
+        let minutes = max(1, Int((seconds / 60).rounded()))
+        return "\(lines) line\(lines == 1 ? "" : "s") · \(minutes) min · not saved yet"
+    }
+}
+
+/// The accent "Save note" pill.
+struct SaveLabel: View {
+    var title = "Save note"
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+            Text(title).font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16).frame(height: 34)
+        .background(Capsule().fill(LinearGradient(colors: [Theme.accent.opacity(0.85), Theme.accent],
+                                                  startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .overlay(Capsule().stroke(.white.opacity(0.18)))
+        .shadow(color: Theme.accent.opacity(0.35), radius: 8, y: 3)
+    }
+}
+
+/// Shown once the note is kept.
+struct SavedChip: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            Text("Saved to Notetaker").font(.system(size: 12, weight: .medium))
+            Button("Open") {
+                model.page = .notetaker
+                (NSApp.delegate as? AppDelegate)?.showMainWindow()
+            }
+            .buttonStyle(.link).font(.system(size: 12))
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(Capsule().fill(Color.green.opacity(0.12)))
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
+    }
+}
+
+/// Closing (or starting a new note) with words that aren't saved: Save, Discard, or go back.
+struct SaveQuestionCard: View {
+    @EnvironmentObject var note: NoteModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: note.recording ? "record.circle" : "doc.text").font(.system(size: 26))
+                .foregroundStyle(note.recording ? Color.red : Theme.accent)
+                .frame(width: 54, height: 54)
+                .background(Circle().fill((note.recording ? Color.red : Theme.accent).opacity(0.12)))
+            VStack(spacing: 5) {
+                Text(Self.title(recording: note.recording, newNote: note.pending == .newNote))
+                    .font(.system(size: 16, weight: .semibold)).multilineTextAlignment(.center)
+                Text(note.canSave ? "Save it to Notetaker, or discard it and its audio. Closing never saves on its own."
+                     : "Incognito notes are never saved. Discarding stops the recording.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 8) {
+                if note.canSave {
+                    Button { note.decide(.save) } label: { SaveLabel().frame(maxWidth: .infinity) }
+                        .buttonStyle(PressableButton()).keyboardShortcut(.defaultAction)
+                }
+                Button { note.decide(.discard) } label: {
+                    Text("Discard").font(.system(size: 13, weight: .medium)).foregroundStyle(.red)
+                        .frame(maxWidth: .infinity).frame(height: 34)
+                        .background(Capsule().fill(Color.red.opacity(0.1)))
+                }
+                .buttonStyle(PressableButton())
+                Button(note.recording ? "Keep recording" : "Keep editing") { note.decide(.cancel) }
+                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    .keyboardShortcut(.cancelAction).padding(.top, 2)
+            }
+        }
+        .padding(22)
+        .frame(maxWidth: 320)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Theme.content))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.cardStroke))
+        .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
+    }
+
+    static func title(recording: Bool, newNote: Bool) -> String {
+        if recording { return "Stop and save this note?" }
+        return newNote ? "Save this note before starting a new one?" : "Save this note before closing?"
+    }
+}
+
+/// Shrinks a little while pressed.
+struct PressableButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed ? 0.96 : 1).opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }
 
