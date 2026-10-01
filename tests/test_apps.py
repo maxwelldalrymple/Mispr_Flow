@@ -194,3 +194,25 @@ class TestSound:
         events = []
         apps.press_media("play", post=events.append)
         assert len(events) == 2 and all(Quartz.CGEventGetType(e) == 14 for e in events)  # system-defined
+
+
+class TestSeek:
+    @pytest.mark.parametrize("said,expected", [
+        ("Skip forward 30 seconds.", ("seek", 30, None)), ("skip back 15 seconds", ("seek", -15, None)),
+        ("skip forward", ("seek", 10, None)), ("rewind 20 seconds", ("seek", -20, None)),
+        ("jump ahead 2 minutes", ("seek", 120, None)), ("go back 10 seconds in chrome", ("seek", -10, "chrome")),
+        ("skip backward thirty seconds", ("seek", -30, None)), ("rewind", ("seek", -10, None)),
+        ("next song", ("media", "next")),
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_one_arrow_per_five_seconds(self):
+        import Quartz
+        events = []
+        apps.seek(30, post=events.append)
+        downs = [e for e in events if Quartz.CGEventGetType(e) == Quartz.kCGEventKeyDown]
+        assert len(downs) == 6 and Quartz.CGEventGetIntegerValueField(downs[0], Quartz.kCGKeyboardEventKeycode) == 124
+        events.clear()
+        apps.seek(-7, post=events.append)  # rounds to one press back
+        assert len(events) == 2 and Quartz.CGEventGetIntegerValueField(events[0], Quartz.kCGKeyboardEventKeycode) == 123

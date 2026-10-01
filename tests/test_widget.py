@@ -1658,6 +1658,14 @@ class TestAppSwitcher:
         self.say(controller, clock, "mute terminal")
         assert "can't mute one app" in controller.notice[0]
 
+    def test_skip_forward_and_back(self, controller, clock, fronted, monkeypatch):
+        seeks = []
+        monkeypatch.setattr(W.apps, "seek", seeks.append)
+        self.say(controller, clock, "Skip forward 30 seconds")
+        self.say(controller, clock, "rewind 10 seconds in chrome")
+        assert seeks == [30, -10] and fronted == ["/A/Google Chrome.app"]
+        assert controller.notice[0] == "Back 10s · Google Chrome"
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()

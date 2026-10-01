@@ -634,6 +634,18 @@ class WidgetController:
         if kind == "media":
             apps.press_media(command[1])
             return self._switch_done({"play": "Play / pause", "next": "Next", "previous": "Previous"}[command[1]])
+        if kind == "seek":  # "skip forward 30 seconds", "rewind 1 minute in chrome"
+            _, seconds, name = command
+            word = f"{'Forward' if seconds > 0 else 'Back'} {abs(seconds)}s"
+            if name is None:
+                apps.seek(seconds)
+                return self._switch_done(word)
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            apps.bring_to_front(hit[1])
+            AppHelper.callLater(SHORTCUT_DELAY, apps.seek, seconds)
+            return self._switch_done(f"{word} · {hit[0]}")
         if kind == "volume":
             level = apps.set_volume(command[1])
             words = {"mute": "Sound muted", "unmute": "Sound on"}

@@ -42,7 +42,7 @@ def parse(text):
     said = _number_words(said)
     for pattern, make in _SOUND:
         m = pattern.match(said)
-        if m:
+        if m and make(m) is not None:
             return make(m)
     m = _SHORTCUT.match(said)
     if m:  # "new tab", "close tab in chrome", "chrome reload", "tab 3"
@@ -78,6 +78,12 @@ def parse(text):
 _SOUND = (
     (re.compile(r"^(?:please\s+)?(?:play|pause|resume|play pause|stop the music|stop music|unpause)(?:\s+(?:music|it|the music|video|the video|song))?$"),
      lambda m: ("media", "play")),
+    (re.compile(r"^(?:(?P<verb>skip|jump|go|fast)\s+)?(?P<dir>forward|ahead|back|backward|backwards|rewind)"
+                r"(?:\s+(?:by\s+)?(?P<n>\d+)\s*(?P<unit>seconds?|secs?|minutes?|mins?)?)?(?:\s+(?:in|on)\s+(?P<app>.+))?$"),
+     # plain "go back"/"forward" (no time, no skip/jump) is the browser's back/forward
+     lambda m: ("seek", _seek_seconds(m), m["app"]) if (m["n"] or m["verb"] in ("skip", "jump", "fast")) else None),
+    (re.compile(r"^rewind(?:\s+(?P<n>\d+)\s*(?P<unit>seconds?|secs?|minutes?|mins?)?)?(?:\s+(?:in|on)\s+(?P<app>.+))?$"),
+     lambda m: ("seek", -abs(_seek_seconds(m, "back")), m["app"])),
     (re.compile(r"^(?:next|skip)(?:\s+(?:track|song|one))?$"), lambda m: ("media", "next")),
     (re.compile(r"^(?:previous|last|go back a)\s+(?:track|song)$"), lambda m: ("media", "previous")),
     (re.compile(r"^(?:volume up|turn (?:it|the volume) up|louder|turn up(?: the volume)?)$"), lambda m: ("volume", "up")),
@@ -89,6 +95,31 @@ _SOUND = (
      lambda m: ("mute_tab", m["app"], not m["un"])),
     (re.compile(r"^(?P<un>un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"], not m["un"])),
 )
+
+SEEK_STEP = 5  # seconds per arrow-key press in YouTube, most web players, QuickTime, IINA
+SEEK_DEFAULT = 10
+
+
+def _seek_seconds(m, direction=None):
+    n = int(m["n"]) if m["n"] else SEEK_DEFAULT
+    if (m["unit"] or "").startswith("min"):
+        n *= 60
+    back = (direction or m["dir"]) in ("back", "backward", "backwards", "rewind")
+    return -n if back else n
+
+
+def seek(seconds, post=None):
+    """Skip forward (+) or back (-): one arrow-key press per 5 seconds, in the app in front."""
+    import Quartz
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
+    key = 124 if seconds > 0 else 123  # right / left arrow
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for _ in range(max(1, round(abs(seconds) / SEEK_STEP))):
+        for down in (True, False):
+            event = Quartz.CGEventCreateKeyboardEvent(source, key, down)
+            Quartz.CGEventSetFlags(event, 0)
+            post(event)
+
 
 MEDIA_KEYS = {"play": 16, "next": 17, "previous": 18}  # NX_KEYTYPE_PLAY / NEXT / PREVIOUS
 
