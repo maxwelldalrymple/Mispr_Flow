@@ -435,3 +435,13 @@ class TestPostCmdV:
             flags = Quartz.CGEventGetFlags(e)
             assert flags & Quartz.kCGEventFlagMaskCommand
             assert not flags & Quartz.kCGEventFlagMaskSecondaryFn  # fn must not leak into the paste
+
+
+class TestBrowserHelpers:
+    def test_is_browser(self):
+        assert context.is_browser({"bundle_id": "com.google.Chrome"})
+        assert not context.is_browser({"bundle_id": "com.apple.finder"}) and not context.is_browser(None)
+
+    def test_focus_chain_reads_this_mac(self):
+        chain = context.focus_chain()
+        assert isinstance(chain, str) and chain

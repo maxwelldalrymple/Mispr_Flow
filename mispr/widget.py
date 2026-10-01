@@ -101,6 +101,9 @@ INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
 SWITCH_NOTICE = "Say an app to switch to"
 SWITCH_RESULT_SECONDS = 2.5
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
+AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
+AUTO_ENTER_NOTICE_SECONDS = 2.0
+TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -384,7 +387,13 @@ class WidgetController:
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
+        was_auto_enter = self.settings.auto_enter
         self.settings = settings.load()
+        if self.settings.auto_enter != was_auto_enter:  # say so, by sound and on the widget
+            self.sounds.enabled = self.settings.sounds
+            self.sounds.play(sounds.LOCK)
+            self.show_notice("Auto-Enter on ⏎" if self.settings.auto_enter else "Auto-Enter off",
+                             AUTO_ENTER_NOTICE_SECONDS, (IDLE, HOVER))
         self.sounds.enabled = self.settings.sounds
         self.apply_prompts()
         log(f"settings reloaded: {self.settings}")
@@ -439,6 +448,10 @@ class WidgetController:
         if text:
             target = context.frontmost()  # where the text is about to land
             where, why = context.focused_text_target()
+            if where == context.NO and context.is_browser(target):
+                time.sleep(TEXT_BOX_RECHECK)  # focus may still be moving into the box
+                where, why = context.focused_text_target()
+                why += f" [after a recheck; focused: {context.focus_chain()}]"
             log(f"text box: {where} ({why})")
             incognito = self.settings.incognito
             if where == context.NO:
@@ -814,6 +827,11 @@ class WidgetController:
             draw.stroke_round(r, shape.radius, INCOGNITO_COLOR.colorWithAlphaComponent_(max(0.85, shape.stroke)), 1.5)
         else:
             draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
+        if self.settings.auto_enter:
+            # A small ⏎ badge on the corner whenever Auto-Enter is on.
+            bx, by = r.right - 3, r.top - 3
+            draw.fill_circle(bx, by, 6.5, NSColor.colorWithSRGBRed_green_blue_alpha_(*AUTO_ENTER_COLOR, 1.0))
+            draw.symbol("return", bx, by, 7, weight=NSFontWeightBold)
 
         if s == HOVER:
             draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)

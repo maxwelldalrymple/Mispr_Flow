@@ -1564,6 +1564,64 @@ class TestAppSwitcher:
         assert controller.hold_source != "switch"
 
 
+class TestAutoEnterCues:
+    """You can tell Auto-Enter is on: a chime and a notice when it changes, a ⏎ badge while on."""
+
+    def toggle(self, controller, on):
+        W.settings.save(W.settings.Settings(auto_enter=on))
+        controller.reload_settings()
+
+    def test_turning_it_on_and_off_chimes_and_says_so(self, controller):
+        self.toggle(controller, True)
+        assert controller.sounds.played == ["lock"] and controller.notice[0] == "Auto-Enter on ⏎"
+        self.toggle(controller, False)
+        assert controller.sounds.played == ["lock", "lock"] and controller.notice[0] == "Auto-Enter off"
+
+    def test_other_setting_changes_stay_quiet(self, controller):
+        W.settings.save(W.settings.Settings(cleanup=False))
+        controller.reload_settings()
+        assert controller.sounds.played == [] and controller.notice is None
+
+    def test_no_chime_when_sounds_are_off(self, controller):
+        W.settings.save(W.settings.Settings(auto_enter=True, sounds=False))
+        controller.reload_settings()
+        assert controller.sounds.enabled is False and controller.notice[0] == "Auto-Enter on ⏎"
+
+    def test_badge_is_drawn_only_while_on(self, controller):
+        controller.state = W.IDLE
+        controller.shape = W.layout(W.IDLE).bg.values()
+        r = W.Shape.from_values(controller.shape).rect
+        def blue_pixels():
+            img, _ = render(controller.draw, W.VIEW_W, W.VIEW_H)
+            rgb = img[..., :3].astype(int)
+            return int(((rgb[..., 2] > 200) & (rgb[..., 0] < 120)).sum())
+        assert blue_pixels() == 0
+        controller.settings.auto_enter = True
+        assert blue_pixels() > 20
+
+
+class TestBrowserTextBoxRecheck:
+    """A browser box that is still taking focus (YouTube's comment box) gets a second look."""
+
+    def test_browser_no_is_checked_again(self, controller, monkeypatch):
+        answers = [(W.context.NO, "Google Chrome"), (W.context.YES, "Google Chrome")]
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: answers.pop(0))
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"app": "Google Chrome", "bundle_id": "com.google.Chrome", "url": None, "page_title": None})
+        monkeypatch.setattr(W.context, "focus_chain", lambda: "AXTextArea < AXWebArea")
+        slept = []
+        monkeypatch.setattr(W.time, "sleep", slept.append)
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and slept == [W.TEXT_BOX_RECHECK]
+
+    def test_other_apps_are_not_rechecked(self, controller, monkeypatch):
+        calls = []
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: calls.append(1) or (W.context.NO, "Finder"))
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert calls == [1] and controller.copied == ["Hi."]
+
+
 class TestIncognitoNeverUsesTheClipboard:
     def deliver(self, controller, monkeypatch, target):
         monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))

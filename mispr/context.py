@@ -131,6 +131,28 @@ def focused_text_target():
     return text_target(app.processIdentifier(), electron), f"{app.localizedName()}{' (Electron)' if electron else ''}"
 
 
+def is_browser(info):
+    """True for a frontmost() result that is a web browser."""
+    return bool(info) and info.get("bundle_id") in BROWSERS
+
+
+def focus_chain(limit=4):
+    """Roles from the focused element up ("AXGroup < AXWebArea < ..."), for the debug log."""
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    if app is None:
+        return "nothing"
+    try:
+        ax = AS.AXUIElementCreateApplication(app.processIdentifier())
+        AS.AXUIElementSetMessagingTimeout(ax, _AX_TIMEOUT)
+        node, roles = _attr(ax, "AXFocusedUIElement"), []
+        while node is not None and len(roles) < limit:
+            roles.append(str(_attr(node, "AXRole")))
+            node = _attr(node, "AXParent")
+        return " < ".join(roles) or "nothing"
+    except Exception as e:
+        return f"unreadable ({e})"
+
+
 def frontmost(include_page=True):
     """{"app", "bundle_id", "url", "page_title"} for the frontmost app."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
