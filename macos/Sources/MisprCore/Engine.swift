@@ -35,6 +35,10 @@ public final class Engine: ObservableObject {
     @Published public private(set) var settingsFile: URL?
     /// Fires on the main thread for each saved dictation.
     public let saved = PassthroughSubject<URL, Never>()
+    /// The widget's note button was clicked.
+    public let noteRequested = PassthroughSubject<Void, Never>()
+    /// A meeting is being recorded (the widget shows its meeting pill).
+    @Published public private(set) var meetingActive = false
     /// The engine exited cleanly by itself (e.g. Quit from its menu-bar icon): quit the app too.
     public var onCleanExit: () -> Void = {}
 
@@ -124,6 +128,10 @@ public final class Engine: ObservableObject {
             state = .running
         case let .saved(url):
             saved.send(url)
+        case .openNote:
+            noteRequested.send()
+        case let .meeting(active):
+            meetingActive = active
         case .unknown:
             break
         }
@@ -134,6 +142,7 @@ public final class Engine: ObservableObject {
         process = nil
         input = nil
         output = nil
+        meetingActive = false
         if stopping { state = .stopped; return }
         if status == 0 { state = .stopped; onCleanExit(); return }
         crashes = crashes.filter { now.timeIntervalSince($0) < Self.restartWindow } + [now]

@@ -27,6 +27,7 @@ struct RootView: View {
             .help(sidebarVisible ? "Hide sidebar" : "Show sidebar")
         }
         .overlay(alignment: .top) { EngineBanner() }
+        .overlay(alignment: .topTrailing) { IncognitoSwitch().padding(.top, 10).padding(.trailing, 18) }
         .overlay {
             if model.showSettings { SettingsModal() }
         }
@@ -41,7 +42,13 @@ struct RootView: View {
         case .notetaker:
             PlaceholderView(title: "Notetaker", symbol: "record.circle",
                             message: "Record a meeting, get a transcript with speaker labels and a summary, all on your Mac.",
-                            detail: "Coming soon. The ◉ button on the widget already opens a meeting pill.")
+                            detail: "Open a note with the ◉ button on the widget, or here. Live transcription is coming next.")
+                .overlay(alignment: .topTrailing) {
+                    Button { model.openNote() } label: {
+                        Label("New note", systemImage: "plus").font(.system(size: 13, weight: .medium))
+                    }
+                    .buttonStyle(OutlineButton()).padding(.top, 36).padding(.trailing, 40)
+                }
         case .style:
             PlaceholderView(title: "Style", symbol: "textformat",
                             message: "Choose how your dictation is written in messages, work chat, email, and everything else.",
@@ -144,5 +151,48 @@ struct PlaceholderView: View {
         .padding(.horizontal, 40).padding(.top, 36)
         .frame(maxWidth: 900, alignment: .leading)
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Incognito in the window's top-right corner, with an explanation on hover.
+struct IncognitoSwitch: View {
+    @EnvironmentObject var model: AppModel
+    @State private var showInfo = false
+
+    var body: some View {
+        let on = model.setting("incognito")
+        HStack(spacing: 7) {
+            Image(systemName: on ? "eye.slash.fill" : "eye.slash").font(.system(size: 12))
+                .foregroundStyle(on ? Theme.text : Theme.secondary)
+            Text("Incognito").font(.system(size: 12, weight: on ? .semibold : .regular))
+            Toggle("", isOn: model.binding("incognito")).toggleStyle(.switch).labelsHidden().controlSize(.mini)
+            Image(systemName: "info.circle").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                .onHover { showInfo = $0 }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Capsule().fill(on ? Theme.selection : Color.clear))
+        .overlay(alignment: .topTrailing) {
+            if showInfo {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(on ? "Incognito is on" : "Incognito is off").font(.system(size: 12, weight: .semibold))
+                    Text("When it's on, nothing you dictate is saved: the audio stays in locked memory and is wiped right after it's transcribed, and no text or history is written to disk. History and Insights pause until you turn it off.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Dictation works the same either way, and nothing ever leaves your Mac.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(width: 280, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.content))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardStroke))
+                .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+                .offset(y: 34)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: showInfo)
+        .zIndex(10)
     }
 }

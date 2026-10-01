@@ -146,7 +146,10 @@ def _connect_host(app, widget, open_setup):
     dictation, and follow its commands. Quitting the app (stdin closes) quits the engine."""
     quit_app = lambda: app.terminate_(None)
     widget.on_saved = lambda path: host.send("saved", path=str(path))
-    host.listen({"open_setup": open_setup, "reload_settings": widget.reload_settings, "quit": quit_app},
+    widget.on_note_requested = lambda: host.send("open_note")
+    widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
+    host.listen({"open_setup": open_setup, "reload_settings": widget.reload_settings, "quit": quit_app,
+                 "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting},
                 on_eof=quit_app)
     host.send("hello", recordings_dir=str(storage.RECORDINGS_DIR), settings_path=str(settings.SETTINGS_PATH))
 

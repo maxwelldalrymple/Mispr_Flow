@@ -110,7 +110,9 @@ class TestConnectHost:
 
         class Widget:
             reload_settings = object()
-            on_saved = None
+            begin_meeting = object()
+            stop_meeting = object()
+            on_saved = on_note_requested = on_meeting_changed = None
 
         opened = object()
         widget = Widget()
@@ -120,6 +122,12 @@ class TestConnectHost:
         assert listened["handlers"]["reload_settings"] is Widget.reload_settings
         widget.on_saved("/r/a.json")
         assert sent[-1] == ("saved", {"path": "/r/a.json"})
+        assert listened["handlers"]["start_meeting"] is Widget.begin_meeting
+        assert listened["handlers"]["stop_meeting"] is Widget.stop_meeting
+        widget.on_note_requested()
+        assert sent[-1] == ("open_note", {})
+        widget.on_meeting_changed(True)
+        assert sent[-1] == ("meeting", {"active": True})
         listened["handlers"]["quit"]()
         listened["eof"]()
         assert App.terminated == 2

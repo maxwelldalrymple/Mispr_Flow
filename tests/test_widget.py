@@ -1395,3 +1395,37 @@ class TestHostHooks:
         monkeypatch.setattr(W.settings, "load", lambda: W.settings.Settings(sounds=False, cleanup=False))
         controller.reload_settings()
         assert controller.sounds.enabled is False and controller.settings.cleanup is False
+
+
+class TestNoteWindowHooks:
+    def test_note_button_starts_a_meeting_when_standalone(self, controller):
+        controller.set_state(W.HOVER)
+        click(controller, "note")
+        assert controller.state == W.MEETING
+
+    def test_note_button_asks_the_app_when_hosted(self, controller):
+        asked = []
+        controller.on_note_requested = lambda: asked.append(True)
+        controller.set_state(W.HOVER)
+        click(controller, "note")
+        assert asked == [True] and controller.state == W.IDLE and controller.sounds.played == []
+
+    def test_meeting_changes_are_reported(self, controller, clock):
+        seen = []
+        controller.on_meeting_changed = seen.append
+        controller.begin_meeting()
+        clock.advance(30)
+        controller.stop_meeting()
+        assert seen == [True, False]
+
+    @pytest.mark.parametrize("state", [W.HOLD, W.HANDSFREE, W.PROCESSING, W.MEETING, W.SETUP])
+    def test_start_meeting_ignored_while_busy(self, controller, state):
+        controller.state = state
+        controller.begin_meeting()
+        assert controller.state == state and controller.sounds.played == []
+
+    def test_stop_meeting_ignored_when_not_in_one(self, controller):
+        seen = []
+        controller.on_meeting_changed = seen.append
+        controller.stop_meeting()
+        assert controller.state == W.IDLE and seen == [] and controller.sounds.played == []

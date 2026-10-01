@@ -38,16 +38,22 @@ struct Card<Content: View>: View {
     }
 }
 
-/// The logo: the app icon when running as the .app, a waveform symbol otherwise.
+/// The logo (a ring around five waveform bars) drawn as shapes, so it's sharp at any size;
+/// the 1024 px PNG with its soft glow went blurry when shrunk to sidebar size.
 struct Logo: View {
     var size: CGFloat = 22
+    static let bars: [CGFloat] = [0.42, 0.62, 1.0, 0.62, 0.42]  // heights, as in icon.png
 
     var body: some View {
-        if let image = NSImage(named: "icon") ?? Bundle.main.url(forResource: "icon", withExtension: "png").flatMap(NSImage.init(contentsOf:)) {
-            Image(nsImage: image).resizable().interpolation(.high).frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
-        } else {
-            Image(systemName: "waveform.circle.fill").resizable().frame(width: size, height: size)
+        ZStack {
+            Circle().fill(Color.black)
+            Circle().strokeBorder(Color.white, lineWidth: max(1, size * 0.06)).padding(size * 0.04)
+            HStack(spacing: size * 0.075) {
+                ForEach(Array(Self.bars.enumerated()), id: \.offset) { _, height in
+                    Capsule().fill(Color.white).frame(width: size * 0.075, height: size * 0.5 * height)
+                }
+            }
         }
+        .frame(width: size, height: size)
     }
 }

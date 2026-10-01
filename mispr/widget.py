@@ -263,6 +263,9 @@ class WidgetController:
         self.sounds = sounds.Sounds()
         self.sounds.enabled = self.settings.sounds
         self.on_saved = lambda path: None  # the Swift app refreshes its history from this
+        # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
+        self.on_note_requested = None
+        self.on_meeting_changed = lambda active: None
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -555,12 +558,26 @@ class WidgetController:
             self.fn_consumed = True
             self.discard_quietly()
 
+    def request_note(self):
+        """The ◉ button: open the note window when the app hosts us, else start right away."""
+        if self.on_note_requested is not None:
+            self.to_idle()
+            self.on_note_requested()
+        else:
+            self.begin_meeting()
+
     def begin_meeting(self):
+        if self.state not in (IDLE, HOVER):
+            return  # busy dictating, processing, or already in a meeting
         self.sounds.play(sounds.START)
         self.meeting_started = time.monotonic()
         self.set_state(MEETING)
+        self.on_meeting_changed(True)
 
     def stop_meeting(self):
+        if self.state != MEETING:
+            return
+        self.on_meeting_changed(False)
         self.sounds.play(sounds.STOP)
         if time.monotonic() - self.meeting_started < MIN_MEETING_SECONDS:
             self.set_state(MISTAKE)
@@ -600,7 +617,7 @@ class WidgetController:
             return
         action = {
             (HOVER, "mic"): self.begin_handsfree,
-            (HOVER, "note"): self.begin_meeting,
+            (HOVER, "note"): self.request_note,
             (HANDSFREE, "cancel"): self.cancel,
             (HANDSFREE, "finish"): self.finish,
             (MEETING, "stop"): self.stop_meeting,

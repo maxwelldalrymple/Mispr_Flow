@@ -5,10 +5,12 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var window: NSWindow?
+    private lazy var noteWindow = NoteWindowController(model: model)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = makeMainMenu()
         model.engine.onCleanExit = { NSApp.terminate(nil) }
+        model.openNote = { [weak self] in self?.noteWindow.show() }
         model.start()
         showMainWindow()
     }

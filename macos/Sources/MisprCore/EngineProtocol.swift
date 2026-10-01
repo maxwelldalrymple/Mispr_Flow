@@ -9,6 +9,10 @@ public enum EngineEvent: Equatable {
     case hello(recordingsDir: URL, settingsFile: URL)
     /// A dictation was saved (not sent in Incognito).
     case saved(URL)
+    /// The widget's note button was clicked: show the note window.
+    case openNote
+    /// A meeting recording started or stopped (from the note window or the widget's pill).
+    case meeting(active: Bool)
     /// A well-formed event this version doesn't know.
     case unknown(String)
 
@@ -28,6 +32,11 @@ public enum EngineEvent: Equatable {
         case "saved":
             guard let path = object["path"] as? String else { return nil }
             return .saved(URL(fileURLWithPath: path))
+        case "open_note":
+            return .openNote
+        case "meeting":
+            guard let active = object["active"] as? Bool else { return nil }
+            return .meeting(active: active)
         default:
             return .unknown(event)
         }
@@ -37,6 +46,8 @@ public enum EngineEvent: Equatable {
 public enum EngineCommand: String {
     case openSetup = "open_setup"
     case reloadSettings = "reload_settings"
+    case startMeeting = "start_meeting"
+    case stopMeeting = "stop_meeting"
     case quit
 
     public var line: String { "{\"cmd\": \"\(rawValue)\"}\n" }

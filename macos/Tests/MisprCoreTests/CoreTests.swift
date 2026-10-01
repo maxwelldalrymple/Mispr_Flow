@@ -12,6 +12,26 @@ final class EngineProtocolTests: XCTestCase {
         XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "saved", "path": "/r/a.wav"}"#), .saved(URL(fileURLWithPath: "/r/a.wav")))
     }
 
+    func testNoteAndMeetingEvents() {
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note"}"#), .openNote)
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "meeting", "active": true}"#), .meeting(active: true))
+        XCTAssertNil(EngineEvent.parse(#"@mispr {"event": "meeting"}"#))
+        XCTAssertEqual(EngineCommand.startMeeting.rawValue, "start_meeting")  // must match mispr/app.py
+        XCTAssertEqual(EngineCommand.stopMeeting.rawValue, "stop_meeting")
+    }
+
+    func testEngineTracksMeetingAndNoteRequests() {
+        let engine = Engine(config: nil)
+        var requests = 0
+        let sub = engine.noteRequested.sink { requests += 1 }
+        engine.receive(Data("@mispr {\"event\": \"open_note\"}\n@mispr {\"event\": \"meeting\", \"active\": true}\n".utf8))
+        XCTAssertEqual(requests, 1)
+        XCTAssertTrue(engine.meetingActive)
+        engine.exited(status: 1)
+        XCTAssertFalse(engine.meetingActive)  // a crashed engine isn't recording
+        sub.cancel()
+    }
+
     func testIgnoresOtherOutput() {
         for line in ["", "hello", "mispr: already running", #"{"event": "saved", "path": "/x"}"#, "@mispr not json",
                      #"@mispr {"no_event": 1}"#, #"@mispr {"event": "hello"}"#, #"@mispr {"event": "saved"}"#] {

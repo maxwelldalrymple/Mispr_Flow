@@ -29,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var recordings: [Recording] = []
     @Published private(set) var stats = Stats()
     @Published private(set) var settingsError: String?
+    let note = NoteModel()
+    /// Set by AppDelegate: shows the note side window.
+    var openNote: () -> Void = {}
     private var cancellables: Set<AnyCancellable> = []
 
     init() {
@@ -40,6 +43,8 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.reloadRecordings() }
         }.store(in: &cancellables)
         engine.saved.sink { [weak self] _ in self?.reloadRecordings() }.store(in: &cancellables)
+        engine.noteRequested.sink { [weak self] in self?.openNote() }.store(in: &cancellables)
+        engine.$meetingActive.sink { [weak self] active in self?.note.meetingChanged(active) }.store(in: &cancellables)
     }
 
     func start() {
