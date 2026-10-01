@@ -13,6 +13,20 @@ struct RootView: View {
             page
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(RoundedRectangle(cornerRadius: 16).fill(Theme.content))
+                .overlay {
+                    // Incognito: a purple frame around the page, like the widget's outline.
+                    if model.setting("incognito") {
+                        RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.incognito, lineWidth: 2)
+                            .overlay(alignment: .top) {
+                                Label("Incognito · nothing is saved", systemImage: "eye.slash.fill")
+                                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 10).padding(.vertical, 4)
+                                    .background(Capsule().fill(Theme.incognito))
+                                    .offset(y: -11)
+                            }
+                            .allowsHitTesting(false)
+                    }
+                }
                 .padding(.top, 44)
                 .padding([.trailing, .bottom], 10)
                 .padding(.leading, sidebarVisible ? 0 : 10)
@@ -167,14 +181,16 @@ struct IncognitoSwitch: View {
         let on = model.setting("incognito")
         HStack(spacing: 7) {
             Image(systemName: on ? "eye.slash.fill" : "eye.slash").font(.system(size: 12))
-                .foregroundStyle(on ? Theme.text : Theme.secondary)
+                .foregroundStyle(on ? Theme.incognito : Theme.secondary)
             Text("Incognito").font(.system(size: 12, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Theme.incognito : Theme.text)
             Toggle("", isOn: model.binding("incognito")).toggleStyle(.switch).labelsHidden().controlSize(.mini)
+                .tint(Theme.incognito)
             Image(systemName: "info.circle").font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 .onHover { showInfo = $0 }
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(Capsule().fill(on ? Theme.selection : Color.clear))
+        .background(Capsule().fill(on ? Theme.incognito.opacity(0.16) : Color.clear))
         .overlay(alignment: .topTrailing) {
             if showInfo {
                 VStack(alignment: .leading, spacing: 6) {

@@ -98,6 +98,7 @@ MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation af
 COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
 COPIED_NOTICE = "No text box · Copied to clipboard"
 INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
+INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -737,7 +738,11 @@ class WidgetController:
         s = self.state
 
         draw.fill_round(r, shape.radius, white(0.0, shape.fill))
-        draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
+        if self.settings.incognito:
+            # A purple outline whenever Incognito is on, so you can tell at a glance.
+            draw.stroke_round(r, shape.radius, INCOGNITO_COLOR.colorWithAlphaComponent_(max(0.85, shape.stroke)), 1.5)
+        else:
+            draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
 
         if s == HOVER:
             draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)

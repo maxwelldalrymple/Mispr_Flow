@@ -1,3 +1,4 @@
+import Charts
 import MisprCore
 import SwiftUI
 
@@ -68,6 +69,7 @@ struct InsightsView: View {
                 Card(padding: 20) { StreakView(stats: stats) }
             }
             .fixedSize(horizontal: false, vertical: true)
+            MoreInsightsView(more: model.more, totalWords: stats.totalWords)
         }
     }
 
@@ -239,6 +241,190 @@ struct VoiceView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title).font(Theme.display(20))
                 Text(value).font(.system(size: 14)).foregroundStyle(Theme.secondary)
+            }
+        }
+    }
+}
+
+/// Time saved, week over week, fillers, vocabulary, when and where you dictate, and pace.
+struct MoreInsightsView: View {
+    let more: MoreInsights
+    let totalWords: Int
+    @Environment(\.colorScheme) private var scheme
+    private var chartColor: Color { Theme.resolved(\.accent, scheme) }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            HStack(alignment: .top, spacing: 20) {
+                fact("clock.arrow.circlepath", "\(more.minutesSaved) min", "Saved vs typing",
+                     "At a typical 40 wpm, minus the time you spent talking.")
+                fact("calendar", more.thisWeekWords.formatted(), "Words this week", weekDetail)
+                fact("scissors", "\(more.fillersRemoved)", "Filler words cleaned up",
+                     more.topFillers.isEmpty ? "None yet." : "Mostly " + more.topFillers.map { "“\($0)”" }.joined(separator: ", ") + ".")
+                fact("character.book.closed", more.uniqueWords.formatted(), "Different words used",
+                     "That's " + MoreInsights.equivalent(words: totalWords) + " in total.")
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 20) {
+                Card(padding: 20) { hours }
+                Card(padding: 20) { apps }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 20) {
+                Card(padding: 20) { weekdays }
+                if more.dailyPace.count >= 2 { Card(padding: 20) { pace } }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            funFacts
+        }
+    }
+
+    private var weekDetail: String {
+        guard let change = more.weekChange else { return "Nothing last week to compare with." }
+        if change == 0 { return "Same as last week." }
+        return "\(abs(change))% \(change > 0 ? "more" : "less") than last week (\(more.lastWeekWords.formatted()))."
+    }
+
+    private func fact(_ symbol: String, _ value: String, _ label: String, _ detail: String) -> some View {
+        Card(padding: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Theme.accent)
+                Text(value).font(.system(size: 24, weight: .medium))
+                Text(label.uppercased()).font(.system(size: 10.5, weight: .medium)).tracking(0.8).foregroundStyle(Theme.secondary)
+                Text(detail).font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var hours: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: more.persona.symbol).font(.system(size: 20)).foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(more.persona.rawValue).font(.system(size: 20, weight: .medium))
+                    Text(more.persona.detail).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                }
+            }
+            Bars(values: more.byHour, labels: [0: "12a", 6: "6a", 12: "12p", 18: "6p"], color: chartColor)
+                .frame(height: 110)
+            Text("When you dictate, by hour of day").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+        }
+    }
+
+    private var weekdays: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Your week").font(.system(size: 20, weight: .medium))
+            Bars(values: more.byWeekday, labels: [0: "S", 1: "M", 2: "T", 3: "W", 4: "T", 5: "F", 6: "S"],
+                 color: chartColor, labelEvery: true)
+                .frame(height: 110)
+            Text("Words by day of the week").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+        }
+    }
+
+    private var funFacts: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("FUN FACTS").font(.system(size: 11, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 3), spacing: 20) {
+                fact("keyboard", more.keystrokesSaved.formatted(), "Keystrokes skipped", "Every character you didn't have to type.")
+                fact("waveform", talkTime, "Spent talking", "Total time your Mac listened.")
+                fact("trophy", more.biggestDay.map { $0.words.formatted() } ?? "–", "Biggest day",
+                     more.biggestDay.map { $0.day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()) } ?? "No dictations yet.")
+                fact("hare", more.fastest.map { "\($0.wpm) wpm" } ?? "–", "Fastest dictation",
+                     more.fastest.map { "“\(snippet($0.text))”" } ?? "Needs a dictation of 10+ words.")
+                fact("text.alignleft", more.longest.map { "\($0.words) words" } ?? "–", "Longest dictation",
+                     more.longest.map { "\(Int($0.seconds.rounded())) seconds without stopping." } ?? "No dictations yet.")
+                fact("quote.bubble", more.catchphrase.map { "“\($0)”" } ?? "–", "Your catchphrase",
+                     more.catchphrase == nil ? "Nothing repeated yet." : "The phrase you say most.")
+                fact("questionmark.bubble", "\(more.questions)", "Questions asked", "Count of question marks in your dictation.")
+                fact("hand.wave", "\(more.politeness)", "Pleases & thank-yous", more.politeness > 5 ? "Your Mac appreciates it." : "Manners are free.")
+                fact("arrow.uturn.backward", "\(more.selfCorrections)", "Changed your mind",
+                     "“No wait”, “sorry” and “I mean” that cleanup handled.")
+            }
+        }
+    }
+
+    private var talkTime: String {
+        let minutes = Int(more.talkSeconds / 60)
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : minutes > 0 ? "\(minutes) min" : "\(Int(more.talkSeconds)) s"
+    }
+
+    private func snippet(_ text: String) -> String {
+        text.count > 60 ? String(text.prefix(57)) + "…" : text
+    }
+
+    private var apps: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Where your words go").font(.system(size: 20, weight: .medium))
+            if more.topApps.isEmpty {
+                Text("No dictations yet.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            }
+            let top = Double(more.topApps.first?.words ?? 1)
+            ForEach(more.topApps) { app in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(app.app).font(.system(size: 13))
+                        Spacer()
+                        Text("\(app.words.formatted()) words").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    }
+                    GeometryReader { geo in
+                        Capsule().fill(Theme.accent.opacity(0.8))
+                            .frame(width: max(6, geo.size.width * Double(app.words) / top), height: 6)
+                    }
+                    .frame(height: 6)
+                }
+            }
+        }
+    }
+
+    private var pace: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Your pace").font(.system(size: 20, weight: .medium))
+                Spacer()
+                Text("WORDS PER MINUTE, BY DAY").font(.system(size: 11, weight: .medium)).tracking(0.8).foregroundStyle(Theme.secondary)
+            }
+            Chart(more.dailyPace) { day in
+                AreaMark(x: .value("Day", day.day, unit: .day), y: .value("WPM", day.wpm))
+                    .foregroundStyle(LinearGradient(colors: [chartColor.opacity(0.35), chartColor.opacity(0.02)],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.catmullRom)
+                LineMark(x: .value("Day", day.day, unit: .day), y: .value("WPM", day.wpm))
+                    .foregroundStyle(chartColor).interpolationMethod(.catmullRom)
+                PointMark(x: .value("Day", day.day, unit: .day), y: .value("WPM", day.wpm))
+                    .foregroundStyle(chartColor).symbolSize(24)
+            }
+            .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+            .frame(height: 140)
+        }
+    }
+}
+
+/// Simple bar chart drawn with shapes (themed colors, highlights the tallest bar).
+struct Bars: View {
+    let values: [Int]
+    let labels: [Int: String]
+    let color: Color
+    var labelEvery = false
+
+    var body: some View {
+        let top = max(values.max() ?? 0, 1)
+        VStack(spacing: 6) {
+            GeometryReader { geo in
+                HStack(alignment: .bottom, spacing: labelEvery ? 10 : 3) {
+                    ForEach(Array(values.enumerated()), id: \.offset) { index, value in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color.opacity(value == top && value > 0 ? 1 : value > 0 ? 0.55 : 0.12))
+                            .frame(height: max(3, geo.size.height * CGFloat(value) / CGFloat(top)))
+                            .frame(maxWidth: .infinity)
+                            .help("\(labels[index] ?? "\(index)"): \(value)")
+                    }
+                }
+            }
+            HStack(spacing: labelEvery ? 10 : 3) {
+                ForEach(Array(values.indices), id: \.self) { index in
+                    Text(labels[index] ?? "").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                        .fixedSize().frame(maxWidth: .infinity, alignment: labelEvery ? .center : .leading)
+                }
             }
         }
     }

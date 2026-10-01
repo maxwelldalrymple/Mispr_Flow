@@ -1456,3 +1456,10 @@ class TestIncognitoNeverUsesTheClipboard:
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
         assert controller.pasted == ["Hi."] and controller.typed == []
+
+
+def test_incognito_outline_matches_golden_image(controller, clock, golden_image):
+    controller.settings.incognito = True
+    _prepare_render(controller, W.HOLD)
+    pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
+    golden_image("widget_hold_incognito", pixels, rep)

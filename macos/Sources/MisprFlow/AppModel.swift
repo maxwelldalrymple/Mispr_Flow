@@ -28,6 +28,7 @@ final class AppModel: ObservableObject {
     @Published var showSettings = false
     @Published private(set) var recordings: [Recording] = []
     @Published private(set) var stats = Stats()
+    @Published private(set) var more = MoreInsights()
     @Published private(set) var settingsError: String?
     let note = NoteModel()
     let profile = Profile()
@@ -51,6 +52,8 @@ final class AppModel: ObservableObject {
     }
 
     func start() {
+        // Development: MISPR_PAGE=Insights (etc.) opens on that page, for screenshots.
+        if let name = ProcessInfo.processInfo.environment["MISPR_PAGE"], let page = Page(rawValue: name) { self.page = page }
         engine.start()
     }
 
@@ -59,9 +62,11 @@ final class AppModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let records = RecordingStore.load(from: dir)
             let stats = Stats(records)
+            let more = MoreInsights(records)
             DispatchQueue.main.async {
                 self.recordings = records
                 self.stats = stats
+                self.more = more
             }
         }
     }

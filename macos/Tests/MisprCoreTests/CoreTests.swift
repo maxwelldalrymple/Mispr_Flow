@@ -387,3 +387,125 @@ final class PromptDraftTests: XCTestCase {
         XCTAssertEqual(PromptDraft.load(from: url, defaults: defaults).system, "Default.")
     }
 }
+
+final class MoreInsightsTests: XCTestCase {
+    let calendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        c.firstWeekday = 1
+        return c
+    }()
+
+    func at(_ day: Int, _ hour: Int = 10) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour))!
+    }
+
+    func rec(_ day: Int, hour: Int = 10, words: Int = 10, seconds: Double = 6, raw: String? = nil,
+             text: String = "hello world", app: String = "Notes", status: Recording.Status = .pasted) -> Recording {
+        Recording(id: UUID().uuidString, startedAt: at(day, hour), endedAt: at(day, hour), durationS: seconds, status: status,
+                  transcript: text, rawTranscript: raw, words: words, pastedInto: AppRef(app: app, bundleId: "x." + app))
+    }
+
+    func testTimeSaved() {
+        // 400 words take 10 min to type; 2 min spoken -> 8 min saved
+        let i = MoreInsights([rec(30, words: 400, seconds: 120)], now: at(30), calendar: calendar)
+        XCTAssertEqual(i.minutesSaved, 8)
+    }
+
+    func testWeekOverWeek() {
+        // Sep 30 2026 is a Wednesday; the week starts Sunday Sep 27.
+        let i = MoreInsights([rec(28, words: 30), rec(22, words: 20), rec(10, words: 99)], now: at(30), calendar: calendar)
+        XCTAssertEqual(i.thisWeekWords, 30)
+        XCTAssertEqual(i.lastWeekWords, 20)
+        XCTAssertEqual(i.weekChange, 50)
+        XCTAssertNil(MoreInsights([rec(28)], now: at(30), calendar: calendar).weekChange)
+    }
+
+    func testFillersRemovedOnlyCountsWhatCleanupTookOut() {
+        let i = MoreInsights([
+            rec(30, raw: "Um, I, uh, like it, um.", text: "I like it."),       // 2 um + 1 uh; "like" kept
+            rec(30, raw: "Basically done.", text: "Done."),
+        ], now: at(30), calendar: calendar)
+        XCTAssertEqual(i.fillersRemoved, 4)
+        XCTAssertEqual(i.topFillers, ["um", "basically", "uh"])
+    }
+
+    func testUniqueWordsHoursAndApps() {
+        let i = MoreInsights([rec(30, hour: 9, words: 50, text: "Ship it. Ship it now.", app: "Slack"),
+                              rec(30, hour: 9, words: 5, text: "Now!", app: "Notes"),
+                              rec(30, hour: 22, words: 70, app: "Slack")], now: at(30), calendar: calendar)
+        XCTAssertEqual(i.uniqueWords, 5)  // ship, it, now, hello, world
+        XCTAssertEqual(i.byHour[9], 2)
+        XCTAssertEqual(i.byHour[22], 1)
+        XCTAssertEqual(i.topApps, [.init(app: "Slack", words: 120), .init(app: "Notes", words: 5)])
+    }
+
+    func testDailyPace() {
+        let i = MoreInsights([rec(29, words: 30, seconds: 30), rec(30, words: 10, seconds: 6)], now: at(30), calendar: calendar)
+        XCTAssertEqual(i.dailyPace.map(\.wpm), [60, 100])
+    }
+
+    func testPersona() {
+        XCTAssertEqual(MoreInsights([rec(30)], now: at(30), calendar: calendar).persona, .newcomer)
+        let owls = (0..<5).map { _ in rec(30, hour: 23) }
+        XCTAssertEqual(MoreInsights(owls, now: at(30), calendar: calendar).persona, .nightOwl)
+        let birds = (0..<5).map { _ in rec(30, hour: 6) }
+        XCTAssertEqual(MoreInsights(birds, now: at(30), calendar: calendar).persona, .earlyBird)
+        let talkers = (0..<5).map { _ in rec(30, hour: 23, words: 100) }
+        XCTAssertEqual(MoreInsights(talkers, now: at(30), calendar: calendar).persona, .marathoner)
+        XCTAssertEqual(MoreInsights((0..<5).map { _ in rec(30, hour: 14) }, now: at(30), calendar: calendar).persona, .nineToFiver)
+    }
+
+    func testEquivalents() {
+        XCTAssertEqual(MoreInsights.equivalent(words: 40), "about 1 tweet")
+        XCTAssertEqual(MoreInsights.equivalent(words: 120), "about 3 tweets")
+        XCTAssertEqual(MoreInsights.equivalent(words: 1_813), "about 6 pages of a book")
+        XCTAssertEqual(MoreInsights.equivalent(words: 12_000), "about 3 chapters of a novel")
+        XCTAssertEqual(MoreInsights.equivalent(words: 120_000), "about 1.5 novels")
+    }
+
+    func testEmpty() {
+        XCTAssertEqual(MoreInsights([], now: at(30), calendar: calendar), MoreInsights())
+    }
+}
+
+
+final class FunFactsTests: XCTestCase {
+    let calendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        return c
+    }()
+
+    func rec(_ day: Int, words: Int, seconds: Double, text: String, raw: String? = nil) -> Recording {
+        let date = calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: 10))!
+        return Recording(id: UUID().uuidString, startedAt: date, endedAt: date, durationS: seconds, status: .pasted,
+                         transcript: text, rawTranscript: raw, words: words)
+    }
+
+    func testFunFacts() {
+        let records = [
+            rec(30, words: 12, seconds: 6, text: "Can you ship the build today? Thanks, ship the build!"),
+            rec(30, words: 10, seconds: 10, text: "Please ship the build now?", raw: "Ship it, no wait, please ship the build now?"),
+            rec(29, words: 40, seconds: 30, text: "A long one about nothing much at all."),
+        ]
+        let i = MoreInsights(records, now: records[0].startedAt, calendar: calendar)
+        XCTAssertEqual(i.keystrokesSaved, records.reduce(0) { $0 + $1.transcript.count })
+        XCTAssertEqual(i.talkSeconds, 46)
+        XCTAssertEqual(i.byWeekday[3], 22)  // Wednesday Sep 30
+        XCTAssertEqual(i.byWeekday[2], 40)  // Tuesday Sep 29
+        XCTAssertEqual(i.biggestDay?.words, 40)
+        XCTAssertEqual(i.fastest?.wpm, 120)  // 12 words in 6 s
+        XCTAssertEqual(i.longest?.words, 40)
+        XCTAssertEqual(i.catchphrase, "ship the build")
+        XCTAssertEqual(i.questions, 2)
+        XCTAssertEqual(i.politeness, 2)
+        XCTAssertEqual(i.selfCorrections, 1)
+    }
+
+    func testShortDictationsDontCountAsFastest() {
+        let i = MoreInsights([rec(30, words: 3, seconds: 0.5, text: "Yes do it.")], now: Date(), calendar: calendar)
+        XCTAssertNil(i.fastest)
+        XCTAssertNil(i.catchphrase)
+    }
+}

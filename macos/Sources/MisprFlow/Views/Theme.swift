@@ -13,6 +13,7 @@ enum Theme {
     static let secondary = adaptive(\.secondary)
     static let accent = adaptive(\.accent)
     static let accentSoft = adaptive(\.accentSoft)
+    static let incognito = Color(nsColor: NSColor(srgbRed: 0.66, green: 0.52, blue: 1.0, alpha: 1))  // also the widget's outline
     static let key = Color(nsColor: NSColor(srgbRed: 0xF6 / 255, green: 0xA3 / 255, blue: 0x3B / 255, alpha: 1))  // the fn key chip
 
     static func display(_ size: CGFloat) -> Font { .system(size: size, weight: .regular, design: .serif) }
@@ -23,6 +24,13 @@ enum Theme {
             let colors = dark ? Palette.current.dark : Palette.current.light
             return nsColor(hex: colors[keyPath: role])
         })
+    }
+
+    /// A fixed (non-dynamic) color for the current palette and scheme. Swift Charts can't draw
+    /// the dynamic colors above, so charts use these.
+    static func resolved(_ role: KeyPath<Palette.Colors, UInt32>, _ scheme: ColorScheme) -> Color {
+        let colors = scheme == .dark ? Palette.current.dark : Palette.current.light
+        return Color(nsColor: nsColor(hex: colors[keyPath: role]))
     }
 
     static func nsColor(hex: UInt32) -> NSColor {

@@ -161,3 +161,204 @@ public struct VoiceProfile: Equatable {
         longestWords = words.max() ?? 0
     }
 }
+
+/// The fun extras on Insights, all computed on-device from saved dictations.
+public struct MoreInsights: Equatable {
+    public var minutesSaved = 0          // typing time (at 40 wpm) minus speaking time
+    public var thisWeekWords = 0
+    public var lastWeekWords = 0
+    public var fillersRemoved = 0        // filler words in the raw transcript that cleanup took out
+    public var topFillers: [String] = []
+    public var uniqueWords = 0
+    public var byHour: [Int] = Array(repeating: 0, count: 24)  // dictations per hour of day
+    public var topApps: [AppWords] = []
+    public var dailyPace: [DayPace] = []  // words per minute, last 14 days with dictation
+    public var persona: Persona = .newcomer
+    // Fun facts
+    public var keystrokesSaved = 0         // characters you didn't have to type
+    public var talkSeconds = 0.0
+    public var byWeekday: [Int] = Array(repeating: 0, count: 7)  // words, Sunday first
+    public var biggestDay: DayWords?
+    public var fastest: Highlight?         // highest pace, dictations of 10+ words
+    public var longest: Highlight?
+    public var catchphrase: String?        // most repeated 2-3 word phrase
+    public var questions = 0
+    public var politeness = 0              // "please" and "thank(s/ you)"
+    public var selfCorrections = 0         // "no wait", "sorry", "I mean", "scratch that"
+
+    public struct DayWords: Equatable {
+        public var day: Date
+        public var words: Int
+    }
+
+    public struct Highlight: Equatable {
+        public var words: Int
+        public var seconds: Double
+        public var text: String
+        public var wpm: Int { seconds > 0 ? Int((Double(words) / seconds * 60).rounded()) : 0 }
+    }
+
+    public struct AppWords: Equatable, Identifiable {
+        public var app: String
+        public var words: Int
+        public var id: String { app }
+    }
+
+    public struct DayPace: Equatable, Identifiable {
+        public var day: Date
+        public var wpm: Int
+        public var id: Date { day }
+    }
+
+    public enum Persona: String {
+        case newcomer = "Just getting started"
+        case earlyBird = "Early bird"
+        case nineToFiver = "Nine-to-fiver"
+        case nightOwl = "Night owl"
+        case marathoner = "Marathon talker"
+
+        public var detail: String {
+            switch self {
+            case .newcomer: "Dictate a few more times to find your rhythm."
+            case .earlyBird: "Most of your dictating happens before 9 am."
+            case .nineToFiver: "You talk to your Mac most during working hours."
+            case .nightOwl: "Most of your dictating happens after 9 pm."
+            case .marathoner: "Your dictations run long: over 60 words on average."
+            }
+        }
+
+        public var symbol: String {
+            switch self {
+            case .newcomer: "sparkles"
+            case .earlyBird: "sunrise"
+            case .nineToFiver: "briefcase"
+            case .nightOwl: "moon.stars"
+            case .marathoner: "figure.run"
+            }
+        }
+    }
+
+    /// Fillers counted for "fillers removed": the clear-cut ones only, so "like" in
+    /// "I like it" isn't counted unless cleanup actually removed a "like".
+    static let fillers = ["um", "uh", "er", "erm", "ah", "hmm", "like", "basically", "actually", "literally"]
+
+    public init() {}
+
+    public init(_ records: [Recording], now: Date = Date(), calendar: Calendar = .current) {
+        let used = records.filter { $0.status != .cancelled && $0.words > 0 }
+        guard !used.isEmpty else { return }
+
+        let words = used.reduce(0) { $0 + $1.words }
+        let speaking = used.reduce(0.0) { $0 + $1.durationS } / 60
+        minutesSaved = max(0, Int((Double(words) / Stats.typingWPM - speaking).rounded()))
+
+        let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+        let startOfLast = calendar.date(byAdding: .day, value: -7, to: startOfWeek) ?? startOfWeek
+        for r in used {
+            if r.startedAt >= startOfWeek { thisWeekWords += r.words }
+            else if r.startedAt >= startOfLast { lastWeekWords += r.words }
+        }
+
+        var removed: [String: Int] = [:]
+        for r in used {
+            guard let raw = r.rawTranscript else { continue }
+            let before = Self.tokens(raw), after = Self.tokens(r.transcript)
+            for f in Self.fillers {
+                let n = before.filter { $0 == f }.count - after.filter { $0 == f }.count
+                if n > 0 { removed[f, default: 0] += n }
+            }
+        }
+        fillersRemoved = removed.values.reduce(0, +)
+        topFillers = removed.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(3).map(\.key)
+
+        uniqueWords = Set(used.flatMap { Self.tokens($0.transcript) }).count
+
+        for r in used { byHour[calendar.component(.hour, from: r.startedAt)] += 1 }
+
+        var apps: [String: Int] = [:]
+        for r in used { apps[r.app?.app ?? "Unknown", default: 0] += r.words }
+        topApps = apps.map { AppWords(app: $0.key, words: $0.value) }
+            .sorted { $0.words != $1.words ? $0.words > $1.words : $0.app < $1.app }
+            .prefix(5).map { $0 }
+
+        let byDay = Dictionary(grouping: used) { calendar.startOfDay(for: $0.startedAt) }
+        dailyPace = byDay.keys.sorted().suffix(14).compactMap { day in
+            let rs = byDay[day]!
+            let minutes = rs.reduce(0.0) { $0 + $1.durationS } / 60
+            guard minutes > 0 else { return nil }
+            return DayPace(day: day, wpm: Int((Double(rs.reduce(0) { $0 + $1.words }) / minutes).rounded()))
+        }
+
+        persona = Self.persona(used: used, byHour: byHour, words: words)
+
+        keystrokesSaved = used.reduce(0) { $0 + $1.transcript.count }
+        talkSeconds = used.reduce(0.0) { $0 + $1.durationS }
+        for r in used { byWeekday[calendar.component(.weekday, from: r.startedAt) - 1] += r.words }
+        biggestDay = byDay.map { DayWords(day: $0.key, words: $0.value.reduce(0) { $0 + $1.words }) }
+            .max { $0.words != $1.words ? $0.words < $1.words : $0.day > $1.day }
+        let highlight = { (r: Recording) in Highlight(words: r.words, seconds: r.durationS, text: r.transcript) }
+        fastest = used.filter { $0.words >= 10 && $0.durationS > 0 }.map(highlight).max { $0.wpm < $1.wpm }
+        longest = used.map(highlight).max { $0.words < $1.words }
+        catchphrase = Self.catchphrase(used.map(\.transcript))
+        questions = used.reduce(0) { $0 + $1.transcript.filter { $0 == "?" }.count }
+        for r in used {
+            let text = r.transcript.lowercased()
+            politeness += Self.count(["please", "thank you", "thanks"], in: text)
+            selfCorrections += Self.count(["no wait", "no, wait", "scratch that", "sorry,", "i mean"], in: (r.rawTranscript ?? r.transcript).lowercased())
+        }
+    }
+
+    static func count(_ needles: [String], in text: String) -> Int {
+        needles.reduce(0) { $0 + text.components(separatedBy: $1).count - 1 }
+    }
+
+    /// The most repeated 3-word (else 2-word) phrase that isn't all filler, said at least twice.
+    static func catchphrase(_ texts: [String]) -> String? {
+        for n in [3, 2] {
+            var counts: [String: Int] = [:]
+            for text in texts {
+                let words = tokens(text)
+                guard words.count >= n else { continue }
+                for i in 0...(words.count - n) {
+                    let gram = Array(words[i..<i + n])
+                    if gram.allSatisfy({ VoiceProfile.stopwords.contains($0) }) { continue }
+                    counts[gram.joined(separator: " "), default: 0] += 1
+                }
+            }
+            if let best = counts.filter({ $0.value >= 2 })
+                .max(by: { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }) {
+                return best.key
+            }
+        }
+        return nil
+    }
+
+    static func persona(used: [Recording], byHour: [Int], words: Int) -> Persona {
+        guard used.count >= 5 else { return .newcomer }
+        if Double(words) / Double(used.count) > 60 { return .marathoner }
+        let total = Double(used.count)
+        let early = Double(byHour[0..<9].reduce(0, +)), late = Double(byHour[21..<24].reduce(0, +))
+        if late / total > 0.4 { return .nightOwl }
+        if early / total > 0.4 { return .earlyBird }
+        return .nineToFiver
+    }
+
+    static func tokens(_ text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && $0 != "'" }.map { $0.replacingOccurrences(of: "'", with: "") }
+    }
+
+    /// Change from last week, as a whole percent (nil when there's no last week to compare).
+    public var weekChange: Int? {
+        lastWeekWords > 0 ? Int((Double(thisWeekWords - lastWeekWords) * 100 / Double(lastWeekWords)).rounded()) : nil
+    }
+
+    /// A playful comparison for a word count.
+    public static func equivalent(words: Int) -> String {
+        switch words {
+        case ..<280: return "about \(max(1, words / 40)) tweet\(words / 40 == 1 ? "" : "s")"
+        case ..<5_000: return String(format: "about %.0f pages of a book", (Double(words) / 300).rounded())
+        case ..<50_000: return String(format: "about %.0f chapters of a novel", (Double(words) / 4_000).rounded())
+        default: return String(format: "about %.1f novels", Double(words) / 80_000)
+        }
+    }
+}
