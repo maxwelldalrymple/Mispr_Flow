@@ -609,13 +609,54 @@ class WidgetController:
             self.show_notice(f"“{nick}” now opens {target}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
             return
         running = apps.running_apps()
-        target = apps.match(command[1], {**installed, **running}, self.settings.app_nicknames, running)
-        path = running.get(target) or installed.get(target)
-        if path is None:
-            return self._switch_failed(f"No app called “{command[1]}”")
+
+        def find(name):  # (app name, path) or None
+            target = apps.match(name, {**installed, **running}, self.settings.app_nicknames, running)
+            path = running.get(target) or installed.get(target)
+            return (target, path) if path else None
+
+        kind = command[0]
+        names = [n for n in command[1:3] if isinstance(n, str)] if kind == "beside" else [command[1]]
+        found = []
+        for name in names:
+            if name is None:  # no app named: the one you're in
+                found.append((None, None))
+                continue
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            found.append(hit)
+        if kind == "switch":
+            apps.bring_to_front(found[0][1])
+            return self._switch_done(f"→ {found[0][0]}")
+        if kind in ("close", "minimize", "expand"):
+            target, path = found[0]
+            pid = apps.frontmost_pid() if path is None else apps.pid_for(path)
+            if pid is None:
+                return self._switch_failed(f"{target} isn't open")
+            ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand")) if kind == "expand" \
+                else apps.window_action(pid, kind)
+            if kind == "expand" and path:
+                apps.bring_to_front(path)
+            word = {"close": "Closed", "minimize": "Minimized", "expand": "Expanded"}[kind]
+            return self._switch_done(f"{word} {target or 'the window'}") if ok else self._switch_failed("No window to " + kind)
+        screen = apps.screen_frame()
+        frames = [apps.layout(screen, "size", command[2])] if kind == "size" else list(apps.layout(screen, "beside", command[3]))
+        for (target, path), frame in reversed(list(zip(found, frames))):  # the first named ends up in front
+            self._place(path, frame)
+        label = f"{found[0][0]} {command[2]}%" if kind == "size" else f"{found[0][0]} | {found[1][0]}"
+        self._switch_done(label)
+
+    def _place(self, path, frame, tries=4):
+        """Bring the app forward and give its window `frame`; an app still opening gets a few more tries."""
         apps.bring_to_front(path)
+        pid = apps.pid_for(path)
+        if (pid is None or not apps.window_action(pid, "frame", frame)) and tries > 1:
+            AppHelper.callLater(0.75, self._place, path, frame, tries - 1)
+
+    def _switch_done(self, message):
         self.sounds.play(sounds.PASTE)
-        self.show_notice(f"→ {target}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
     def _switch_failed(self, message):
         self.sounds.play(sounds.ERROR)

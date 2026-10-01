@@ -39,8 +39,113 @@ def parse(text):
         m = pattern.match(said)
         if m:
             return ("nickname", m["nick"].strip(), m["app"].strip())
+    said = _number_words(said)
+    m = _ACTION.match(said)
+    if m:  # close / minimize / expand, of an app or (none named) the current one
+        target = _FILLER.sub("", m["rest"] or "").strip() or None
+        return (_ACTIONS[m["verb"]], target)
+    m = _BESIDE.match(said)
+    if m:  # "chrome beside vs code", "window layout chrome 70% next to terminal"
+        left, right = _FILLER.sub("", m["left"]).strip(), _FILLER.sub("", m["right"]).strip()
+        pct = int(m["pct"]) if m["pct"] else None
+        return ("beside", left, right, pct if pct and 10 <= pct <= 90 else None)
+    m = _SIZE.match(said)
+    if m and 10 <= int(m["pct"]) <= 100:  # "chrome 80%"
+        return ("size", _FILLER.sub("", m["app"]).strip(), int(m["pct"]))
     name = _FILLER.sub("", said).strip()
     return ("switch", name) if name else None
+
+
+_ACTIONS = {"close": "close", "minimize": "minimize", "minimise": "minimize", "hide": "minimize",
+            "expand": "expand", "maximize": "expand", "maximise": "expand", "fill": "expand"}
+_ACTION = re.compile(r"^(?:please\s+)?(?P<verb>close|minimi[sz]e|hide|expand|maximi[sz]e|fill)(?:\s+(?P<rest>.+))?$")
+_LAYOUT = r"(?:(?:window\s+)?layout\s+|put\s+|place\s+|split\s+)?"
+_BESIDE = re.compile(_LAYOUT + r"(?P<left>.+?)(?:\s+(?P<pct>\d{1,3})\s*(?:percent)?)?\s+(?:beside|next\s+to|and|with)\s+(?P<right>.+)$")
+_SIZE = re.compile(r"^(?:make\s+|resize\s+|size\s+)?(?P<app>.+?)\s+(?:to\s+)?(?P<pct>\d{1,3})\s*(?:percent)?$")
+_TENS = {"ten": 10, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+         "eighty": 80, "ninety": 90, "hundred": 100, "a hundred": 100, "one hundred": 100, "half": 50}
+_ONES = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
+
+
+def _number_words(said):
+    """"eighty five percent" -> "85 percent" (normalize() already turned "80%" into "80")."""
+    for tens, n in sorted(_TENS.items(), key=lambda kv: -len(kv[0])):
+        for ones, k in _ONES.items():
+            said = re.sub(rf"\b{tens}[ -]{ones}\b", str(n + k), said)
+        said = re.sub(rf"\b{tens}\b", str(n), said)
+    return said
+
+
+# --- Windows (Accessibility, already granted for pasting) ---------------------------------
+
+def layout(screen, kind, pct=None):
+    """Window frames (x, y, w, h; top-left origin) inside `screen` (the same):
+    "expand" fills it, "size" is pct% of its width and height centred, "beside" is two
+    side-by-side frames, the first pct% wide (half by default)."""
+    x, y, w, h = screen
+    if kind == "expand":
+        return (x, y, w, h)
+    if kind == "size":
+        fw, fh = w * pct / 100, h * pct / 100
+        return (x + (w - fw) / 2, y + (h - fh) / 2, fw, fh)
+    left = w * (pct or 50) / 100
+    return (x, y, left, h), (x + left, y, w - left, h)
+
+
+def screen_frame():
+    """The main screen's usable area (no menu bar or Dock), in Accessibility's top-left coordinates."""
+    from AppKit import NSScreen
+    full = NSScreen.screens()[0].frame().size.height
+    v = NSScreen.mainScreen().visibleFrame()
+    return (v.origin.x, full - v.origin.y - v.size.height, v.size.width, v.size.height)
+
+
+def pid_for(path):
+    """Process id of the running app at `path`, or None."""
+    from AppKit import NSWorkspace
+    for app in NSWorkspace.sharedWorkspace().runningApplications():
+        if app.bundleURL() is not None and str(app.bundleURL().path()) == path:
+            return app.processIdentifier()
+    return None
+
+
+def frontmost_pid():
+    from AppKit import NSWorkspace
+    app = NSWorkspace.sharedWorkspace().frontmostApplication()
+    return app.processIdentifier() if app is not None else None
+
+
+def _window(pid):
+    import ApplicationServices as AS
+    app = AS.AXUIElementCreateApplication(pid)
+    for name in ("AXFocusedWindow", "AXMainWindow"):
+        err, win = AS.AXUIElementCopyAttributeValue(app, name, None)
+        if err == 0 and win is not None:
+            return win
+    err, wins = AS.AXUIElementCopyAttributeValue(app, "AXWindows", None)
+    return wins[0] if err == 0 and wins else None
+
+
+def window_action(pid, action, frame=None):
+    """Do `action` ("close", "minimize", or "frame" with (x, y, w, h)) to app `pid`'s front
+    window. True if done; False if it has no window (or won't say)."""
+    import ApplicationServices as AS
+    win = _window(pid)
+    if win is None:
+        return False
+    if action == "close":
+        err, button = AS.AXUIElementCopyAttributeValue(win, "AXCloseButton", None)
+        return err == 0 and button is not None and AS.AXUIElementPerformAction(button, "AXPress") == 0
+    if action == "minimize":
+        return AS.AXUIElementSetAttributeValue(win, "AXMinimized", True) == 0
+    x, y, w, h = frame
+    AS.AXUIElementSetAttributeValue(win, "AXMinimized", False)
+    pos = AS.AXValueCreate(AS.kAXValueCGPointType, (x, y))
+    size = AS.AXValueCreate(AS.kAXValueCGSizeType, (w, h))
+    # Size, move, size again: some apps clamp the size against the old position.
+    AS.AXUIElementSetAttributeValue(win, "AXSize", size)
+    AS.AXUIElementSetAttributeValue(win, "AXPosition", pos)
+    return AS.AXUIElementSetAttributeValue(win, "AXSize", size) == 0
 
 
 def find_apps(dirs=APP_DIRS):

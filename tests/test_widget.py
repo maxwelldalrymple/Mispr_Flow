@@ -1555,6 +1555,44 @@ class TestAppSwitcher:
         controller.switch_key("combo")
         assert controller.state == W.IDLE and controller.transcriber.calls == []
 
+    @pytest.fixture
+    def windows(self, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "pid_for", lambda path: {"/A/Google Chrome.app": 11, "/S/Terminal.app": 22}.get(path))
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 99)
+        monkeypatch.setattr(W.apps, "window_action", lambda pid, action, frame=None: done.append((pid, action, frame)) or True)
+        return done
+
+    def test_close_minimize_expand(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Close Chrome.")
+        self.say(controller, clock, "minimize")  # the app you're in
+        self.say(controller, clock, "Expand the terminal")
+        assert windows == [(11, "close", None), (99, "minimize", None), (22, "frame", (0, 0, 1000, 800))]
+        assert controller.notice[0] == "Expanded Terminal"
+
+    def test_side_by_side_with_a_split(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Chrome 70% beside terminal")
+        assert windows == [(22, "frame", (700.0, 0, 300.0, 800)), (11, "frame", (0, 0, 700.0, 800))]
+        assert fronted == ["/S/Terminal.app", "/A/Google Chrome.app"]  # Chrome, named first, ends up in front
+        assert controller.notice[0] == "Google Chrome | Terminal"
+
+    def test_percent_of_the_screen(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Chrome 80%")
+        assert windows == [(11, "frame", (100.0, 80.0, 800.0, 640.0))]
+
+    def test_an_app_still_opening_is_retried(self, controller, clock, fronted, monkeypatch):
+        tries = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "pid_for", lambda path: None)  # not running yet
+        monkeypatch.setattr(W.apps, "window_action", lambda *a, **k: tries.append(1) or False)
+        self.say(controller, clock, "Chrome 80%")
+        assert len(fronted) == 4  # launched, then 3 more tries
+
+    def test_unknown_app_in_a_layout_errors(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Flurbo beside Chrome")
+        assert windows == [] and controller.notice[0] == "No app called “flurbo”"
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()

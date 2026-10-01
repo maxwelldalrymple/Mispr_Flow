@@ -88,3 +88,37 @@ class TestSystem:
 
         assert apps.bring_to_front("/Applications/Safari.app", FakeWorkspace()) is True
         assert opened == [("/Applications/Safari.app", True)]
+
+
+class TestWindowCommands:
+    """close / minimize / expand, side by side, and "chrome 80%"."""
+
+    @pytest.mark.parametrize("said,expected", [
+        ("Close Chrome.", ("close", "chrome")),
+        ("close", ("close", None)),
+        ("Minimize the terminal.", ("minimize", "terminal")),
+        ("Expand VS Code", ("expand", "vs code")),
+        ("maximize", ("expand", None)),
+        ("Window layout Chrome beside VS Code.", ("beside", "chrome", "vs code", None)),
+        ("Chrome 70% beside VS code", ("beside", "chrome", "vs code", 70)),
+        ("put chrome next to terminal", ("beside", "chrome", "terminal", None)),
+        ("Chrome 80%.", ("size", "chrome", 80)),
+        ("Chrome eighty percent", ("size", "chrome", 80)),
+        ("make slack sixty-five percent", ("size", "slack", 65)),
+        ("Chrome 5%", ("switch", "chrome 5")),  # too small to mean a size
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_layouts(self):
+        screen = (0, 25, 1440, 875)
+        assert apps.layout(screen, "expand") == screen
+        assert apps.layout(screen, "size", 80) == (144.0, 112.5, 1152.0, 700.0)  # centred
+        assert apps.layout(screen, "beside") == ((0, 25, 720.0, 875), (720.0, 25, 720.0, 875))
+        assert apps.layout(screen, "beside", 70) == ((0, 25, 1008.0, 875), (1008.0, 25, 432.0, 875))
+
+    def test_this_macs_screen_and_front_app(self):
+        x, y, w, h = apps.screen_frame()
+        assert w > 0 and h > 0 and y >= 0
+        assert apps.frontmost_pid() is not None
+        assert apps.pid_for("/no/such.app") is None
