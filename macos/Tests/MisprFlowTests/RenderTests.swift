@@ -32,6 +32,14 @@ final class RenderTests: XCTestCase {
         }
     }
 
+    func testHomeVoiceCommandsCardWithAndWithoutASwitchKey() {
+        t.model.page = .home
+        check(RootView())  // no switch key: "Set it up in Settings"
+        t.model.setSwitchKey(DictationKey.combo(mods: ["control", "option"]))
+        check(RootView())  // "Hold ⌃⌥, say it, let go."
+        XCTAssertEqual(HomeView.commandGroups.map(\.title), ["Apps & windows", "Tabs & pages", "Sound"])
+    }
+
     func testHomeEmpty() {
         let empty = TestApp()
         drainMain()

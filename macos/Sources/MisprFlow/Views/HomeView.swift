@@ -18,6 +18,7 @@ struct HomeView: View {
                 VStack(spacing: 14) {
                     statsCard
                     tipsCard
+                    commandsCard
                 }
                 .frame(width: 232)
             }
@@ -137,6 +138,62 @@ struct HomeView: View {
                 tip("Double-tap \(key)", "hands-free")
                 tip("space", "finish hands-free")
                 tip("\(key) / delete", "cancel hands-free")
+            }
+        }
+    }
+
+    /// The app switcher's voice commands (computer control), grouped.
+    static let commandGroups: [(title: String, commands: [(say: String, does: String)])] = [
+        ("Apps & windows", [
+            ("Chrome", "bring it to the front"),
+            ("close / minimize / expand", "the window (or name an app)"),
+            ("Chrome beside VS Code", "side by side, “70%” for a split"),
+            ("Chrome 80%", "size the window"),
+            ("set nickname C to Chrome", "say “C” from then on"),
+            ("quit Slack", "quit an app"),
+        ]),
+        ("Tabs & pages", [
+            ("new tab / close tab", "also reopen tab, tab 3, next tab"),
+            ("reload / back / forward", "add “in Chrome” to pick the app"),
+            ("zoom in / full screen", "also new window, find, bookmark"),
+            ("scroll down / page up", "a little, a lot, to the top"),
+        ]),
+        ("Sound", [
+            ("pause / play / next song", "whatever is playing"),
+            ("volume up / volume 40%", "or louder, quieter"),
+            ("mute / mute mic / mute tab", "and unmute the same way"),
+            ("skip forward 30 seconds", "or rewind 10 seconds"),
+        ]),
+    ]
+
+    private var commandsCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Voice commands").font(.system(size: 14, weight: .semibold))
+                if let key = model.switchKey {
+                    Text("Hold \(key.label), say it, let go.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                } else {
+                    Text("Control your Mac by voice: choose an app switcher key first.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button("Set it up in Settings") {
+                        model.settingsSection = .general
+                        model.showSettings = true
+                    }
+                    .buttonStyle(.link).font(.system(size: 12))
+                }
+                ForEach(Self.commandGroups, id: \.title) { group in
+                    Text(group.title.uppercased()).font(.system(size: 10.5, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.secondary).padding(.top, 4)
+                    ForEach(group.commands, id: \.say) { command in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(command.say).font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.content))
+                            Text(command.does).font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
         }
     }
