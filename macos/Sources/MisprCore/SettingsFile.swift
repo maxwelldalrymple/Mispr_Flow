@@ -5,7 +5,7 @@ import Foundation
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "cleanup": true, "sounds": true, "onboarded": false]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -30,6 +30,20 @@ public struct SettingsFile {
 
     public func setDictationKey(_ key: DictationKey) throws {
         try set("hotkey", key.json)
+    }
+
+    /// The app switcher key, or nil when it's off.
+    public var switchKey: DictationKey? { DictationKey(json: read()["switch_hotkey"]) }
+
+    public func setSwitchKey(_ key: DictationKey?) throws {
+        try set("switch_hotkey", key?.json ?? NSNull())
+    }
+
+    /// Spoken nicknames for apps: ["c": "Google Chrome"].
+    public var nicknames: [String: String] { read()["app_nicknames"] as? [String: String] ?? [:] }
+
+    public func setNicknames(_ nicknames: [String: String]) throws {
+        try set("app_nicknames", nicknames)
     }
 
     public func set(_ key: String, _ value: Any) throws {

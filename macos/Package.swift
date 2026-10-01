@@ -11,5 +11,7 @@ let package = Package(
         .target(name: "MisprCore"),
         .executableTarget(name: "MisprFlow", dependencies: ["MisprCore"]),
         .testTarget(name: "MisprCoreTests", dependencies: ["MisprCore"]),
+        // The app's windows, pages, and recorder (the executable target can be imported for tests).
+        .testTarget(name: "MisprFlowTests", dependencies: ["MisprFlow", "MisprCore"]),
     ]
 )

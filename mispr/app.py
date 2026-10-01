@@ -25,6 +25,8 @@ from PyObjCTools import AppHelper
 from Foundation import NSObject
 
 from . import host, hotkey, levels, meeting, onboarding, prompts, settings, setup, storage, threads
+from .models import PREVIEW_MODEL
+from .transcribe import Transcriber
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -147,14 +149,20 @@ def _connect_host(app, widget, open_setup, fn=None):
     quit_app = lambda: app.terminate_(None)
     widget.on_saved = lambda path: host.send("saved", path=str(path))
     widget.on_note_requested = lambda: host.send("open_note", start=True)
+    widget.on_settings_changed = lambda: host.send("settings_changed")  # e.g. a nickname set by voice
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
-    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send)
+    # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
+    # loaded (downloaded the first time) when a meeting first needs them.
+    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
+                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
+                                   speech=meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     def reload_settings():
         widget.reload_settings()
         if fn is not None:
             fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
+            fn.set_switch_trigger(widget.settings.switch_hotkey)
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
@@ -208,6 +216,31 @@ def _setup_flow(widget):
     )
 
 
+def make_setup_opener(widget, window_class=None):
+    """open_setup(): show the setup window, reusing it while it's open."""
+    current = {}
+
+    def open_setup():
+        window = current.get("w")
+        if window is None or not window.window.isVisible():
+            cls = window_class or onboarding.SetupWindow
+            window = cls(_setup_flow(widget), play=widget.sounds.play)
+            current["w"] = window
+        window.show()
+
+    return open_setup
+
+
+def fn_keeper(fn, log=None):
+    """The 1 s tick that keeps fn working as permissions change, logging what changed."""
+    def keep_fn_working():
+        change = maintain_hotkey(fn)
+        if change:
+            print(f"mispr: fn tap {change} ({'active' if fn.active else 'listen-only'})", file=log or sys.stderr)
+
+    return keep_fn_working
+
+
 def main():
     lock = _single_instance_lock()
     hosted = host.hosted()  # run by the Swift app, which owns the Dock icon and main window
@@ -222,7 +255,8 @@ def main():
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
-                          trigger=widget.settings.hotkey, on_note=widget.request_note)
+                          trigger=widget.settings.hotkey, on_note=widget.request_note,
+                          on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)
@@ -231,15 +265,7 @@ def main():
     # First-run setup window: shown on first launch or whenever something required is
     # missing; also reopenable from the menu. Permissions are requested from there (with an
     # explanation) instead of prompting on launch.
-    setup_window = {}
-
-    def open_setup():
-        window = setup_window.get("w")
-        if window is None or not window.window.isVisible():
-            window = onboarding.SetupWindow(_setup_flow(widget), play=widget.sounds.play)
-            setup_window["w"] = window
-        window.show()
-
+    open_setup = make_setup_opener(widget)
     _keepalive.append(add_setup_menu_item(status_item, open_setup))
     if hosted:
         _connect_host(app, widget, open_setup, fn)
@@ -258,13 +284,8 @@ def main():
     if maintain_hotkey(fn) is None and fn._tap is None:
         print("mispr: fn is off until Accessibility is allowed (see the setup window).", file=sys.stderr)
 
-    def keep_fn_working():
-        change = maintain_hotkey(fn)
-        if change:
-            print(f"mispr: fn tap {change} ({'active' if fn.active else 'listen-only'})", file=sys.stderr)
-
     ticker = Ticker.alloc().init()
-    ticker.callback = keep_fn_working
+    ticker.callback = fn_keeper(fn)
     timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(1.0, ticker, "tick:", None, True)
     _keepalive.extend([ticker, timer])
     AppHelper.runEventLoop(installInterrupt=False)  # our own signal handlers clean up

@@ -42,10 +42,10 @@ from AppKit import (
 )
 from Foundation import NSObject
 
-from . import hotkey, settings as settings_mod, sounds
+from . import apps, hotkey, settings as settings_mod, sounds
 
-WELCOME, PERMISSIONS, MODELS, READY = range(4)
-STEP_NAMES = ("Welcome", "Permissions", "Models", "Ready")
+WELCOME, PERMISSIONS, EXTRAS, MODELS, READY = range(5)
+STEP_NAMES = ("Welcome", "Permissions", "Optional", "Models", "Ready")
 
 _PANE = "x-apple.systempreferences:com.apple.preference.security?"
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -119,6 +119,19 @@ def default_permissions():
             "screen_audio", "Screen & System Audio",
             "For meeting notes: hears the other people on a call. You may need to reopen Mispr Flow after allowing it.",
             "waveform.badge.mic", False, screen_audio_granted, request_screen_audio, "Privacy_ScreenCapture",
+        ),
+        Permission(
+            "files", "Full Disk Access",
+            "For “open folder …”: find folders anywhere. Switch on Mispr Flow in the list.",
+            "internaldrive", False, apps.full_disk_access, lambda: open_pane("Privacy_AllFiles"),
+            "Privacy_AllFiles", prompt_available=lambda: False,
+        ),
+        Permission(
+            "finder", "Control Finder",
+            "For “open …” in Finder: opens folders in the same window.",
+            "folder", False, lambda: apps.finder_control() is True, lambda: apps.finder_control(ask=True),
+            "Privacy_Automation",
+            prompt_available=lambda: apps.finder_control() is None,
         ),
     ]
 
@@ -338,7 +351,7 @@ class SetupWindow:
     def render(self):
         self.rows = {}
         self.model_widgets = None
-        builders = (self._welcome, self._permissions, self._models, self._ready)
+        builders = (self._welcome, self._permissions, self._extras, self._models, self._ready)
         page = builders[self.flow.step]()
         content = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, self.WIDTH, self.HEIGHT))
         footer = self._footer()
@@ -386,10 +399,21 @@ class SetupWindow:
         return _stack(views + [features], spacing=12, align=ALIGN_CENTER_X)
 
     def _permissions(self):
-        views = self._header("checkmark.shield", "Allow access",
-                             "Mispr Flow needs these to hear you and type for you. Nothing ever leaves your Mac.")
+        return self._permission_page(
+            True, "checkmark.shield", "Allow access",
+            "Mispr Flow needs these to hear you and type for you. Nothing ever leaves your Mac.")
+
+    def _extras(self):
+        return self._permission_page(
+            False, "sparkles", "Optional features",
+            "Turn on what you'll use. You can skip these and allow them later from Setup Guide…")
+
+    def _permission_page(self, required, symbol, title_text, subtitle):
+        views = self._header(symbol, title_text, subtitle)
         rows = []
         for p in self.flow.permissions:
+            if p.required != required:
+                continue
             icon = _symbol(p.symbol, 20, NSColor.controlAccentColor())
             _pin(icon, width=28)
             title = _label(p.title, 13, NSFontWeightSemibold)
@@ -434,7 +458,7 @@ class SetupWindow:
         return _stack(views + [tips], spacing=12, align=ALIGN_CENTER_X)
 
     def _footer(self):
-        step = _label(f"Step {self.flow.step + 1} of 4 · {STEP_NAMES[self.flow.step]}", 12,
+        step = _label(f"Step {self.flow.step + 1} of {len(STEP_NAMES)} · {STEP_NAMES[self.flow.step]}", 12,
                       color=NSColor.tertiaryLabelColor())
         spacer = NSView.alloc().init()
         buttons = [step, spacer]

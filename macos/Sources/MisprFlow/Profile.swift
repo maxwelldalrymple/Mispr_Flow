@@ -32,9 +32,9 @@ final class Profile: ObservableObject {
     private let defaults: UserDefaults
     private let photoURL: URL
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, photoURL customPhoto: URL? = nil) {
         self.defaults = defaults
-        photoURL = FileManager.default.homeDirectoryForCurrentUser
+        self.photoURL = customPhoto ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Mispr_Flow/profile-photo.png")
         name = defaults.string(forKey: "profile.name") ?? ""
         nickname = defaults.string(forKey: "profile.nickname") ?? ""
@@ -65,6 +65,11 @@ final class Profile: ObservableObject {
         panel.allowedContentTypes = [.image]
         panel.message = "Choose a profile picture"
         guard panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) else { return }
+        setPhoto(image)
+    }
+
+    /// Save a picture (cropped square, 256 px) as the profile photo.
+    func setPhoto(_ image: NSImage) {
         let square = Self.squareThumbnail(image, side: 256)
         guard let tiff = square.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return }

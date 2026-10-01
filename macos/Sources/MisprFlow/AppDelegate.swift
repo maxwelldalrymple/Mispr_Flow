@@ -33,7 +33,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window
 
     @objc func showMainWindow() {
-        if window == nil {
+        if window == nil { window = makeMainWindow() }
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        model.reloadRecordings()
+    }
+
+    /// The main window (not shown yet).
+    func makeMainWindow() -> NSWindow {
+        do {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -49,11 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentView = host
             window.center()
             window.setFrameAutosaveName("MainWindow")
-            self.window = window
+            return window
         }
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        model.reloadRecordings()
     }
 
     @objc func showSettings() {
@@ -67,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menus
 
-    private func makeMainMenu() -> NSMenu {
+    func makeMainMenu() -> NSMenu {
         let main = NSMenu()
 
         let appMenu = NSMenu(title: "Mispr Flow")

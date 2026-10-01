@@ -26,8 +26,8 @@ class TestCleanText:
 
 
 class Segment:
-    def __init__(self, text):
-        self.text = text
+    def __init__(self, text, t0=0, t1=100):
+        self.text, self.t0, self.t1 = text, t0, t1  # pywhispercpp times are in centiseconds
 
 
 class FakeModel:
@@ -119,6 +119,38 @@ class TestGates:
         model = FakeModel()
         ready_transcriber(model, language="fr")._transcribe(speech)
         assert model.seen[0][1] == "fr"
+
+
+class TestTimedSegments:
+    """Meeting chunks get Whisper's segments with times, to split where the speaker changes."""
+
+    def test_seconds_and_clean_text(self, speech):
+        model = FakeModel()
+        model.transcribe = lambda audio, language: [Segment(" Hi [MUSIC] there.", 0, 150), Segment(" (laughs) ", 150, 200),
+                                                    Segment(" Bye.", 200, 310)]
+        assert ready_transcriber(model).segments(speech) == [(0.0, 1.5, "Hi there."), (2.0, 3.1, "Bye.")]
+
+    def test_silence_and_short_audio_have_none(self):
+        t = ready_transcriber(FakeModel())
+        assert t.segments(tone(2, 0.001)) == [] and t.segments(tone(0.1, 0.5)) == []
+
+
+class TestEnsureLoaded:
+    def test_loads_once_on_the_calling_thread(self, monkeypatch):
+        loads = []
+        monkeypatch.setattr(Transcriber, "_load", lambda self: loads.append(1) or self._ready.set())
+        t = Transcriber()
+        t.ensure_loaded()
+        t.ensure_loaded()
+        assert loads == [1]
+
+    def test_not_again_while_a_background_load_runs(self, monkeypatch, inline_threads):
+        loads = []
+        monkeypatch.setattr(Transcriber, "_load", lambda self: loads.append(1))  # never finishes
+        t = Transcriber()
+        t.load_async()
+        t.ensure_loaded()
+        assert loads == [1]
 
 
 class TestTranscribeAsync:

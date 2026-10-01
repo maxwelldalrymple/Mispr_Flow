@@ -31,18 +31,24 @@ final class AppModel: ObservableObject {
     @Published private(set) var more = MoreInsights()
     @Published private(set) var voice = VoiceProfile()
     @Published private(set) var meetings: [Meeting] = []
+    /// Contact cards for people from your meetings, by name.
+    @Published private(set) var contacts: [String: Contact] = [:]
+    /// The last delete/rename/contact change that failed, shown on the Notetaker page.
+    @Published var notesError: String?
     @Published private(set) var settingsError: String?
     let note = NoteModel()
-    let profile = Profile()
+    let profile: Profile
     @Published var settingsSection: SettingsModal.Section = .profile
     /// Set by AppDelegate: shows the note side window.
     var openNote: () -> Void = {}
     private var cancellables: Set<AnyCancellable> = []
 
-    init() {
+    /// Tests pass their own engine (no process) and profile (scratch preferences).
+    init(engine injected: Engine? = nil, profile customProfile: Profile? = nil) {
         let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Mispr Flow/engine.log")
-        engine = Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment),
-                        logURL: logs)
+        self.engine = injected ?? Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment),
+                                       logURL: logs)
+        self.profile = customProfile ?? Profile()
         engine.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.$recordingsDir.compactMap { $0 }.sink { [weak self] _ in
             DispatchQueue.main.async { self?.reloadRecordings() }
@@ -79,11 +85,13 @@ final class AppModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let records = RecordingStore.load(from: dir)
             let meetings = meetingsDir.map { MeetingStore.load(from: $0) } ?? []
+            let contacts = meetingsDir.map { ContactBook.load(from: ContactBook.url(in: $0)) } ?? [:]
             let stats = Stats(records)
             let more = MoreInsights(records)
             let voice = VoiceProfile(records)
             DispatchQueue.main.async {
                 self.meetings = meetings
+                self.contacts = contacts
                 self.voice = voice
                 self.recordings = records
                 self.stats = stats
@@ -95,6 +103,64 @@ final class AppModel: ObservableObject {
     func delete(_ record: Recording) {
         try? RecordingStore.delete(record)
         reloadRecordings()
+    }
+
+    // MARK: - Notes and people
+
+    /// Delete notes (JSON and audio). They leave the list right away.
+    func deleteMeetings(_ doomed: [Meeting]) {
+        notesError = nil
+        for meeting in doomed {
+            do { try MeetingStore.delete(meeting) } catch { notesError = "Couldn't delete “\(meeting.title)”: \(error.localizedDescription)" }
+        }
+        let ids = Set(doomed.map(\.id))
+        meetings.removeAll { ids.contains($0.id) }
+        reloadRecordings()
+    }
+
+    /// Rename someone in every note, and move their contact card.
+    func renamePerson(_ old: String, to new: String) {
+        let new = new.trimmingCharacters(in: .whitespaces)
+        guard !new.isEmpty, new != old else { return }
+        notesError = nil
+        do {
+            try MeetingStore.rename(person: old, to: new, in: meetings)
+            try writeContacts(ContactBook.renamed(contacts, old, to: new))
+        } catch {
+            notesError = "Couldn't rename \(old): \(error.localizedDescription)"
+        }
+        reloadRecordings()
+    }
+
+    /// Take someone out of People (their notes stay; their lines become "Unknown speaker").
+    func removePerson(_ name: String) {
+        notesError = nil
+        do {
+            try MeetingStore.remove(person: name, from: meetings)
+            var book = contacts
+            book[name] = nil
+            try writeContacts(book)
+        } catch {
+            notesError = "Couldn't remove \(name): \(error.localizedDescription)"
+        }
+        reloadRecordings()
+    }
+
+    /// Save someone's contact card (and rename them if the name was changed on it).
+    func saveContact(_ card: Contact, for name: String, newName: String? = nil) {
+        notesError = nil
+        var book = contacts
+        book[name] = card
+        do { try writeContacts(book) } catch { notesError = "Couldn't save \(name)'s details: \(error.localizedDescription)" }
+        if let newName, !newName.trimmingCharacters(in: .whitespaces).isEmpty, newName != name {
+            renamePerson(name, to: newName)
+        }
+    }
+
+    private func writeContacts(_ book: [String: Contact]) throws {
+        contacts = book.filter { !$0.value.isEmpty }
+        guard let dir = meetingsDir else { return }
+        try ContactBook.save(book, to: ContactBook.url(in: dir))
     }
 
     var firstName: String {
@@ -113,6 +179,36 @@ final class AppModel: ObservableObject {
     func setting(_ key: String) -> Bool { settingsFile.bool(key) }
 
     var dictationKey: DictationKey { settingsFile.dictationKey }
+    var switchKey: DictationKey? { settingsFile.switchKey }
+    var nicknames: [String: String] { settingsFile.nicknames }
+
+    /// The app switcher key (nil turns it off).
+    func setSwitchKey(_ key: DictationKey?) {
+        do {
+            try settingsFile.setSwitchKey(key)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the shortcut: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
+
+    /// Add (or with app nil, remove) a spoken nickname. Nicknames are kept lowercase, as heard.
+    func setNickname(_ nickname: String, app: String?) {
+        let nick = nickname.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !nick.isEmpty else { return }
+        var all = nicknames
+        all[nick] = app
+        do {
+            try settingsFile.setNicknames(all)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the nickname: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
 
     func setDictationKey(_ key: DictationKey) {
         do {

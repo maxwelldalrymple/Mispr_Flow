@@ -43,6 +43,7 @@ struct RootView: View {
         .overlay(alignment: .top) { EngineBanner() }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 12) {
+                AutoEnterButton()
                 IncognitoSwitch()
                 Button { model.openProfile() } label: { AvatarView(size: 24) }
                     .buttonStyle(.plain).help("Profile")
@@ -184,27 +185,73 @@ struct IncognitoSwitch: View {
         .background(Capsule().fill(on ? Theme.incognito.opacity(0.16) : Color.clear))
         .overlay(alignment: .topTrailing) {
             if showInfo {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(on ? "Incognito is on" : "Incognito is off").font(.system(size: 12, weight: .semibold))
-                    Text("When it's on, nothing you dictate is saved: the audio stays in locked memory and is wiped right after it's transcribed, and no text or history is written to disk. History and Insights pause until you turn it off.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Dictation works the same either way, and nothing ever leaves your Mac.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(12)
-                .frame(width: 280, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.content))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardStroke))
-                .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
-                .offset(y: 34)
-                .transition(.opacity)
-                .allowsHitTesting(false)
+                InfoCard(title: on ? "Incognito is on" : "Incognito is off", lines: [
+                    "When it's on, nothing you dictate is saved: the audio stays in locked memory and is wiped right after it's transcribed, and no text or history is written to disk. History and Insights pause until you turn it off.",
+                    "Dictation works the same either way, and nothing ever leaves your Mac.",
+                ])
             }
         }
         .animation(.easeOut(duration: 0.12), value: showInfo)
         .zIndex(10)
+    }
+}
+
+/// Auto-Enter in the top bar, beside Incognito: when it's on, Mispr Flow presses Return
+/// after your words land in a text box, so a chat message sends itself and you can just talk.
+/// It's only ever turned on here, by hand, and stays on until you click it again.
+struct AutoEnterButton: View {
+    @EnvironmentObject var model: AppModel
+    @State private var showInfo = false
+
+    var body: some View {
+        let on = model.setting("auto_enter")
+        Button { model.setSetting("auto_enter", !on) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "return").font(.system(size: 12, weight: on ? .semibold : .regular))
+                if on { Text("Auto-Enter").font(.system(size: 12, weight: .semibold)) }
+            }
+            .foregroundStyle(on ? Theme.accent : Theme.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(Capsule().fill(on ? Theme.accent.opacity(0.16) : Color.clear))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(on ? "Auto-Enter is on" : "Auto-Enter is off")
+        .onHover { showInfo = $0 }
+        .overlay(alignment: .topTrailing) {
+            if showInfo {
+                InfoCard(title: on ? "Auto-Enter is on" : "Auto-Enter is off", lines: [
+                    "When it's on, Mispr Flow presses Enter for you right after your words go into a text box, so chat messages send themselves and you can just talk.",
+                    "It only presses Enter when the text was put into a text box, never when it was copied instead. Click to turn it \(on ? "off" : "on").",
+                ])
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: showInfo)
+        .zIndex(10)
+    }
+}
+
+/// The hover explanation under a top-bar control.
+struct InfoCard: View {
+    let title: String
+    let lines: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+            ForEach(lines, id: \.self) { line in
+                Text(line).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(width: 280, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.content))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardStroke))
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+        .offset(y: 34)
+        .transition(.opacity)
+        .allowsHitTesting(false)
     }
 }
 

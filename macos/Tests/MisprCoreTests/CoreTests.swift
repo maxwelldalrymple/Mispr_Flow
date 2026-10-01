@@ -914,3 +914,337 @@ final class LivePreviewTests: XCTestCase {
                        .chunkText(meeting: "m", stream: "you", speaker: 0, offset: 1.5, text: "Hel", voice: "", partial: true))
     }
 }
+
+/// Deleting notes, renaming and removing people across notes, and contact cards.
+final class NoteEditingTests: XCTestCase {
+    var dir: URL!
+
+    override func setUp() {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)")
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: dir) }
+
+    func note(_ id: String, people: [String], owner: String? = nil) throws -> Meeting {
+        var m = Meeting(id: "2026-10-01_09-00-00-\(id)", title: "Note \(id)", startedAt: Date(), durationS: 60,
+                        participants: [.init(name: "You", isMe: true)] + people.map { .init(name: $0) },
+                        transcript: [.init(speaker: "You", startS: 0, text: "Hi.")] + people.map { .init(speaker: $0, startS: 5, text: "Hello.") })
+        if let owner { m.summary = .init(overview: "O", decisions: [], actionItems: [.init(owner: owner, task: "T", due: nil)], openQuestions: []) }
+        try m.save(in: dir)
+        return m
+    }
+
+    func testDeleteRemovesTheJSONAndItsAudioFolder() throws {
+        _ = try note("a", people: ["Priya"])
+        _ = try note("b", people: ["Priya"])
+        let first = MeetingStore.load(from: dir).first { $0.title == "Note a" }!
+        let audio = first.fileURL!.deletingLastPathComponent().appendingPathComponent(first.id)
+        try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
+        try Data([1]).write(to: audio.appendingPathComponent("you.wav"))
+        try MeetingStore.delete(first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertEqual(MeetingStore.load(from: dir).map(\.title), ["Note b"])
+    }
+
+    func testDeletingANoteWithoutAFileDoesNothing() throws {
+        let m = Meeting(id: "x", title: "x", startedAt: Date(), durationS: 1, participants: [], transcript: [])
+        XCTAssertNoThrow(try MeetingStore.delete(m))
+    }
+
+    func testRenameChangesParticipantsLinesAndActionItemsEverywhere() throws {
+        _ = try note("a", people: ["Female 1"], owner: "Female 1")
+        _ = try note("b", people: ["Jordan"])
+        XCTAssertEqual(try MeetingStore.rename(person: "Female 1", to: " Priya ", in: MeetingStore.load(from: dir)), 1)
+        let a = MeetingStore.load(from: dir).first { $0.title == "Note a" }!
+        XCTAssertEqual(a.participants.map(\.name), ["You", "Priya"])
+        XCTAssertEqual(a.transcript.last?.speaker, "Priya")
+        XCTAssertEqual(a.summary?.actionItems.first?.owner, "Priya")
+    }
+
+    func testRenamingIntoSomeoneAlreadyThereMergesThem() throws {
+        _ = try note("a", people: ["Male 1", "Sam"])
+        try MeetingStore.rename(person: "Male 1", to: "Sam", in: MeetingStore.load(from: dir))
+        XCTAssertEqual(MeetingStore.load(from: dir)[0].participants.map(\.name), ["You", "Sam"])
+    }
+
+    func testRenameNeverTouchesYouOrBlankNames() throws {
+        _ = try note("a", people: ["Sam"])
+        let notes = MeetingStore.load(from: dir)
+        XCTAssertEqual(try MeetingStore.rename(person: "You", to: "Boss", in: notes), 0)
+        XCTAssertEqual(try MeetingStore.rename(person: "Sam", to: "  ", in: notes), 0)
+    }
+
+    func testRemoveKeepsTheNoteButMakesTheirLinesUnknown() throws {
+        _ = try note("a", people: ["Sam", "Priya"])
+        XCTAssertEqual(try MeetingStore.remove(person: "Sam", from: MeetingStore.load(from: dir)), 1)
+        let a = MeetingStore.load(from: dir)[0]
+        XCTAssertEqual(a.participants.map(\.name), ["You", "Priya"])
+        XCTAssertEqual(a.transcript.map(\.speaker), ["You", MeetingStore.unknownSpeaker, "Priya"])
+        XCTAssertFalse(PeopleIndex.people(MeetingStore.load(from: dir)).contains { $0.name == "Sam" })
+    }
+
+    func testRewriteNeedsAFile() {
+        let m = Meeting(id: "x", title: "x", startedAt: Date(), durationS: 1, participants: [], transcript: [])
+        XCTAssertThrowsError(try m.rewrite())
+    }
+
+    func testContactBookSavesLoadsAndDropsEmptyCards() throws {
+        let url = ContactBook.url(in: dir)
+        try ContactBook.save(["Priya": Contact(role: "Designer", email: "p@x.com"), "Sam": Contact(notes: "  ")], to: url)
+        XCTAssertEqual(ContactBook.load(from: url), ["Priya": Contact(role: "Designer", email: "p@x.com")])
+        XCTAssertEqual(MeetingStore.load(from: dir), [])  // people.json isn't mistaken for a note
+        XCTAssertEqual(ContactBook.load(from: dir.appendingPathComponent("missing.json")), [:])
+    }
+
+    func testNoteIDsHaveMillisecondsSoBackToBackNotesDiffer() {
+        let t = Date(timeIntervalSince1970: 1_790_800_000)
+        XCTAssertEqual(Meeting.newID(t).count, "2026-09-30_23-16-04-123".count)
+        XCTAssertTrue(Meeting.newID(t).hasSuffix("-000"))
+        XCTAssertNotEqual(Meeting.newID(t), Meeting.newID(t.addingTimeInterval(0.25)))
+        XCTAssertEqual(Meeting.newID(t).prefix(10).count, 10)  // the day folder
+    }
+
+    func testContactCardMovesWithARename() {
+        let card = Contact(company: "Acme")
+        XCTAssertEqual(ContactBook.renamed(["Female 1": card], "Female 1", to: "Priya"), ["Priya": card])
+        XCTAssertEqual(ContactBook.renamed(["A": card, "B": Contact(phone: "1")], "A", to: "B"), ["B": Contact(phone: "1")])
+    }
+}
+
+/// The app switcher key and nicknames in settings.json, and combo shortcuts.
+final class ChunkLinesTests: XCTestCase {
+    func testLastDefaultsToTrueAndCanBeFalse() {
+        let line = #"{"event": "chunk_text", "id": "m", "stream": "them", "speaker": 1, "offset": 2.0, "text": "Hi.", "voice": "male""#
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + line + "}"),
+                       .chunkText(meeting: "m", stream: "them", speaker: 1, offset: 2, text: "Hi.", voice: "male", last: true))
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + line + #", "last": false}"#),
+                       .chunkText(meeting: "m", stream: "them", speaker: 1, offset: 2, text: "Hi.", voice: "male", last: false))
+    }
+}
+
+final class SwitchKeyTests: XCTestCase {
+    func testCombosNeedAKeyOrTwoModifiersAndReadInMacOrder() {
+        XCTAssertNil(DictationKey.combo(mods: ["option"]))
+        XCTAssertNil(DictationKey.combo(mods: []))
+        XCTAssertNil(DictationKey.combo(mods: ["hyper", "option"]))
+        let both = DictationKey.combo(mods: ["option", "control"])
+        XCTAssertEqual(both?.label, "⌃⌥")
+        XCTAssertEqual(both?.mods, ["control", "option"])
+        XCTAssertEqual(both?.keycode, -1)
+        let withKey = DictationKey.combo(mods: ["command", "shift"], key: DictationKey.key(keycode: 1, characters: "s"))
+        XCTAssertEqual(withKey?.label, "⇧⌘S")
+        XCTAssertEqual(withKey?.keycode, 1)
+    }
+
+    func testCombosRoundTripThroughJSONWithANullKey() throws {
+        let combo = try XCTUnwrap(DictationKey.combo(mods: ["control", "option"]))
+        XCTAssertTrue(combo.json["keycode"] is NSNull)
+        let back = try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: combo.json))
+        XCTAssertEqual(DictationKey(json: back), combo)
+        XCTAssertNil(DictationKey(json: ["kind": "combo", "mods": []]))
+        XCTAssertEqual(DictationKey(json: DictationKey.fn.json), .fn)
+    }
+
+    func testSwitchKeyAndNicknamesInTheSettingsFile() throws {
+        let file = SettingsFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).json"))
+        XCTAssertNil(file.switchKey)
+        XCTAssertEqual(file.nicknames, [:])
+        let combo = try XCTUnwrap(DictationKey.combo(mods: ["control", "option"]))
+        try file.setSwitchKey(combo)
+        try file.setNicknames(["c": "Google Chrome"])
+        XCTAssertEqual(file.switchKey, combo)
+        XCTAssertEqual(file.nicknames, ["c": "Google Chrome"])
+        try file.setSwitchKey(nil)
+        XCTAssertNil(file.switchKey)
+        XCTAssertTrue(file.read()["switch_hotkey"] is NSNull)  // the engine reads null as off
+    }
+
+    func testSettingsChangedEventParses() {
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "settings_changed"}"#), .settingsChanged)
+    }
+}
+
+/// Speakers instead of headphones: the mic hears the call again. Those words must show once
+/// (as the other side), never duplicated as "You". Examples from a real test meeting.
+final class EchoTests: XCTestCase {
+    let them = "CI/CD on Google Next and GitOps on KubeCon. Does that sound right? - Yeah. - Yep. That's where we were last I heard."
+
+    func testWordsIgnorePunctuationAndCase() {
+        XCTAssertEqual(Echo.words("CICD on re:Invent!"), Echo.words("CI/CD on re:Invent"))
+        XCTAssertEqual(Echo.words("Yep, that's"), ["yep", "thats"])
+    }
+
+    func testAMicLineThatRepeatsThemIsDropped() {
+        XCTAssertNil(Echo.clean("CICD on Google Next and GitOps on KubeCon. Does that sound right?", against: [them]))
+        XCTAssertNil(Echo.clean("Yep, that's where we were last I heard.", against: [them]))
+        XCTAssertNil(Echo.clean("So it looks like maybe a platform on re:Invent.", against: ["So it looks like maybe a platform on re:Invent"]))
+    }
+
+    func testYourOwnWordsAreKept() {
+        XCTAssertEqual(Echo.clean("I'm going to go to the next one.", against: [them]), "I'm going to go to the next one.")
+        XCTAssertEqual(Echo.clean("Yeah I think so.", against: [them]), "Yeah I think so.")  // one shared word is coincidence
+        XCTAssertEqual(Echo.clean("Anything", against: []), "Anything")
+    }
+
+    func testTalkingOverTheEchoKeepsYourPart() {
+        let mixed = "Okay so let me share my screen first. Does that sound right? - Yeah."
+        XCTAssertEqual(Echo.clean(mixed, against: [them]), "Okay so let me share my screen first.")
+    }
+
+    func testShortRepliesNeedTwoWordsToCountAsEcho() {
+        XCTAssertEqual(Echo.clean("Yeah.", against: ["Yeah."]), "Yeah.")  // you might really have said it
+        XCTAssertNil(Echo.clean("Yeah, totally.", against: ["Yeah, totally."]))
+    }
+
+    func testTranscriptDropsEchoWhicheverArrivesFirst() {
+        var t = LiveTranscript()
+        t.add(stream: "you", speaker: 0, offset: 20, text: "CICD on Google Next and GitOps on KubeCon. Does that sound right?")
+        t.add(stream: "you", speaker: 0, offset: 27, text: "Yep, that's where we were last I heard.")
+        t.add(stream: "you", speaker: 0, offset: 5, text: "I'm going to go to the next one.")
+        XCTAssertEqual(t.lines.count, 3)  // nothing to compare with yet
+        t.add(stream: "them", speaker: 1, offset: 21, text: them, voice: "male")
+        XCTAssertEqual(t.lines.map(\.text), ["I'm going to go to the next one.", them])
+        XCTAssertEqual(t.echoesRemoved, 2)
+        t.add(stream: "you", speaker: 0, offset: 30, text: "Does that sound right?")  // a late copy
+        XCTAssertEqual(t.lines.count, 2)
+    }
+
+    func testEchoOnlyCountsNearbyInTime() {
+        var t = LiveTranscript()
+        t.add(stream: "them", speaker: 1, offset: 0, text: "Let's ship it on Friday.")
+        t.add(stream: "you", speaker: 0, offset: 60, text: "Let's ship it on Friday.")  // a minute later: you said it
+        XCTAssertEqual(t.lines.count, 2)
+    }
+
+    func testEchoNeverShowsAsALiveLine() {
+        var t = LiveTranscript()
+        t.setPartial(stream: "them", offset: 10, text: "We should hire two more engineers")
+        t.setPartial(stream: "you", offset: 10.4, text: "We should hire two more")
+        XCTAssertNil(t.partials["you"])
+        t.setPartial(stream: "you", offset: 12, text: "Agreed, let's post the role")
+        XCTAssertEqual(t.partials["you"]?.text, "Agreed, let's post the role")
+    }
+}
+
+/// The call coming back in through the mic (speakers, no headphones) is silenced before it
+/// becomes "You"; your own voice, and everything with headphones, gets through.
+final class EchoGateTests: XCTestCase {
+    var rng = SystemRandomNumberGenerator()
+
+    /// Speech-like audio: noise shaped by syllables of irregular length (80-350 ms) and
+    /// loudness, with short gaps, like real talk. `seconds` long.
+    func talk(_ seconds: Double, loud: Float = 0.2, seed: Int = 0) -> [Float] {
+        var out: [Float] = []
+        while out.count < Int(seconds * 16_000) {
+            let n = Int.random(in: 1_280...5_600), level = loud * Float.random(in: 0.4...1)
+            out += (0..<n).map { i in level * Float(sin(Double.pi * Double(i) / Double(n))) * Float.random(in: -1...1) }
+            out += (0..<Int.random(in: 0...1_600)).map { _ in Float.random(in: -0.0005...0.0005) }
+        }
+        return Array(out.prefix(Int(seconds * 16_000)))
+    }
+
+    func quiet(_ seconds: Double) -> [Float] { (0..<Int(seconds * 16_000)).map { _ in Float.random(in: -0.0005...0.0005) } }
+
+    /// Feeds the call and the mic in 100 ms buffers, the mic's copy `delay` s late and `leak` loud.
+    func run(_ gate: EchoGate, call: [Float], own: [Float], leak: Float, delay: Double = 0.08) -> [Float] {
+        let lag = Int(delay * 16_000)
+        var out: [Float] = []
+        let step = 1_600
+        for start in stride(from: 0, to: call.count, by: step) {
+            let end = min(start + step, call.count)
+            let t = Double(end) / 16_000
+            gate.system(Array(call[start..<end]), at: t)
+            let mic = (start..<end).map { i in (i >= lag ? leak * call[i - lag] : 0) + (i < own.count ? own[i] : 0) + Float.random(in: -0.0005...0.0005) }
+            out += gate.mic(mic, at: t + 0.02)  // mic buffers arrive a bit later
+        }
+        return out + gate.flush()
+    }
+
+    func energy(_ x: ArraySlice<Float>) -> Float { x.reduce(0) { $0 + $1 * $1 } }
+
+    func testPureEchoIsSilenced() {
+        let gate = EchoGate()
+        let call = talk(6)
+        let out = run(gate, call: call, own: [], leak: 0.25)
+        XCTAssertEqual(out.count, call.count)  // nothing lost or added
+        XCTAssertLessThan(energy(out[16_000...]), 0.05 * energy(ArraySlice(call.map { 0.25 * $0 })[16_000...]))
+        XCTAssertEqual(gate.delaySlots, 5)  // 80 ms of room delay + 20 ms later arrival
+        XCTAssertEqual(gate.leak, 0.25, accuracy: 0.1)
+    }
+
+    func testYourVoiceGetsThroughEvenOverTheCall() {
+        let gate = EchoGate()
+        let call = talk(8, loud: 0.2)
+        var own = quiet(8)
+        let mine = talk(3, loud: 0.15, seed: 2)
+        for i in 0..<mine.count { own[4 * 16_000 + i] = mine[i] }  // you talk from 4 s to 7 s, over them
+        let out = run(gate, call: call, own: own, leak: 0.2)
+        let yours = out[(4 * 16_000 + 4_800)..<(7 * 16_000)]
+        // A hard case on purpose: your voice only ~3x the echo (usually it's far more). Most of
+        // it must get through; any echo words that ride along are removed from the text.
+        XCTAssertGreaterThan(energy(yours), 0.6 * energy(ArraySlice(mine)[4_800...]))
+    }
+
+    func testHeadphonesLetEverythingThrough() {
+        let gate = EchoGate()
+        let call = talk(6)
+        var own = quiet(6)
+        let mine = talk(2, loud: 0.05, seed: 1)  // even a quiet voice
+        for i in 0..<mine.count { own[3 * 16_000 + i] = mine[i] }
+        let out = run(gate, call: call, own: own, leak: 0)  // no leak at all
+        XCTAssertGreaterThan(energy(out[(3 * 16_000 + 4_800)..<(5 * 16_000)]), 0.8 * energy(ArraySlice(mine)[4_800...]))
+        XCTAssertLessThan(gate.leak, 0.05)
+    }
+
+    func testNoCallMeansNothingIsTouched() {
+        let gate = EchoGate()
+        let own = talk(2, loud: 0.1)
+        let out = gate.mic(own, at: 2) + gate.flush()
+        XCTAssertEqual(out, own)
+        XCTAssertEqual(gate.silencedFrames, 0)
+    }
+
+    func testMicIsHeldBackBrieflyThenReleased() {
+        let gate = EchoGate()
+        XCTAssertEqual(gate.mic(Array(repeating: 0.1, count: 3_200), at: 0.2), [])  // 0.2 s < hold
+        XCTAssertEqual(gate.mic(Array(repeating: 0.1, count: 3_200), at: 0.4).count, 1_600)
+        XCTAssertEqual(gate.flush().count, 4_800)
+    }
+}
+
+
+/// Two voices that turn out to be one person are merged: their lines relabelled, names kept.
+final class SpeakerMergeTests: XCTestCase {
+    func testMergeRelabelsLinesAndKeepsAName() {
+        var t = LiveTranscript()
+        t.add(stream: "them", speaker: 1, offset: 0, text: "Hi there everyone.", voice: "male")
+        t.add(stream: "them", speaker: 2, offset: 5, text: "Let's get going.", voice: "male")
+        t.add(stream: "you", speaker: 0, offset: 8, text: "Sounds good to me.")
+        t.names[2] = "Sam"
+        XCTAssertEqual(t.groups.map(\.label), ["Male 1", "Sam", "You"])
+        t.merge(2, into: 1)
+        XCTAssertEqual(t.lines.filter { $0.stream == "them" }.map(\.speaker), [1, 1])
+        XCTAssertEqual(t.groups.map(\.label), ["Sam", "You"])  // one person, one bubble group
+        t.merge(1, into: 1)  // no-op
+        XCTAssertEqual(t.lines.count, 3)
+    }
+
+    func testMergedEventParses() {
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "speakers_merged", "id": "m", "speaker": 3, "into": 1}"#),
+                       .speakersMerged(meeting: "m", speaker: 3, into: 1))
+        XCTAssertNil(EngineEvent.parse(EngineEvent.prefix + #"{"event": "speakers_merged", "id": "m"}"#))
+    }
+}
+
+
+/// Voice commands are kept in history but aren't dictation: no word counts or speed.
+final class CommandHistoryTests: XCTestCase {
+    func testCommandsAreReadAndLeftOutOfStats() throws {
+        let json = #"{"id": "c", "status": "command", "transcript": "new tab", "started_at": "2026-10-01T12:00:00.000Z", "ended_at": "2026-10-01T12:00:01.000Z", "duration_s": 1.0, "words": 2}"#
+        let record = try RecordingStore.makeDecoder().decode(Recording.self, from: Data(json.utf8))
+        XCTAssertEqual(record.status, .command)
+        XCTAssertFalse(record.status.isDictation)
+        XCTAssertTrue(Recording.Status.pasted.isDictation && Recording.Status.copied.isDictation)
+        XCTAssertEqual(Stats([record]).totalWords, 0)
+    }
+}

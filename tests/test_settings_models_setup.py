@@ -39,11 +39,18 @@ class TestSettings:
 
     def test_saved_file_is_human_readable(self):
         settings.save(settings.Settings())
-        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "cleanup": true,\n  "sounds": true,\n  "hotkey": {\n    "kind": "fn",\n    "keycode": 63,\n    "label": "fn"\n  },\n  "onboarded": false\n}'
+        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "auto_enter": false,\n  "cleanup": true,\n  "sounds": true,\n  "hotkey": {\n    "kind": "fn",\n    "keycode": 63,\n    "label": "fn"\n  },\n  "switch_hotkey": null,\n  "app_nicknames": {},\n  "onboarded": false\n}'
 
     def test_saved_file_is_readable_json(self):
         settings.save(settings.Settings(incognito=True))
-        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "cleanup": True, "sounds": True, "hotkey": {"kind": "fn", "keycode": 63, "label": "fn"}, "onboarded": False}
+        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "auto_enter": False, "cleanup": True, "sounds": True, "hotkey": {"kind": "fn", "keycode": 63, "label": "fn"}, "switch_hotkey": None, "app_nicknames": {}, "onboarded": False}
+
+    def test_save_nickname_keeps_other_settings(self):
+        settings.save(settings.Settings(incognito=True, app_nicknames={"c": "Google Chrome"}))
+        result = settings.save_nickname("scooby snacks", "Google Chrome")
+        loaded = settings.load()
+        assert loaded.incognito is True and result.app_nicknames == loaded.app_nicknames
+        assert loaded.app_nicknames == {"c": "Google Chrome", "scooby snacks": "Google Chrome"}
 
     def test_partial_file_fills_defaults(self):
         settings.SETTINGS_PATH.parent.mkdir(parents=True)
@@ -114,6 +121,19 @@ class TestModelSpec:
         assert spec.size > 100_000_000
         assert spec.url.startswith("https://huggingface.co/") and spec.url.endswith(spec.filename)
 
+    @pytest.mark.parametrize("spec", [models.WHISPER_BASE_EN, models.TITANET_LARGE, models.SILERO_VAD])
+    def test_meeting_models_are_pinned_https_downloads(self, spec):
+        assert re.fullmatch(r"[0-9a-f]{64}", spec.sha256) and spec.size > 500_000
+        assert spec.url.startswith("https://") and spec.url.endswith(spec.filename)
+
+    def test_full_source_url_wins(self):
+        assert spec_for(source="https://github.com/o/r/releases/download/t/test.bin").url == \
+            "https://github.com/o/r/releases/download/t/test.bin"
+
+    def test_meeting_models_are_not_required_at_first_run(self):
+        from mispr import setup
+        assert not {models.PREVIEW_MODEL, models.SPEAKER_MODEL, models.VAD_MODEL} & set(setup.REQUIRED)
+
     def test_spec_is_immutable(self):
         import dataclasses
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -122,6 +142,7 @@ class TestModelSpec:
     def test_configured_models(self):
         assert models.DEFAULT_MODEL is models.WHISPER_TURBO_Q5
         assert models.CLEANUP_MODEL is models.GEMMA3_4B_Q4
+        assert models.PREVIEW_MODEL is models.WHISPER_BASE_EN and models.SPEAKER_MODEL is models.TITANET_LARGE
 
 
 class TestIsInstalled:

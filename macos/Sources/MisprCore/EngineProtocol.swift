@@ -11,7 +11,10 @@ public enum EngineEvent: Equatable {
     case tried(TryResult)
     /// A meeting chunk was transcribed (speaker: 0 = you, 1+ = voices on the other side).
     /// `partial`: live text for a phrase still being spoken (replaced by the final text).
-    case chunkText(meeting: String, stream: String, speaker: Int, offset: Double, text: String, voice: String, partial: Bool = false)
+    /// `last`: a chunk with several speakers comes back as several lines; only its last one
+    /// has last = true (older engines send one line per chunk, so it defaults to true).
+    case chunkText(meeting: String, stream: String, speaker: Int, offset: Double, text: String, voice: String,
+                   partial: Bool = false, last: Bool = true)
     /// The meeting summary (nil if the model couldn't write one), with a suggested title.
     case summary(meeting: String, summary: Meeting.Summary?, title: String)
     /// An answer to "Ask anything" / "What did I miss?".
@@ -22,6 +25,10 @@ public enum EngineEvent: Equatable {
     case openNote(start: Bool)
     /// A meeting recording started or stopped (from the note window or the widget's pill).
     case meeting(active: Bool)
+    /// Two voices turned out to be the same person: relabel `speaker`'s lines as `into`.
+    case speakersMerged(meeting: String, speaker: Int, into: Int)
+    /// The engine changed settings.json itself (a nickname set by voice): re-read it.
+    case settingsChanged
     /// A well-formed event this version doesn't know.
     case unknown(String)
 
@@ -56,7 +63,7 @@ public enum EngineEvent: Equatable {
             return .chunkText(meeting: object["id"] as? String ?? "", stream: object["stream"] as? String ?? "them",
                               speaker: object["speaker"] as? Int ?? 0, offset: object["offset"] as? Double ?? 0,
                               text: object["text"] as? String ?? "", voice: object["voice"] as? String ?? "person",
-                              partial: object["partial"] as? Bool ?? false)
+                              partial: object["partial"] as? Bool ?? false, last: object["last"] as? Bool ?? true)
         case "summary":
             let summary = Meeting.Summary(json: object["summary"])
             let title = (object["summary"] as? [String: Any])?["title"] as? String ?? ""
@@ -64,6 +71,11 @@ public enum EngineEvent: Equatable {
         case "answer":
             return .answer(meeting: object["id"] as? String ?? "", question: object["question"] as? String ?? "",
                            text: object["text"] as? String ?? "")
+        case "speakers_merged":
+            guard let from = object["speaker"] as? Int, let into = object["into"] as? Int else { return nil }
+            return .speakersMerged(meeting: object["id"] as? String ?? "", speaker: from, into: into)
+        case "settings_changed":
+            return .settingsChanged
         case "meeting":
             guard let active = object["active"] as? Bool else { return nil }
             return .meeting(active: active)

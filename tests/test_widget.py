@@ -832,6 +832,43 @@ class TestSoundCues:
         clock.advance(4.0)
         assert controller._notice_alpha() == 0.0
 
+    def test_auto_enter_presses_return_after_pasting(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(controller.pasted[:]))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Send this.", "send this", None, 1.0, "finished")
+        assert enters == [["Send this."]]  # Return comes after the text is in
+
+    def test_auto_enter_also_works_when_incognito_types(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        controller.settings.auto_enter = controller.settings.incognito = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.typed == ["Hi."] and enters == [True]
+
+    def test_auto_enter_never_presses_return_without_a_text_box(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.copied == ["Hi."] and enters == []
+
+    def test_no_return_unless_auto_enter_is_on(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        assert controller.settings.auto_enter is False  # off by default
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and enters == []
+
     def test_alert_when_nothing_was_heard(self, controller):
         controller.begin_handsfree()
         controller.finish()
@@ -1443,6 +1480,358 @@ class TestNoteWindowHooks:
         controller.on_meeting_changed = seen.append
         controller.stop_meeting()
         assert controller.state == W.IDLE and seen == [] and controller.sounds.played == []
+
+
+class TestAppSwitcher:
+    """Hold the switch key, say an app, let go: it comes forward. Nicknames by voice."""
+
+    APPS = {"Google Chrome": "/A/Google Chrome.app", "Terminal": "/S/Terminal.app"}
+
+    @pytest.fixture
+    def fronted(self, controller, monkeypatch):
+        brought = []
+        monkeypatch.setattr(W.apps, "find_apps", lambda: dict(self.APPS))
+        monkeypatch.setattr(W.apps, "running_apps", lambda: {"Terminal": "/S/Terminal.app"})
+        monkeypatch.setattr(W.apps, "bring_to_front", brought.append)
+        return brought
+
+    def say(self, controller, clock, text):
+        controller.switch_key("down")
+        assert controller.state == W.HOLD and controller.hold_source == "switch"
+        assert controller.notice[0] == W.SWITCH_NOTICE
+        clock.advance(1.0)
+        controller.switch_key("up")
+        assert controller.state == W.PROCESSING
+        audio, on_done, post = controller.transcriber.calls[-1]
+        assert post is None  # raw Whisper text, no cleanup
+        on_done(text, text, None, 0.2)
+
+    def test_saying_an_app_brings_it_forward(self, controller, clock, fronted):
+        self.say(controller, clock, "Open Chrome.")
+        assert fronted == ["/A/Google Chrome.app"]
+        assert controller.state == W.IDLE and controller.notice[0] == "→ Google Chrome"
+        assert controller.sounds.played == ["start", "stop", "paste"]
+        assert controller.pasted == [] and controller.copied == []  # nothing typed anywhere
+
+    def test_running_app_path_is_used(self, controller, clock, fronted):
+        self.say(controller, clock, "terminal")
+        assert fronted == ["/S/Terminal.app"]
+
+    def test_nickname_by_voice_then_use_it(self, controller, clock, fronted):
+        changed = []
+        controller.on_settings_changed = lambda: changed.append(True)
+        self.say(controller, clock, "Set nickname Scooby Snacks to Chrome.")
+        assert W.settings.load().app_nicknames == {"scooby snacks": "Google Chrome"}
+        assert changed == [True] and controller.notice[0] == "“scooby snacks” now opens Google Chrome"
+        self.say(controller, clock, "Scooby snacks!")
+        assert fronted == ["/A/Google Chrome.app"]
+
+    def test_unknown_app_errors(self, controller, clock, fronted):
+        self.say(controller, clock, "Open Flurbo")
+        assert fronted == [] and controller.sounds.played[-1] == "error"
+        assert controller.notice[0] == "No app called “flurbo”"
+
+    def test_nickname_for_an_unknown_app_errors(self, controller, clock, fronted):
+        self.say(controller, clock, "nickname F for Flurbo")
+        assert W.settings.load().app_nicknames == {} and controller.sounds.played[-1] == "error"
+
+    def test_silence_alerts(self, controller, clock, fronted):
+        self.say(controller, clock, "")
+        assert fronted == [] and controller.sounds.played[-1] == "alert"
+
+    def test_commands_go_into_history_then_audio_is_wiped(self, controller, clock, fronted, monkeypatch):
+        saved = []
+        monkeypatch.setattr(controller, "_save", lambda *a, **kw: saved.append(a))
+        self.say(controller, clock, "Chrome.")
+        assert saved == [(W.storage.COMMAND, "Chrome.")] and controller.recorder.wiped
+        self.say(controller, clock, "")
+        assert len(saved) == 1  # nothing said: nothing saved
+
+    def test_history_keeps_the_outcome_with_real_names(self, controller, clock, fronted, monkeypatch, tmp_path):
+        wav = tmp_path / "c.wav"
+        wav.with_suffix(".json").write_text('{"transcript": "Chrome.", "raw_transcript": "Chrome.", "words": 1}')
+        monkeypatch.setattr(controller, "_save", lambda *a, **kw: wav)
+        self.say(controller, clock, "Chrome.")
+        import json
+        meta = json.loads(wav.with_suffix(".json").read_text())
+        assert meta["transcript"] == "→ Google Chrome" and meta["raw_transcript"] == "Chrome."
+
+    def test_incognito_commands_are_not_saved(self, controller, clock, fronted, monkeypatch):
+        written = []
+        monkeypatch.setattr(W.storage, "save_recording", lambda *a, **kw: written.append(kw))
+        controller.settings.incognito = True
+        self.say(controller, clock, "Chrome")
+        assert written == []
+
+    def test_quick_tap_or_shortcut_drops_it(self, controller, clock, fronted):
+        controller.switch_key("down")
+        clock.advance(0.05)
+        controller.switch_key("up")
+        assert controller.state == W.IDLE and controller.transcriber.calls == []
+        controller.switch_key("down")
+        clock.advance(1.0)
+        controller.switch_key("combo")
+        assert controller.state == W.IDLE and controller.transcriber.calls == []
+
+    @pytest.fixture
+    def windows(self, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "pid_for", lambda path: {"/A/Google Chrome.app": 11, "/S/Terminal.app": 22}.get(path))
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 99)
+        monkeypatch.setattr(W.apps, "window_action", lambda pid, action, frame=None: done.append((pid, action, frame)) or True)
+        return done
+
+    def test_close_minimize_expand(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Close Chrome.")
+        self.say(controller, clock, "minimize")  # the app you're in
+        self.say(controller, clock, "Expand the terminal")
+        assert windows == [(11, "close", None), (99, "minimize", None), (22, "frame", (0, 0, 1000, 800))]
+        assert controller.notice[0] == "Expanded Terminal"
+
+    def test_side_by_side_with_a_split(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Chrome 70% beside terminal")
+        assert windows == [(22, "frame", (700.0, 0, 300.0, 800)), (11, "frame", (0, 0, 700.0, 800))]
+        assert fronted == ["/S/Terminal.app", "/A/Google Chrome.app"]  # Chrome, named first, ends up in front
+        assert controller.notice[0] == "Google Chrome | Terminal"
+
+    def test_percent_of_the_screen(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Chrome 80%")
+        assert windows == [(11, "frame", (100.0, 80.0, 800.0, 640.0))]
+
+    def test_an_app_still_opening_is_retried(self, controller, clock, fronted, monkeypatch):
+        tries = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "pid_for", lambda path: None)  # not running yet
+        monkeypatch.setattr(W.apps, "window_action", lambda *a, **k: tries.append(1) or False)
+        self.say(controller, clock, "Chrome 80%")
+        assert len(fronted) == 4  # launched, then 3 more tries
+
+    def test_unknown_app_in_a_layout_errors(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Flurbo beside Chrome")
+        assert windows == [] and controller.notice[0] == "No app called “flurbo”"
+
+    def test_tab_shortcuts_here_or_in_a_named_app(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.say(controller, clock, "New tab")
+        assert pressed == ["new tab"] and fronted == []
+        self.say(controller, clock, "Close tab in Chrome")
+        assert fronted == ["/A/Google Chrome.app"] and pressed == ["new tab", "close tab"]
+        assert controller.notice[0] == "Close tab · Google Chrome"
+
+    def test_quit(self, controller, clock, fronted, monkeypatch, windows):
+        quit_ = []
+        monkeypatch.setattr(W.apps, "quit_app", quit_.append)
+        self.say(controller, clock, "quit chrome")
+        assert quit_ == [11] and controller.notice[0] == "Quit Google Chrome"
+        self.say(controller, clock, "Quit.")  # no name: the app you're in
+        assert quit_ == [11, 99] and controller.notice[0] == "Quit TestApp"
+
+    @pytest.fixture
+    def sound(self, monkeypatch):
+        log = {"mic": [], "volume": [], "media": []}
+        monkeypatch.setattr(W.apps, "press_media", log["media"].append)
+        monkeypatch.setattr(W.apps, "set_volume", lambda change: log["volume"].append(change) or 55)
+        monkeypatch.setattr(W.apps, "mic_level", lambda: 70)
+        monkeypatch.setattr(W.apps, "set_mic_level", log["mic"].append)
+        return log
+
+    def test_play_pause_and_volume(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Pause")
+        self.say(controller, clock, "volume up")
+        assert sound["media"] == ["play"] and sound["volume"] == ["up"] and controller.notice[0] == "Volume 55%"
+
+    def test_mute_mic_and_unmute_it_by_voice(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Mute mic")
+        assert controller.mic_saved == 70 and sound["mic"] == [0]
+        controller.switch_key("down")  # hold the key: the mic opens to hear you
+        assert sound["mic"] == [0, 70]
+        clock.advance(1.0)
+        controller.switch_key("up")
+        controller.transcriber.calls[-1][1]("unmute mic", "unmute mic", None, 0.2)
+        assert controller.mic_saved is None and sound["mic"] == [0, 70, 70] and controller.notice[0] == "Mic on"
+
+    def test_other_commands_while_muted_keep_it_muted(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Mute mic")
+        self.say(controller, clock, "Pause")
+        assert sound["mic"] == [0, 70, 0]  # opened for the command, muted again after
+
+    def test_mute_tab_and_mute_app(self, controller, clock, fronted, monkeypatch, windows):
+        tabs = []
+        state = {"muted": False}
+        def mute_tab(pid, mute):
+            tabs.append((pid, mute))
+            if pid != 11:
+                return False
+            if state["muted"] == mute:
+                return None  # already that way
+            state["muted"] = mute
+            return True
+        monkeypatch.setattr(W.apps, "mute_tab", mute_tab)
+        self.say(controller, clock, "mute tab in chrome")
+        assert controller.notice[0] == "Muted Google Chrome"
+        self.say(controller, clock, "mute tab in chrome")
+        assert controller.notice[0] == "Google Chrome is already muted"  # never toggles back by mistake
+        self.say(controller, clock, "unmute tab in chrome")
+        assert controller.notice[0] == "Unmuted Google Chrome" and tabs[-1] == (11, False)
+        self.say(controller, clock, "mute terminal")
+        assert "can't mute one app" in controller.notice[0]
+
+    def test_skip_forward_and_back(self, controller, clock, fronted, monkeypatch):
+        seeks = []
+        monkeypatch.setattr(W.apps, "seek", seeks.append)
+        self.say(controller, clock, "Skip forward 30 seconds")
+        self.say(controller, clock, "rewind 10 seconds in chrome")
+        assert seeks == [30, -10] and fronted == ["/A/Google Chrome.app"]
+        assert controller.notice[0] == "Back 10s · Google Chrome"
+
+    def test_scrolling(self, controller, clock, fronted, monkeypatch):
+        scrolled, pressed = [], []
+        monkeypatch.setattr(W.apps, "scroll", scrolled.append)
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.say(controller, clock, "Scroll down")
+        self.say(controller, clock, "scroll to the top")
+        assert scrolled == [-450] and pressed == ["top"] and controller.notice[0] == "To the top"
+
+    def test_a_guess_never_opens_an_app_that_isnt_running(self, controller, clock, fronted):
+        self.APPS["Logic Pro"] = "/A/Logic Pro.app"
+        try:
+            self.say(controller, clock, "Pro.")  # what a clipped "Chrome" sounded like
+            assert fronted == [] and controller.notice[0] == "No app called “pro”"
+            self.say(controller, clock, "Termin")  # a prefix of an app that's open: fine
+            assert fronted == ["/S/Terminal.app"]
+            self.say(controller, clock, "Logi")  # a guess at one that isn't open: asks for the name
+            assert fronted == ["/S/Terminal.app"] and controller.notice[0] == "Not sure you meant Logic Pro: say its full name"
+        finally:
+            del self.APPS["Logic Pro"]
+
+    @pytest.fixture
+    def files(self, monkeypatch, tmp_path):
+        log = {"open": [], "go": []}
+        monkeypatch.setattr(W, "start_daemon", lambda target, name: target())
+        monkeypatch.setattr(W.apps, "spotlight", lambda *a, **k: None)  # the folder walk, on a temp tree
+        monkeypatch.setattr(W.apps, "open_path", log["open"].append)
+        monkeypatch.setattr(W.apps, "finder_go", log["go"].append)
+        (tmp_path / "Docs" / "Taxes").mkdir(parents=True)
+        (tmp_path / "Docs" / "Budget.xlsx").write_text("x")
+        log["root"] = tmp_path
+        return log
+
+    def in_finder(self, monkeypatch, folder):
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"app": "Finder", "bundle_id": "com.apple.finder"})
+        monkeypatch.setattr(W.apps, "finder_folder", lambda: str(folder))
+
+    def test_open_folder_searches_from_home(self, controller, clock, fronted, files, monkeypatch):
+        monkeypatch.setattr(W.Path, "home", lambda: files["root"])
+        self.say(controller, clock, "Open folder taxes")
+        assert files["open"] == [str(files["root"] / "Docs/Taxes")] and controller.notice[0] == "Opened Taxes"
+        self.say(controller, clock, "open the nowhere folder")
+        assert controller.notice[0] == "Couldn't find a “nowhere” folder"
+
+    def test_in_finder_open_goes_into_folders_and_opens_files(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"])
+        self.say(controller, clock, "Open taxes")  # a folder below: same Finder window
+        assert files["go"] == [str(files["root"] / "Docs/Taxes")]
+        self.say(controller, clock, "Open budget")  # a file: its app
+        assert files["open"] == [str(files["root"] / "Docs/Budget.xlsx")]
+
+    def test_in_finder_not_found_says_where(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"] / "Docs")
+        self.say(controller, clock, "open receipts")
+        assert controller.notice[0] == "“receipts” can't be found in Docs" and fronted == []
+
+    def test_in_finder_open_an_app_still_works(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"])
+        self.say(controller, clock, "Open Chrome")
+        assert fronted == ["/A/Google Chrome.app"]
+
+    def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
+        controller.switch_key("up")  # no press: nothing
+        controller.begin_handsfree()
+        controller.switch_key("down")
+        assert controller.state == W.HANDSFREE  # dictating: left alone
+        controller.fn_down()  # fn's up doesn't finish a switch, and vice versa
+        assert controller.hold_source != "switch"
+
+
+class TestAutoEnterCues:
+    """You can tell Auto-Enter is on: a chime and a notice when it changes, a ⏎ badge while on."""
+
+    def toggle(self, controller, on):
+        W.settings.save(W.settings.Settings(auto_enter=on))
+        controller.reload_settings()
+
+    def test_turning_it_on_and_off_chimes_and_says_so(self, controller):
+        self.toggle(controller, True)
+        assert controller.sounds.played == ["lock"] and controller.notice[0] == "Auto-Enter on ⏎"
+        self.toggle(controller, False)
+        assert controller.sounds.played == ["lock", "lock"] and controller.notice[0] == "Auto-Enter off"
+
+    def test_other_setting_changes_stay_quiet(self, controller):
+        W.settings.save(W.settings.Settings(cleanup=False))
+        controller.reload_settings()
+        assert controller.sounds.played == [] and controller.notice is None
+
+    def test_no_chime_when_sounds_are_off(self, controller):
+        W.settings.save(W.settings.Settings(auto_enter=True, sounds=False))
+        controller.reload_settings()
+        assert controller.sounds.enabled is False and controller.notice[0] == "Auto-Enter on ⏎"
+
+    def test_badge_is_drawn_only_while_on(self, controller):
+        controller.state = W.IDLE
+        controller.shape = W.layout(W.IDLE).bg.values()
+        r = W.Shape.from_values(controller.shape).rect
+        def blue_pixels():
+            img, _ = render(controller.draw, W.VIEW_W, W.VIEW_H)
+            rgb = img[..., :3].astype(int)
+            return int(((rgb[..., 2] > 200) & (rgb[..., 0] < 120)).sum())
+        assert blue_pixels() == 0
+        controller.settings.auto_enter = True
+        assert blue_pixels() > 20
+
+
+class TestBrowserTextBoxRecheck:
+    """A browser box that is still taking focus (YouTube's comment box) gets a second look."""
+
+    def test_browser_no_is_checked_again(self, controller, monkeypatch):
+        answers = [(W.context.NO, "Google Chrome"), (W.context.YES, "Google Chrome")]
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: answers.pop(0))
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"app": "Google Chrome", "bundle_id": "com.google.Chrome", "url": None, "page_title": None})
+        monkeypatch.setattr(W.context, "focus_chain", lambda: "AXTextArea < AXWebArea")
+        slept = []
+        monkeypatch.setattr(W.time, "sleep", slept.append)
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and slept == [W.TEXT_BOX_RECHECK]
+
+    def test_other_apps_are_not_rechecked(self, controller, monkeypatch):
+        calls = []
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: calls.append(1) or (W.context.NO, "Finder"))
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert calls == [1] and controller.copied == ["Hi."]
+
+
+class TestTerminalDictation:
+    """In a terminal, dictation becomes shell syntax and Auto-Enter never runs it."""
+
+    def test_terminal_gets_shell_syntax_and_others_the_usual_cleanup(self, controller):
+        controller.rec_recorded_in = {"app": "Terminal", "bundle_id": "com.apple.Terminal"}
+        controller.settings.cleanup = False  # the plain converter (the model path is tested in test_terminal)
+        text, info = controller._post_processor()("ls flag a")
+        assert info["terminal"] and text in ("ls -a",)
+        controller.settings.cleanup = True
+        controller.rec_recorded_in = {"app": "Notes", "bundle_id": "com.apple.Notes"}
+        assert controller._post_processor() == controller.cleaner.clean
+
+    def test_auto_enter_runs_the_command_in_terminals_too(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree(); controller.finish()
+        controller._on_transcribed("ls -a", "ls flag a", {"terminal": True, "applied": False, "ms": 0, "rejected": "x"}, 1.0, "finished")
+        assert controller.pasted == ["ls -a"] and enters == [True]
 
 
 class TestIncognitoNeverUsesTheClipboard:

@@ -1,13 +1,27 @@
 import Foundation
 
-/// The dictation key (Settings > General > Shortcuts), stored in settings.json as
-/// {"kind": "fn" | "modifier" | "key", "keycode": Int, "label": String}; see mispr/hotkey.py.
+/// A shortcut key (the dictation key, the app switcher key), stored in settings.json as
+/// {"kind": "fn" | "modifier" | "key" | "combo", "keycode": Int?, "label": String, "mods": [..]};
+/// see mispr/hotkey.py. A combo is modifiers held together ("control", "option", "shift",
+/// "command"), with one key or (two or more modifiers) on their own; its keycode is -1 then.
 public struct DictationKey: Equatable {
-    public enum Kind: String { case fn, modifier, key }
+    public enum Kind: String { case fn, modifier, key, combo }
 
     public var kind: Kind
     public var keycode: Int
     public var label: String
+    public var mods: [String] = []
+
+    /// Modifier names in the order macOS shows them, with their symbols.
+    public static let comboOrder: [(name: String, symbol: String)] = [("control", "⌃"), ("option", "⌥"), ("shift", "⇧"), ("command", "⌘")]
+
+    /// A combo (nil if it isn't one: a key needs a modifier; modifiers alone need two).
+    public static func combo(mods: Set<String>, key: DictationKey? = nil) -> DictationKey? {
+        let ordered = comboOrder.filter { mods.contains($0.name) }
+        guard ordered.count == mods.count, !ordered.isEmpty, key != nil || ordered.count >= 2 else { return nil }
+        let label = ordered.map(\.symbol).joined() + (key?.label ?? "")
+        return DictationKey(kind: .combo, keycode: key?.keycode ?? -1, label: label, mods: ordered.map(\.name))
+    }
 
     public static let fn = DictationKey(kind: .fn, keycode: 63, label: "fn")
 
@@ -29,10 +43,11 @@ public struct DictationKey: Equatable {
         123: "←", 124: "→", 125: "↓", 126: "↑", 50: "`", 10: "§",
     ]
 
-    public init(kind: Kind, keycode: Int, label: String) {
+    public init(kind: Kind, keycode: Int, label: String, mods: [String] = []) {
         self.kind = kind
         self.keycode = keycode
         self.label = label
+        self.mods = mods
     }
 
     /// The key for a modifier press (flagsChanged), or nil if it isn't one we support.
@@ -55,11 +70,20 @@ public struct DictationKey: Equatable {
         kind == .key && Self.named[keycode] == nil
     }
 
-    public var json: [String: Any] { ["kind": kind.rawValue, "keycode": keycode, "label": label] }
+    public var json: [String: Any] {
+        guard kind == .combo else { return ["kind": kind.rawValue, "keycode": keycode, "label": label] }
+        return ["kind": kind.rawValue, "keycode": keycode >= 0 ? keycode : NSNull(), "label": label, "mods": mods]
+    }
 
     public init?(json: Any?) {
         guard let object = json as? [String: Any], let kindName = object["kind"] as? String,
-              let kind = Kind(rawValue: kindName), let keycode = object["keycode"] as? Int else { return nil }
+              let kind = Kind(rawValue: kindName) else { return nil }
+        if kind == .combo {
+            guard let mods = object["mods"] as? [String], !mods.isEmpty else { return nil }
+            self.init(kind: kind, keycode: object["keycode"] as? Int ?? -1, label: object["label"] as? String ?? "keys", mods: mods)
+            return
+        }
+        guard let keycode = object["keycode"] as? Int else { return nil }
         self.init(kind: kind, keycode: keycode, label: object["label"] as? String ?? "key")
     }
 }

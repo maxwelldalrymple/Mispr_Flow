@@ -395,3 +395,101 @@ class TestNoteShortcut:
         cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate))
         cb(m, KEY_DOWN, ev(hotkey.KEY_M, Quartz.kCGEventFlagMaskAlternate, repeat=1))
         assert m.calls == ["note"]
+
+
+OPT, CTRL, SHIFT = Quartz.kCGEventFlagMaskAlternate, Quartz.kCGEventFlagMaskControl, Quartz.kCGEventFlagMaskShift
+
+
+def switcher(fake_events, trigger):
+    edges = []
+    m = FnMonitor(lambda: edges.append("dictate"), lambda: edges.append("dictate-up"), lambda: None,
+                  on_switch=edges.append, switch_trigger=trigger)
+    m.active = True
+    m.edges = edges
+    return m
+
+
+class TestSwitchTrigger:
+    """Which app switcher keys are allowed: a key, one side of a modifier, or a combo."""
+
+    @pytest.mark.parametrize("bad", [None, {}, {"kind": "fn", "keycode": 63}, {"kind": "modifier", "keycode": 1},
+                                     {"kind": "combo", "mods": ["option"]}, {"kind": "combo", "mods": []},
+                                     {"kind": "combo", "mods": ["hyper"], "keycode": 1},
+                                     {"kind": "combo", "mods": ["option"], "keycode": GLOBE_KEYCODE}])
+    def test_off_or_unusable(self, bad):
+        assert hotkey.normalize_switch_trigger(bad) is None
+
+    def test_never_the_dictation_key(self):
+        right_opt = {"kind": "modifier", "keycode": 61, "label": "Right ⌥"}
+        assert hotkey.normalize_switch_trigger(right_opt, dictation=right_opt) is None
+        assert hotkey.normalize_switch_trigger(right_opt)["keycode"] == 61
+
+    def test_combos_are_tidied(self):
+        t = hotkey.normalize_switch_trigger({"kind": "combo", "mods": ["option", "control", "option"], "label": "⌃⌥"})
+        assert t == {"kind": "combo", "mods": ["control", "option"], "keycode": None, "label": "⌃⌥"}
+        assert hotkey.normalize_switch_trigger({"kind": "combo", "mods": ["option"], "keycode": 1})["keycode"] == 1
+
+
+class TestSwitchKey:
+    """The app switcher key's press and release, without disturbing dictation."""
+
+    def test_single_key_down_up_swallowed_and_repeat_ignored(self, fake_events):
+        m = switcher(fake_events, {"kind": "key", "keycode": 96, "label": "F5"})
+        assert cb(m, KEY_DOWN, ev(96)) is None
+        assert cb(m, KEY_DOWN, ev(96, repeat=1)) is None
+        assert cb(m, KEY_UP, ev(96)) is None
+        assert m.edges == ["down", "up"]
+
+    def test_single_modifier_side_passes_through(self, fake_events):
+        m = switcher(fake_events, {"kind": "modifier", "keycode": 61, "label": "Right ⌥"})
+        e = ev(61, OPT | 0x40)
+        assert cb(m, FLAGS_CHANGED, e) is e
+        cb(m, FLAGS_CHANGED, ev(61, 0))
+        cb(m, FLAGS_CHANGED, ev(58, OPT | 0x20))  # left ⌥ is someone else
+        assert m.edges == ["down", "up"]
+
+    def test_modifier_combo_needs_exactly_those_modifiers(self, fake_events):
+        m = switcher(fake_events, {"kind": "combo", "mods": ["control", "option"], "label": "⌃⌥"})
+        cb(m, FLAGS_CHANGED, ev(59, CTRL))  # ⌃ alone: nothing yet
+        assert m.edges == []
+        cb(m, FLAGS_CHANGED, ev(58, CTRL | OPT))
+        cb(m, FLAGS_CHANGED, ev(58, CTRL | OPT))  # no change: no second down
+        cb(m, FLAGS_CHANGED, ev(58, CTRL))
+        assert m.edges == ["down", "up"]
+
+    def test_key_combo_fires_only_with_its_modifiers(self, fake_events):
+        m = switcher(fake_events, {"kind": "combo", "mods": ["option"], "keycode": 1, "label": "⌥S"})
+        plain = ev(1, 0)
+        assert cb(m, KEY_DOWN, plain) is plain  # S alone still types
+        assert cb(m, KEY_DOWN, ev(1, OPT | SHIFT)) is not None  # ⌥⇧S isn't ours either
+        assert cb(m, KEY_DOWN, ev(1, OPT)) is None
+        cb(m, KEY_DOWN, ev(1, OPT, repeat=1))
+        cb(m, KEY_UP, ev(1, OPT))
+        assert m.edges == ["down", "up"]
+
+    def test_a_shortcut_with_the_switch_modifier_held_is_dropped(self, fake_events):
+        m = switcher(fake_events, {"kind": "combo", "mods": ["command", "option"], "label": "⌘⌥"})
+        cb(m, FLAGS_CHANGED, ev(55, CMD | OPT))
+        cb(m, KEY_DOWN, ev(17, CMD | OPT))  # ⌘⌥T: a real shortcut
+        cb(m, FLAGS_CHANGED, ev(55, 0))
+        assert m.edges == ["down", "combo"]
+
+    def test_dictation_still_works_beside_it(self, fake_events):
+        m = switcher(fake_events, {"kind": "key", "keycode": 96, "label": "F5"})
+        cb(m, FLAGS_CHANGED, ev(63, FN_MASK))
+        cb(m, FLAGS_CHANGED, ev(63, 0))
+        assert m.edges == ["dictate", "dictate-up"]
+
+    def test_changing_the_key_drops_a_press_in_progress(self, fake_events):
+        m = switcher(fake_events, {"kind": "key", "keycode": 96, "label": "F5"})
+        cb(m, KEY_DOWN, ev(96))
+        m.set_switch_trigger(None)
+        assert m.edges == ["down", "combo"] and m.switch_trigger is None
+        assert cb(m, KEY_DOWN, ev(96)) is not None  # off: F5 is just F5 again
+        m.set_switch_trigger(None)  # unchanged: nothing happens
+
+    def test_off_without_a_handler(self, fake_events):
+        m = FnMonitor(lambda: None, lambda: None, lambda: None, switch_trigger={"kind": "key", "keycode": 96})
+        e = ev(96)
+        m.active = True
+        assert cb(m, KEY_DOWN, e) is e

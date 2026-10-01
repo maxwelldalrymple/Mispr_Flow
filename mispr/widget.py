@@ -20,6 +20,7 @@ the focused app. The meeting notetaker is still a stub with a simulated waveform
 
 import math
 import os
+from pathlib import Path
 from datetime import datetime
 import random
 import sys
@@ -52,12 +53,13 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import copy_text, paste_text, type_text
+from .paste import ENTER_DELAY, copy_text, paste_text, press_enter, type_text
+from .threads import start_daemon
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -98,7 +100,13 @@ MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation af
 COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
 COPIED_NOTICE = "No text box · Copied to clipboard"
 INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
+SWITCH_NOTICE = "Say an app to switch to"
+SWITCH_RESULT_SECONDS = 2.5
+SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing its shortcut
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
+AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
+AUTO_ENTER_NOTICE_SECONDS = 2.0
+TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
 NOTE_ICON = "record.circle"  # SF Symbol for the meeting-note button
@@ -269,6 +277,8 @@ class WidgetController:
         # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
+        self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
+        self.mic_saved = None  # the mic's level while "mute mic" has it at 0
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -378,10 +388,17 @@ class WidgetController:
             print(f"mispr: could not save recording: {e}", file=sys.stderr)
             return
         self.on_saved(path)
+        return path
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
+        was_auto_enter = self.settings.auto_enter
         self.settings = settings.load()
+        if self.settings.auto_enter != was_auto_enter:  # say so, by sound and on the widget
+            self.sounds.enabled = self.settings.sounds
+            self.sounds.play(sounds.LOCK)
+            self.show_notice("Auto-Enter on ⏎" if self.settings.auto_enter else "Auto-Enter off",
+                             AUTO_ENTER_NOTICE_SECONDS, (IDLE, HOVER))
         self.sounds.enabled = self.settings.sounds
         self.apply_prompts()
         log(f"settings reloaded: {self.settings}")
@@ -425,8 +442,16 @@ class WidgetController:
         self.transcriber.transcribe_async(
             self.recorder.audio(),
             lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
-            post=self.cleaner.clean if self.settings.cleanup else None,
+            post=self._post_processor(),
         )
+
+    def _post_processor(self):
+        """How the transcript is finished: shell syntax in a terminal ("ls flag a" -> "ls -a"),
+        otherwise the usual cleanup (or none)."""
+        if terminal.is_terminal(self.rec_recorded_in):
+            cleaner = self.cleaner if self.settings.cleanup else None
+            return lambda raw: terminal.clean(raw, cleaner)
+        return self.cleaner.clean if self.settings.cleanup else None
 
     def _on_transcribed(self, text, raw, info, secs, reason):
         cleanup_note = ""
@@ -436,6 +461,10 @@ class WidgetController:
         if text:
             target = context.frontmost()  # where the text is about to land
             where, why = context.focused_text_target()
+            if where == context.NO and context.is_browser(target):
+                time.sleep(TEXT_BOX_RECHECK)  # focus may still be moving into the box
+                where, why = context.focused_text_target()
+                why += f" [after a recheck; focused: {context.focus_chain()}]"
             log(f"text box: {where} ({why})")
             incognito = self.settings.incognito
             if where == context.NO:
@@ -450,6 +479,8 @@ class WidgetController:
             else:
                 # Incognito types the words in directly so they never pass through the clipboard.
                 (type_text if incognito else paste_text)(text)
+                if self.settings.auto_enter:
+                    AppHelper.callLater(ENTER_DELAY, press_enter)  # send it, so you can just talk
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
@@ -543,6 +574,246 @@ class WidgetController:
             self.discard_quietly()
         else:
             self.finish()
+
+    # --- App switcher key -----------------------------------------------------
+
+    def switch_key(self, edge):
+        """The app switcher key: "down" starts listening, "up" switches to the app you said,
+        "combo" (a shortcut with it held) or a quick tap drops it."""
+        log(f"switch key {edge} (state {self.state})")
+        if edge == "down":
+            if self.state not in (IDLE, HOVER, CANCELLED):
+                return  # busy dictating, processing or in a meeting
+            if self.mic_saved is not None:  # muted: open the mic just to hear the command
+                apps.set_mic_level(self.mic_saved)
+            self.begin_hold("switch")
+            if self.state == HOLD:
+                self.fn_press_at = time.monotonic()
+                self.show_notice(SWITCH_NOTICE, 60, (HOLD,))
+            return
+        if self.state != HOLD or self.hold_source != "switch":
+            return
+        if edge == "combo" or time.monotonic() - self.fn_press_at < FN_TAP_MAX:
+            self.discard_quietly()
+            self._remute()
+            return
+        self._stop_recording()
+        self.sounds.play(sounds.STOP)
+        self.set_state(PROCESSING)
+        # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
+        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text))
+
+    def _remute(self):
+        if self.mic_saved is not None:
+            apps.set_mic_level(0)
+
+    def _on_switch_heard(self, text):
+        try:
+            self._do_switch_command(text)
+        finally:
+            self._remute()
+
+    def _do_switch_command(self, text):
+        """Act on what was said: teach a nickname, or bring an app to the front. The audio is
+        wiped and never saved (switching apps isn't dictation history)."""
+        log(f"switch heard {text!r}")
+        self._command_record = None
+        if text and text.strip():  # into history like dictation (never in Incognito); the outcome replaces the text
+            self._command_record = self._save(storage.COMMAND, text.strip())
+        self._wipe("app switch")
+        self.to_idle()
+        command = apps.parse(text or "")
+        if command is None:
+            self.sounds.play(sounds.ALERT)
+            return
+        installed = apps.find_apps()
+        if command[0] == "nickname":
+            _, nick, spoken = command
+            target = apps.match(spoken, installed, self.settings.app_nicknames)
+            if target is None:
+                return self._switch_failed(f"No app called “{spoken}”")
+            self.settings = settings.save_nickname(nick, target)
+            self.on_settings_changed()
+            self.sounds.play(sounds.PASTE)
+            self.show_notice(f"“{nick}” now opens {target}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            return
+        running = apps.running_apps()
+
+        self._unsure = None
+
+        def find(name):  # (app name, path) or None
+            target, strong = apps.match_scored(name, {**installed, **running}, self.settings.app_nicknames, running)
+            if target is not None and not strong and target not in running:
+                self._unsure = target  # never open an app that isn't running on a guess
+                return None
+            path = running.get(target) or installed.get(target)
+            return (target, path) if path else None
+
+        kind = command[0]
+        if kind == "open_folder":  # "open folder projects": the highest-level match under your home folder
+            name = command[1]
+            return self._in_background(lambda: apps.spotlight(Path.home(), name, files=False) or apps.find_in(Path.home(), name, files=False),
+                                       lambda path: (apps.open_path(path), self._switch_done(f"Opened {Path(path).name}"))
+                                       if path else self._switch_failed(f"Couldn't find a “{name}” folder"))
+        if kind == "open":
+            name = command[1]
+            if (context.frontmost(include_page=False) or {}).get("bundle_id") == "com.apple.finder":
+                folder = apps.finder_folder()
+                if folder:  # in Finder: a folder or file inside the one you're looking at
+                    def opened(path):
+                        if path is None:
+                            hit = find(name)  # "open chrome" while in Finder still opens Chrome
+                            if hit and apps.match_scored(name, {**installed, **running}, self.settings.app_nicknames, running)[1]:
+                                apps.bring_to_front(hit[1])
+                                return self._switch_done(f"→ {hit[0]}")
+                            return self._switch_failed(f"“{name}” can't be found in {Path(folder).name or folder}")
+                        if os.path.isdir(path):
+                            apps.finder_go(path)
+                        else:
+                            apps.open_path(path)
+                        self._switch_done(f"Opened {Path(path).name}")
+                    return self._in_background(lambda: apps.spotlight(folder, name) or apps.find_in(folder, name), opened)
+            command, kind = ("switch", name), "switch"  # elsewhere "open X" means the app X
+        if kind == "media":
+            apps.press_media(command[1])
+            return self._switch_done({"play": "Play / pause", "next": "Next", "previous": "Previous"}[command[1]])
+        if kind == "scroll":
+            apps.scroll(command[1])
+            return self._switch_done(f"Scrolled {'up' if command[1] > 0 else 'down'}")
+        if kind == "scroll_end":
+            apps.press_shortcut(command[1])
+            return self._switch_done(f"To the {command[1]}")
+        if kind == "seek":  # "skip forward 30 seconds", "rewind 1 minute in chrome"
+            _, seconds, name = command
+            word = f"{'Forward' if seconds > 0 else 'Back'} {abs(seconds)}s"
+            if name is None:
+                apps.seek(seconds)
+                return self._switch_done(word)
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            apps.bring_to_front(hit[1])
+            AppHelper.callLater(SHORTCUT_DELAY, apps.seek, seconds)
+            return self._switch_done(f"{word} · {hit[0]}")
+        if kind == "volume":
+            level = apps.set_volume(command[1])
+            words = {"mute": "Sound muted", "unmute": "Sound on"}
+            return self._switch_done(words.get(command[1]) or f"Volume {level if level is not None else command[1]}%")
+        if kind == "mic":
+            if command[1] and self.mic_saved is None:
+                self.mic_saved = apps.mic_level() or 50
+                return self._switch_done("Mic muted · hold the switch key and say “unmute mic”")
+            if not command[1] and self.mic_saved is not None:
+                apps.set_mic_level(self.mic_saved)
+                self.mic_saved = None
+                return self._switch_done("Mic on")
+            return self._switch_done("Mic already " + ("muted" if command[1] else "on"))
+        if kind in ("mute_tab", "mute_app"):
+            name, mute = command[1], command[2]
+            hit = find(name) if name else None
+            if name and hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            pid = apps.pid_for(hit[1]) if hit else apps.frontmost_pid()
+            label = hit[0] if hit else "this tab"
+            done = apps.mute_tab(pid, mute) if pid else False
+            if done:
+                return self._switch_done(f"{'Muted' if mute else 'Unmuted'} {label}")
+            if done is None:
+                return self._switch_done(f"{label[0].upper() + label[1:]} is already {'muted' if mute else 'unmuted'}")
+            if kind == "mute_app":
+                return self._switch_failed("macOS can't mute one app. Say “pause”, or “mute tab” in a browser")
+            return self._switch_failed("No tab to mute here")
+        if kind == "shortcut":  # "new tab", "close tab in chrome"
+            _, shortcut, name = command
+            if name is None:
+                apps.press_shortcut(shortcut)
+                return self._switch_done(shortcut.capitalize())
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            apps.bring_to_front(hit[1])
+            AppHelper.callLater(SHORTCUT_DELAY, apps.press_shortcut, shortcut)  # once it's in front
+            return self._switch_done(f"{shortcut.capitalize()} · {hit[0]}")
+        if kind == "quit":
+            if command[1] is None:  # "quit": the app you're in
+                front = context.frontmost(include_page=False) or {}
+                pid = apps.frontmost_pid()
+                if not pid:
+                    return self._switch_failed("No app to quit")
+                apps.quit_app(pid)
+                return self._switch_done(f"Quit {front.get('app') or 'the app'}")
+            hit = find(command[1])
+            pid = hit and apps.pid_for(hit[1])
+            if not pid:
+                return self._switch_failed(f"{hit[0] if hit else command[1]} isn't open")
+            apps.quit_app(pid)
+            return self._switch_done(f"Quit {hit[0]}")
+        names = [n for n in command[1:3] if isinstance(n, str)] if kind == "beside" else [command[1]]
+        found = []
+        for name in names:
+            if name is None:  # no app named: the one you're in
+                found.append((None, None))
+                continue
+            hit = find(name)
+            if hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            found.append(hit)
+        if kind == "switch":
+            apps.bring_to_front(found[0][1])
+            return self._switch_done(f"→ {found[0][0]}")
+        if kind in ("close", "minimize", "expand"):
+            target, path = found[0]
+            pid = apps.frontmost_pid() if path is None else apps.pid_for(path)
+            if pid is None:
+                return self._switch_failed(f"{target} isn't open")
+            ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand")) if kind == "expand" \
+                else apps.window_action(pid, kind)
+            if kind == "expand" and path:
+                apps.bring_to_front(path)
+            word = {"close": "Closed", "minimize": "Minimized", "expand": "Expanded"}[kind]
+            return self._switch_done(f"{word} {target or 'the window'}") if ok else self._switch_failed("No window to " + kind)
+        screen = apps.screen_frame()
+        frames = [apps.layout(screen, "size", command[2])] if kind == "size" else list(apps.layout(screen, "beside", command[3]))
+        for (target, path), frame in reversed(list(zip(found, frames))):  # the first named ends up in front
+            self._place(path, frame)
+        label = f"{found[0][0]} {command[2]}%" if kind == "size" else f"{found[0][0]} | {found[1][0]}"
+        self._switch_done(label)
+
+    def _place(self, path, frame, tries=4):
+        """Bring the app forward and give its window `frame`; an app still opening gets a few more tries."""
+        apps.bring_to_front(path)
+        pid = apps.pid_for(path)
+        if (pid is None or not apps.window_action(pid, "frame", frame)) and tries > 1:
+            AppHelper.callLater(0.75, self._place, path, frame, tries - 1)
+
+    def _in_background(self, work, done):
+        """Run a search off the main thread, then `done(result)` back on it."""
+        self.show_notice("Looking…", 5, (IDLE, HOVER))
+        start_daemon(lambda: AppHelper.callAfter(done, work()), "find-folder")
+
+    def _switch_done(self, message):
+        self.sounds.play(sounds.PASTE)
+        self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self._record_outcome(message)
+
+    def _record_outcome(self, message):
+        """History shows what the command did, with real names ("Opened claude"), not what was misheard."""
+        path, self._command_record = getattr(self, "_command_record", None), None
+        if path is None:
+            return
+        try:
+            storage.set_transcript(path, message)
+            self.on_saved(path)
+        except (OSError, ValueError) as e:
+            print(f"mispr: could not update the command in history: {e}", file=sys.stderr)
+
+    def _switch_failed(self, message):
+        if getattr(self, "_unsure", None) and message.startswith("No app called"):
+            message = f"Not sure you meant {self._unsure}: say its full name"
+            self._unsure = None
+        self.sounds.play(sounds.ERROR)
+        self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self._record_outcome(message)
 
     def handle_key(self, keycode):
         """Called from inside the event tap: decide fast, act on the next run-loop pass.
@@ -750,6 +1021,11 @@ class WidgetController:
             draw.stroke_round(r, shape.radius, INCOGNITO_COLOR.colorWithAlphaComponent_(max(0.85, shape.stroke)), 1.5)
         else:
             draw.stroke_round(r, shape.radius, white(1.0, shape.stroke), 1.0)
+        if self.settings.auto_enter:
+            # A small ⏎ badge on the corner whenever Auto-Enter is on.
+            bx, by = r.right - 3, r.top - 3
+            draw.fill_circle(bx, by, 6.5, NSColor.colorWithSRGBRed_green_blue_alpha_(*AUTO_ENTER_COLOR, 1.0))
+            draw.symbol("return", bx, by, 7, weight=NSFontWeightBold)
 
         if s == HOVER:
             draw.symbol("mic.fill", r.cx, r.cy, 15, alpha=a)

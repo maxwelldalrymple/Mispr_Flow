@@ -293,6 +293,18 @@ class TestTypeText:
         assert all(Quartz.CGEventGetFlags(e) & Quartz.kCGEventFlagMaskCommand == 0 for e in events)
 
 
+class TestPressEnter:
+    """Auto-Enter's keypress: one Return, down then up, with no modifiers."""
+
+    def test_one_return_with_no_modifiers(self):
+        events = []
+        paste.press_enter(post=events.append)
+        assert [Quartz.CGEventGetType(e) for e in events] == [Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp]
+        assert all(Quartz.CGEventGetIntegerValueField(e, Quartz.kCGKeyboardEventKeycode) == paste.KEY_RETURN for e in events)
+        assert all(Quartz.CGEventGetFlags(e) & (Quartz.kCGEventFlagMaskCommand | Quartz.kCGEventFlagMaskShift) == 0
+                   for e in events)
+
+
 class TestCopyText:
     def test_leaves_text_on_clipboard_without_cmd_v(self, board):
         board, posted = board
@@ -423,3 +435,13 @@ class TestPostCmdV:
             flags = Quartz.CGEventGetFlags(e)
             assert flags & Quartz.kCGEventFlagMaskCommand
             assert not flags & Quartz.kCGEventFlagMaskSecondaryFn  # fn must not leak into the paste
+
+
+class TestBrowserHelpers:
+    def test_is_browser(self):
+        assert context.is_browser({"bundle_id": "com.google.Chrome"})
+        assert not context.is_browser({"bundle_id": "com.apple.finder"}) and not context.is_browser(None)
+
+    def test_focus_chain_reads_this_mac(self):
+        chain = context.focus_chain()
+        assert isinstance(chain, str) and chain

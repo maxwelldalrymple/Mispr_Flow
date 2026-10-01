@@ -4,24 +4,15 @@ import MisprCore
 
 // Development: `MisprFlow --detect` prints what meeting detection sees right now, then exits.
 if CommandLine.arguments.contains("--detect") {
-    let snapshot = SystemProbe.snapshot()
-    let found = MeetingDetector.detect(snapshot)
-    print("source: \(found.source.rawValue)  title: \(found.title ?? "-")  why: \(found.evidence)")
-    print("mic in use: \(snapshot.micInUse)")
-    let mic = ["notDetermined", "restricted", "denied", "authorized"][AVCaptureDevice.authorizationStatus(for: .audio).rawValue]
-    print("microphone permission: \(mic), screen & system audio: \(CGPreflightScreenCaptureAccess() ? "allowed" : "not allowed")")
-    for w in snapshot.windowTitles { print("window: \(w.bundleID): \(w.title)") }
+    print(DevTools.detectReport(SystemProbe.snapshot(), mic: AVCaptureDevice.authorizationStatus(for: .audio),
+                                screenAllowed: CGPreflightScreenCaptureAccess()))
     exit(0)
 }
 
 // Development: `MisprFlow --segment file.wav` prints where the chunker would cut a recording.
 if let i = CommandLine.arguments.firstIndex(of: "--segment"), i + 1 < CommandLine.arguments.count,
-   let data = FileManager.default.contents(atPath: CommandLine.arguments[i + 1]), data.count > 44 {
-    let samples = data.dropFirst(44).withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }.map { Float($0) / 32768 }
-    var segmenter = Segmenter()
-    for chunk in segmenter.feed(samples) + [segmenter.flush()].compactMap({ $0 }) {
-        print(String(format: "chunk at %5.1fs  %4.1fs long", chunk.start, Double(chunk.samples.count) / 16_000))
-    }
+   let data = FileManager.default.contents(atPath: CommandLine.arguments[i + 1]) {
+    print(DevTools.segmentReport(wav: data))
     exit(0)
 }
 

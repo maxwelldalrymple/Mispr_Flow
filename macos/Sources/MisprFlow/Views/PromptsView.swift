@@ -140,13 +140,19 @@ struct PromptsView: View {
 
     private func save() {
         guard let draft, let file = model.engine.promptsFile else { return }
+        let (ok, message) = Self.save(draft, to: file, engine: model.engine)
+        if ok { saved = draft }
+        status = message
+    }
+
+    /// Write the prompts, tell the engine to reload them, and say how it went.
+    static func save(_ draft: PromptDraft, to file: URL, engine: Engine) -> (ok: Bool, message: String) {
         do {
             try draft.save(to: file)
-            saved = draft
-            model.engine.send(.reloadSettings)
-            status = "Saved · used from your next dictation"
+            engine.send(.reloadSettings)
+            return (true, "Saved · used from your next dictation")
         } catch {
-            status = "Couldn't save: \(error.localizedDescription)"
+            return (false, "Couldn't save: \(error.localizedDescription)")
         }
     }
 }
