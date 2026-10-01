@@ -1063,3 +1063,65 @@ final class SwitchKeyTests: XCTestCase {
         XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "settings_changed"}"#), .settingsChanged)
     }
 }
+
+/// Speakers instead of headphones: the mic hears the call again. Those words must show once
+/// (as the other side), never duplicated as "You". Examples from a real test meeting.
+final class EchoTests: XCTestCase {
+    let them = "CI/CD on Google Next and GitOps on KubeCon. Does that sound right? - Yeah. - Yep. That's where we were last I heard."
+
+    func testWordsIgnorePunctuationAndCase() {
+        XCTAssertEqual(Echo.words("CICD on re:Invent!"), Echo.words("CI/CD on re:Invent"))
+        XCTAssertEqual(Echo.words("Yep, that's"), ["yep", "thats"])
+    }
+
+    func testAMicLineThatRepeatsThemIsDropped() {
+        XCTAssertNil(Echo.clean("CICD on Google Next and GitOps on KubeCon. Does that sound right?", against: [them]))
+        XCTAssertNil(Echo.clean("Yep, that's where we were last I heard.", against: [them]))
+        XCTAssertNil(Echo.clean("So it looks like maybe a platform on re:Invent.", against: ["So it looks like maybe a platform on re:Invent"]))
+    }
+
+    func testYourOwnWordsAreKept() {
+        XCTAssertEqual(Echo.clean("I'm going to go to the next one.", against: [them]), "I'm going to go to the next one.")
+        XCTAssertEqual(Echo.clean("Yeah I think so.", against: [them]), "Yeah I think so.")  // one shared word is coincidence
+        XCTAssertEqual(Echo.clean("Anything", against: []), "Anything")
+    }
+
+    func testTalkingOverTheEchoKeepsYourPart() {
+        let mixed = "Okay so let me share my screen first. Does that sound right? - Yeah."
+        XCTAssertEqual(Echo.clean(mixed, against: [them]), "Okay so let me share my screen first.")
+    }
+
+    func testShortRepliesNeedTwoWordsToCountAsEcho() {
+        XCTAssertEqual(Echo.clean("Yeah.", against: ["Yeah."]), "Yeah.")  // you might really have said it
+        XCTAssertNil(Echo.clean("Yeah, totally.", against: ["Yeah, totally."]))
+    }
+
+    func testTranscriptDropsEchoWhicheverArrivesFirst() {
+        var t = LiveTranscript()
+        t.add(stream: "you", speaker: 0, offset: 20, text: "CICD on Google Next and GitOps on KubeCon. Does that sound right?")
+        t.add(stream: "you", speaker: 0, offset: 27, text: "Yep, that's where we were last I heard.")
+        t.add(stream: "you", speaker: 0, offset: 5, text: "I'm going to go to the next one.")
+        XCTAssertEqual(t.lines.count, 3)  // nothing to compare with yet
+        t.add(stream: "them", speaker: 1, offset: 21, text: them, voice: "male")
+        XCTAssertEqual(t.lines.map(\.text), ["I'm going to go to the next one.", them])
+        XCTAssertEqual(t.echoesRemoved, 2)
+        t.add(stream: "you", speaker: 0, offset: 30, text: "Does that sound right?")  // a late copy
+        XCTAssertEqual(t.lines.count, 2)
+    }
+
+    func testEchoOnlyCountsNearbyInTime() {
+        var t = LiveTranscript()
+        t.add(stream: "them", speaker: 1, offset: 0, text: "Let's ship it on Friday.")
+        t.add(stream: "you", speaker: 0, offset: 60, text: "Let's ship it on Friday.")  // a minute later: you said it
+        XCTAssertEqual(t.lines.count, 2)
+    }
+
+    func testEchoNeverShowsAsALiveLine() {
+        var t = LiveTranscript()
+        t.setPartial(stream: "them", offset: 10, text: "We should hire two more engineers")
+        t.setPartial(stream: "you", offset: 10.4, text: "We should hire two more")
+        XCTAssertNil(t.partials["you"])
+        t.setPartial(stream: "you", offset: 12, text: "Agreed, let's post the role")
+        XCTAssertEqual(t.partials["you"]?.text, "Agreed, let's post the role")
+    }
+}

@@ -95,6 +95,66 @@ public enum WAV {
     }
 }
 
+/// Speakers playing the call out loud: the mic hears the other side again, so their words
+/// would show up twice (once as them, once as "You"). Mic text that repeats what the other
+/// side said around the same time is that echo: it's dropped, or cut out of what you said.
+public enum Echo {
+    /// How far apart (seconds) the same words can land on the two streams.
+    public static let window = 10.0
+    /// A mic line this much made of their words is all echo.
+    public static let dropShare = 0.6
+    /// Shared runs shorter than this ("I think", "yeah") are coincidence, not echo...
+    public static let minRun = 3
+    /// ...unless they're the whole of a short mic line ("Yep, that's right.").
+    public static let minWholeLine = 2
+
+    /// "CI/CD on re:Invent!" -> ["cicd", "on", "reinvent"]: lowercase, letters and digits only.
+    public static func words(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: \.isWhitespace)
+            .map { String($0.unicodeScalars.filter(CharacterSet.alphanumerics.contains).map(Character.init)) }
+    }
+
+    /// The mic text with the other side's words taken out, or nil when nothing of yours is left.
+    public static func clean(_ mine: String, against theirs: [String]) -> String? {
+        let original = mine.split(whereSeparator: \.isWhitespace).map(String.init)
+        let tokens = words(mine)
+        let other = theirs.flatMap(words).filter { !$0.isEmpty }
+        guard !tokens.isEmpty, !other.isEmpty else { return mine }
+        // Match on real words only ("-" between sentences doesn't break a run).
+        let spoken = tokens.indices.filter { !tokens[$0].isEmpty }
+        let said = spoken.map { tokens[$0] }
+        var echoed = [Bool](repeating: false, count: tokens.count)
+        var i = 0
+        while i < said.count {
+            var best = 0
+            for j in other.indices {
+                var k = 0
+                while i + k < said.count, j + k < other.count, said[i + k] == other[j + k] { k += 1 }
+                best = max(best, k)
+            }
+            let wholeLine = i == 0 && best == said.count && best >= minWholeLine
+            if best >= minRun || wholeLine {
+                for k in i..<(i + best) { echoed[spoken[k]] = true }
+                i += best
+            } else {
+                i += 1
+            }
+        }
+        let echoCount = spoken.filter { echoed[$0] }.count
+        if echoCount == 0 { return mine }
+        // Punctuation-only bits go with the echo when no word of yours is next to them.
+        for index in tokens.indices where tokens[index].isEmpty {
+            let before = spoken.last { $0 < index }, after = spoken.first { $0 > index }
+            if (before.map { echoed[$0] } ?? true) && (after.map { echoed[$0] } ?? true) { echoed[index] = true }
+        }
+        let kept = original.indices.filter { !echoed[$0] }
+        if Double(echoCount) >= dropShare * Double(max(1, spoken.count)) || kept.filter({ !tokens[$0].isEmpty }).count < 2 {
+            return nil
+        }
+        return kept.map { original[$0] }.joined(separator: " ")
+    }
+}
+
 /// The transcript as it comes in: lines from "you" (mic) and "them" (system audio, with a
 /// speaker number when several voices were told apart), kept in time order.
 public struct LiveTranscript: Equatable {
@@ -113,13 +173,26 @@ public struct LiveTranscript: Equatable {
     public private(set) var voices: [Int: String] = [:]
     /// Live, not-yet-final text per stream ("you"/"them"), shown greyed until the phrase ends.
     public private(set) var partials: [String: Line] = [:]
+    /// Mic lines dropped or trimmed as echo of the other side.
+    public private(set) var echoesRemoved = 0
 
     /// Show what's being said right now; ignored once that phrase has been finalized.
     public mutating func setPartial(stream: String, offset: Double, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalized = lines.contains { $0.stream == stream && $0.offset >= offset - 0.05 }
         guard !trimmed.isEmpty, !finalized else { return }
+        if stream == "you" {
+            let heard = theirText(near: offset) + [partials["them"]?.text].compactMap { $0 }
+            guard let mine = Echo.clean(trimmed, against: heard) else { partials["you"] = nil; return }
+            partials[stream] = Line(stream: stream, speaker: 0, offset: offset, text: mine)
+            return
+        }
         partials[stream] = Line(stream: stream, speaker: 0, offset: offset, text: trimmed)
+    }
+
+    /// What the other side said within the echo window of `offset`, in time order.
+    private func theirText(near offset: Double) -> [String] {
+        lines.filter { $0.stream == "them" && abs($0.offset - offset) <= Echo.window }.map(\.text)
     }
 
     /// Who a live line is from: you, or the other side's most recent speaker.
@@ -137,11 +210,30 @@ public struct LiveTranscript: Equatable {
     public mutating func add(stream: String, speaker: Int, offset: Double, text: String, voice: String = "person") {
         if stream == "them" { voices[max(1, speaker)] = voice }  // the latest guess wins (it firms up over time)
         if let live = partials[stream], live.offset <= offset + 0.05 { partials[stream] = nil }  // the phrase is final now
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if stream == "you" {  // the speakers' sound coming back in through the mic
+            guard let mine = Echo.clean(trimmed, against: theirText(near: offset)) else { echoesRemoved += 1; return }
+            if mine != trimmed { echoesRemoved += 1 }
+            trimmed = mine
+        }
         let line = Line(stream: stream, speaker: stream == "you" ? 0 : max(1, speaker), offset: offset, text: trimmed)
         let index = lines.firstIndex { $0.offset > offset } ?? lines.count
         lines.insert(line, at: index)
+        if stream == "them" { removeEcho(near: offset) }  // the mic's copy may have arrived first
+    }
+
+    /// Re-check mic lines near `offset` now that more of the other side is known.
+    private mutating func removeEcho(near offset: Double) {
+        for index in lines.indices.reversed() where lines[index].stream == "you" && abs(lines[index].offset - offset) <= Echo.window {
+            let heard = theirText(near: lines[index].offset)
+            if let mine = Echo.clean(lines[index].text, against: heard) {
+                if mine != lines[index].text { lines[index].text = mine; echoesRemoved += 1 }
+            } else {
+                lines.remove(at: index)
+                echoesRemoved += 1
+            }
+        }
     }
 
     public var themSpeakers: Set<Int> { Set(lines.filter { $0.stream == "them" }.map(\.speaker)) }
