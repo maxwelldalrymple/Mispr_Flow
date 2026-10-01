@@ -388,6 +388,7 @@ class WidgetController:
             print(f"mispr: could not save recording: {e}", file=sys.stderr)
             return
         self.on_saved(path)
+        return path
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
@@ -616,8 +617,9 @@ class WidgetController:
         """Act on what was said: teach a nickname, or bring an app to the front. The audio is
         wiped and never saved (switching apps isn't dictation history)."""
         log(f"switch heard {text!r}")
-        if text and text.strip():
-            self._save(storage.COMMAND, text.strip())  # into history like dictation (never in Incognito)
+        self._command_record = None
+        if text and text.strip():  # into history like dictation (never in Incognito); the outcome replaces the text
+            self._command_record = self._save(storage.COMMAND, text.strip())
         self._wipe("app switch")
         self.to_idle()
         command = apps.parse(text or "")
@@ -785,6 +787,18 @@ class WidgetController:
     def _switch_done(self, message):
         self.sounds.play(sounds.PASTE)
         self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self._record_outcome(message)
+
+    def _record_outcome(self, message):
+        """History shows what the command did, with real names ("Opened claude"), not what was misheard."""
+        path, self._command_record = getattr(self, "_command_record", None), None
+        if path is None:
+            return
+        try:
+            storage.set_transcript(path, message)
+            self.on_saved(path)
+        except (OSError, ValueError) as e:
+            print(f"mispr: could not update the command in history: {e}", file=sys.stderr)
 
     def _switch_failed(self, message):
         if getattr(self, "_unsure", None) and message.startswith("No app called"):
@@ -792,6 +806,7 @@ class WidgetController:
             self._unsure = None
         self.sounds.play(sounds.ERROR)
         self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self._record_outcome(message)
 
     def handle_key(self, keycode):
         """Called from inside the event tap: decide fast, act on the next run-loop pass.

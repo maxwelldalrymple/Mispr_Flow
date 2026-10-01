@@ -1547,6 +1547,15 @@ class TestAppSwitcher:
         self.say(controller, clock, "")
         assert len(saved) == 1  # nothing said: nothing saved
 
+    def test_history_keeps_the_outcome_with_real_names(self, controller, clock, fronted, monkeypatch, tmp_path):
+        wav = tmp_path / "c.wav"
+        wav.with_suffix(".json").write_text('{"transcript": "Chrome.", "raw_transcript": "Chrome.", "words": 1}')
+        monkeypatch.setattr(controller, "_save", lambda *a, **kw: wav)
+        self.say(controller, clock, "Chrome.")
+        import json
+        meta = json.loads(wav.with_suffix(".json").read_text())
+        assert meta["transcript"] == "→ Google Chrome" and meta["raw_transcript"] == "Chrome."
+
     def test_incognito_commands_are_not_saved(self, controller, clock, fronted, monkeypatch):
         written = []
         monkeypatch.setattr(W.storage, "save_recording", lambda *a, **kw: written.append(kw))

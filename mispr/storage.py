@@ -76,3 +76,13 @@ def save_recording(audio, *, status, transcript, started_at, ended_at, recorded_
     }
     (day_dir / f"{stem}.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     return wav_path
+
+
+def set_transcript(wav_path, text):
+    """Replace a saved recording's text (a voice command's outcome, with the real names: "Opened
+    claude", "→ Google Chrome"); what was heard stays in raw_transcript."""
+    meta_path = Path(wav_path).with_suffix(".json")
+    meta = json.loads(meta_path.read_text())
+    meta["transcript"], meta["words"] = text, len(text.split())
+    meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+    return meta_path

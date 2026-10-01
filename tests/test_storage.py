@@ -144,3 +144,12 @@ class TestSaveRecording:
         with wave.open(str(wav)) as w:
             assert w.getnframes() == 0
         assert meta_of(wav)["duration_s"] == 0.0
+
+
+def test_set_transcript_keeps_what_was_heard(tmp_path):
+    wav = tmp_path / "x.wav"
+    wav.with_suffix(".json").write_text('{"transcript": "Open clawed folder.", "raw_transcript": "Open clawed folder.", "words": 3}')
+    storage.set_transcript(wav, "Opened claude")
+    import json
+    meta = json.loads(wav.with_suffix(".json").read_text())
+    assert meta == {"transcript": "Opened claude", "raw_transcript": "Open clawed folder.", "words": 2}
