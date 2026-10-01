@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var stats = Stats()
     @Published private(set) var more = MoreInsights()
     @Published private(set) var voice = VoiceProfile()
+    @Published private(set) var meetings: [Meeting] = []
     @Published private(set) var settingsError: String?
     let note = NoteModel()
     let profile = Profile()
@@ -60,14 +61,20 @@ final class AppModel: ObservableObject {
         engine.start()
     }
 
+    /// meeting-recordings/ sits next to voice-recordings/.
+    var meetingsDir: URL? { engine.recordingsDir?.deletingLastPathComponent().appendingPathComponent("meeting-recordings") }
+
     func reloadRecordings() {
         guard let dir = engine.recordingsDir else { return }
+        let meetingsDir = self.meetingsDir
         DispatchQueue.global(qos: .userInitiated).async {
             let records = RecordingStore.load(from: dir)
+            let meetings = meetingsDir.map { MeetingStore.load(from: $0) } ?? []
             let stats = Stats(records)
             let more = MoreInsights(records)
             let voice = VoiceProfile(records)
             DispatchQueue.main.async {
+                self.meetings = meetings
                 self.voice = voice
                 self.recordings = records
                 self.stats = stats

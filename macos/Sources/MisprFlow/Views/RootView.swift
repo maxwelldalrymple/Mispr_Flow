@@ -60,16 +60,7 @@ struct RootView: View {
         switch model.page {
         case .home: HomeView()
         case .insights: InsightsView()
-        case .notetaker:
-            PlaceholderView(title: "Notetaker", symbol: "record.circle",
-                            message: "Record a meeting, get a transcript with speaker labels and a summary, all on your Mac.",
-                            detail: "Open a note with the ◉ button on the widget, or here. Live transcription is coming next.")
-                .overlay(alignment: .topTrailing) {
-                    Button { model.openNote() } label: {
-                        Label("New note", systemImage: "plus").font(.system(size: 13, weight: .medium))
-                    }
-                    .buttonStyle(OutlineButton()).padding(.top, 36).padding(.trailing, 40)
-                }
+        case .notetaker: NotesView()
         case .prompts: PromptsView()
         }
     }

@@ -577,3 +577,70 @@ final class VoiceStyleTests: XCTestCase {
         p.contractionRate = 5; XCTAssertEqual(p.tone, "Formal")
     }
 }
+
+final class MeetingTests: XCTestCase {
+    let me = Meeting.Participant(name: "Max", isMe: true)
+
+    func meeting(_ lines: [(String, Double, String)], duration: Double = 60, people: [String] = ["Max", "Ana"]) -> Meeting {
+        Meeting(id: UUID().uuidString, title: "T", startedAt: Date(timeIntervalSince1970: 1_790_000_000), durationS: duration,
+                participants: people.map { Meeting.Participant(name: $0, isMe: $0 == "Max") },
+                transcript: lines.map { Meeting.Line(speaker: $0.0, startS: $0.1, text: $0.2) })
+    }
+
+    func testTalkTimeTurnsAndMonologue() {
+        let m = meeting([("Max", 0, "Hello there everyone"), ("Ana", 10, "Hi. Shall we start the release review?"),
+                         ("Max", 20, "Yes, release review first."), ("Max", 40, "Then the release dates.")])
+        let i = MeetingInsights(m)
+        XCTAssertEqual(i.speakers.map(\.name), ["Max", "Ana"])
+        XCTAssertEqual(i.speakers[0].seconds, 50)   // 0-10 and 20-60
+        XCTAssertEqual(i.speakers[0].share, 83)
+        XCTAssertEqual(i.speakers[0].turns, 2)
+        XCTAssertEqual(i.speakers[1].questions, 1)
+        XCTAssertEqual(i.longestMonologue?.speaker, "Max")
+        XCTAssertEqual(i.longestMonologue?.seconds, 40)  // 20 s + 20 s back to back
+        XCTAssertEqual(i.turnsPerMinute, 3)
+        XCTAssertEqual(i.topics.first, "release")
+    }
+
+    func testEmptyTranscript() {
+        XCTAssertEqual(MeetingInsights(meeting([])), MeetingInsights())
+    }
+
+    func testOverview() {
+        let a = meeting([("Max", 0, "a"), ("Ana", 30, "b")], duration: 600, people: ["Max", "Ana"])
+        let b = meeting([("Max", 0, "a"), ("Bo", 15, "b")], duration: 300, people: ["Max", "Ana", "Bo"])
+        let o = MeetingsOverview([a, b])
+        XCTAssertEqual(o.count, 2)
+        XCTAssertEqual(o.totalSeconds, 900)
+        XCTAssertEqual(o.averageSeconds, 450)
+        XCTAssertEqual(o.people.map(\.name), ["Ana", "Bo"])
+        XCTAssertEqual(o.people.first?.meetings, 2)
+        XCTAssertEqual(o.myShare, (5 + 5) / 2)  // 30/600 and 15/300
+        XCTAssertEqual(MeetingsOverview([]), MeetingsOverview())
+    }
+
+    func testDurationText() {
+        XCTAssertEqual(meeting([], duration: 690).durationText, "12 min")
+        XCTAssertEqual(meeting([], duration: 3900).durationText, "1 h 5 min")
+        XCTAssertEqual(meeting([], duration: 10).durationText, "1 min")
+    }
+
+    func testLoadsTheSampleFormat() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("2026-09-29"), withIntermediateDirectories: true)
+        let json = """
+        {"id": "x", "sample": true, "title": "Weekly sync", "started_at": "2026-09-29T10:00:00.000-04:00",
+         "ended_at": "2026-09-29T10:11:30.000-04:00", "duration_s": 690.0, "app": "Zoom",
+         "participants": [{"name": "Max", "role": "Founder", "is_me": true}, {"name": "Priya Shah", "role": "Design", "is_me": false}],
+         "transcript": [{"speaker": "Max", "start_s": 2.0, "text": "Morning."}],
+         "summary": {"overview": "O", "decisions": ["D"], "action_items": [{"owner": "Max", "task": "T", "due": "Fri"}], "open_questions": []},
+         "my_thoughts": "", "audio_file": null}
+        """
+        try Data(json.utf8).write(to: dir.appendingPathComponent("2026-09-29/x.json"))
+        let meetings = MeetingStore.load(from: dir)
+        XCTAssertEqual(meetings.count, 1)
+        XCTAssertEqual(meetings[0].participants[1].role, "Design")
+        XCTAssertEqual(meetings[0].summary?.actionItems.first?.due, "Fri")
+        XCTAssertEqual(meetings[0].durationText, "12 min")
+    }
+}
