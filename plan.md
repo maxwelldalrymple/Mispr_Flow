@@ -15,7 +15,7 @@ Mispr Flow is a Wispr Flow clone built to be:
 
 | Area | Choice | Why / notes |
 |---|---|---|
-| Language | Python 3.13 + PyObjC | Fast to build. PyObjC gives direct access to AppKit, Quartz, AVFoundation, and Accessibility. v1 ships in Python; modules are split so parts can move to Swift later (the fn event tap first). |
+| Language | Python 3.13 + PyObjC engine; SwiftUI app | The engine (fn tap, mic, Whisper, Gemma, paste, widget) stays in Python. The main window, meeting capture, and system probes are a SwiftUI app (`macos/`) that runs the engine as a child process and talks to it in JSON lines (`mispr/host.py`). Chosen over an all-Python UI for a native Wispr-style window and a real `.app`. |
 | Speech-to-text | whisper.cpp via `pywhispercpp`, `ggml-large-v3-turbo-q5_0` (574 MB) | Near-best accuracy, Metal-accelerated, ~1.1 s for a 5-6 s clip, ~690 MB RAM. Reduced `audio_ctx` breaks turbo (gibberish), so default settings are used. |
 | Text cleanup | `llama-cpp-python` (Metal) with `gemma-3-4b-it-Q4_K_M` (2.5 GB, `ggml-org/gemma-3-4b-it-GGUF`) | Won a 27-case eval: 0 invented words, 0 key words lost, most conservative on ambiguous corrections (~550 ms). Gemma Terms of Use apply. |
 | Microphone | AVAudioEngine (PyObjC) + `soxr` resampling to 16 kHz | Replaced PortAudio (`sounddevice`), whose macOS backend deadlocked in `Pa_StopStream` and froze the widget. See [logs](logs/2026-09-30_14-34-34_mic-deadlock-fix.md). |
@@ -24,6 +24,8 @@ Mispr Flow is a Wispr Flow clone built to be:
 | Sounds | Original WAVs synthesized by `tools/make_sounds.py` | Matches the feel of Wispr Flow's cues (length, pitch range, envelope, loudness were measured as targets) without using their audio, which is theirs. Copies, noise-altered copies, and waveform reconstructions were ruled out for the same reason. |
 | Storage | Save recordings by default; Incognito turns it off | Needed for the future history and stats UI. |
 | Distribution | Unsigned `.pkg` whose postinstall downloads the models; first-launch setup as fallback | Keeps the download small, fits GitHub Releases' 2 GB limit, and updates don't re-download 3 GB of models. |
+| Meeting audio | Mic (AVAudioEngine) + system audio (ScreenCaptureKit, audio only), cut at pauses, transcribed by the engine | Two separate streams give You vs Them for free; live previews every 0.8 s, final lines at pauses. Other voices are grouped by spectral signature and labelled by pitch (Male/Female/Person N). |
+| Signing | Local self-signed certificate, trusted for code signing | Ad-hoc builds lost permissions on every rebuild; an untrusted certificate kept Accessibility but not Screen & System Audio (pinned to one build's cdhash). |
 | Branding | Mispr Flow, package `mispr`, logo in `mispr/assets/` | Renamed from "Whispr Clone". "Wispr Flow" refers only to the product this is modeled on. |
 
 ## Architecture
@@ -79,12 +81,12 @@ Requested from the setup window (`onboarding.py`), never on launch:
 9. ✅ Mic freeze fix: AVAudioEngine replaced PortAudio; non-blocking stop.
 10. ✅ Rebrand to Mispr Flow (package, data folder, logo, app and menu-bar icons, GitHub repo).
 11. ✅ First-run setup window: Welcome → Permissions (live checkmarks; Microphone + Accessibility required, Screen & System Audio optional) → Models (progress, Retry) → Ready. Reopens when something required is missing; "Setup Guide…" in the menu; no launch-time permission prompts.
-12. ⬜ **Next.** Main window: history (from the saved JSON), stats (words, WPM, streak, apps), settings (Incognito, cleanup). Modeled on Wispr Flow's screens (the user is recording a video of each); light and dark; the widget stays always visible. Must be a real downloadable Mac app, not a web app; native AppKit vs SwiftUI is still to decide.
-13. ⬜ Meeting notetaker (◉): mic + system audio, diarization, LLM summary to `meeting-recordings/`.
+12. ✅ Main window in SwiftUI: Home, Insights, Prompts, Notetaker, Settings (profile, themes, dictation key), Incognito switch; `Mispr Flow.app` hosts the engine.
+13. ✅ Meeting notetaker: ⌥M side panel, mic + system audio, live text, voice-labelled speakers, summary and Q&A, meeting-type detection, split screen, notes list and People.
 14. ⬜ `.pkg` installer (py2app bundle, postinstall model download, Gemma terms), plus a DMG wrapper.
 15. ⬜ Wispr-style extras: custom dictionary, snippets, app-aware style.
 16. ⬜ Languages (French and Spanish at minimum; ideally every language Whisper supports): a `language` setting (explicit code or `auto`), multilingual cleanup prompt and examples, the detected language in the JSON record, and eval cases per language. See "Languages" below for test results.
-17. ⬜ Customization in the UI: choose icon, sounds, widget position/size, and shortcuts from the settings window.
+17. ◐ Customization in the UI: shortcut (any key), themes, and sounds on/off are done; icon and widget position/size remain.
 18. ✅ MIT license, CONTRIBUTING guide, and CHANGELOG.
 19. ✅ Original sound cues hooked to every current event; paste only when a text box is focused (otherwise copy + error sound + notice).
 20. ✅ First-dictation mic-name notice; app icon on the macOS icon grid.
@@ -180,7 +182,9 @@ On launch, if either required model (Whisper large-v3-turbo q5, Gemma-3-4B-it Q4
 - **Not saved:** fn taps, fn+key combos, clips under 0.3 s, silent clips, and anything in Incognito mode.
 - **Possible upgrade:** encrypt recordings with a key in the macOS Keychain, so deleting the key crypto-shreds them (the only reliable "delete" on SSD/APFS).
 
-## Meeting Notetaker (◉) — planned
+## Meeting Notetaker (◉)
+
+Built on branch `ui`; the notes below were the plan, and now describe it, except diarization: speakers are grouped by a lightweight voice signature during the meeting (no separate pass), and labelled Male/Female/Person N by pitch.
 
 Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and writes a business-style summary.
 
@@ -203,8 +207,8 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 
 ## Testing and Quality
 
-- **Suite:** 841 unit tests (~15 s) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
-- **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (44 files, reviewed visually), and fakes for AppKit objects.
+- **Suite:** 958 Python unit tests (~15 s) + 90 Swift tests (`swift test` in `macos/`) + 10 opt-in integration tests (real Whisper, Gemma, microphone, and model checksums). `filterwarnings = error`.
+- **Patterns:** dependency injection (clocks, engines, resamplers, lock path, model specs), inline daemon threads for deterministic async tests, spies for sounds and OS/library calls, boundary-value tables, specification tables for product decisions, golden snapshots of layout and rendering (45 files, reviewed visually), and fakes for AppKit objects.
 - **Mutation score:** 97.6% overall; audio 95.5%. Remaining survivors are documented as equivalent mutants.
 - **Reports:** `logs/2026-09-30_13-25-55_stresstest.md` (suite stress test) and `logs/2026-09-30_14-34-34_mic-deadlock-fix.md` (freeze diagnosis).
 - **Tools:** `tools/stress_test.py`, `tools/mutation_test.py`, `tools/eval_cleanup.py`, `tools/render_states.py`, `tools/make_sounds.py` (sound cues), `tools/make_icon.py` (`AppIcon.icns`).
@@ -215,12 +219,12 @@ Records a Zoom / Google Meet call, transcribes everyone with speaker labels, and
 - ⌘V uses the ANSI V keycode; Dvorak/AZERTY layouts need a layout-aware mapping.
 - `soxr` prints harmless nanobind "leaked function" notices at interpreter exit.
 - Models under `/Library/Application Support` aren't checked yet (needed for the `.pkg`).
-- The app still runs from source; an `.app` bundle and signing are pending.
-- The meeting pill's waveform is simulated until meeting capture exists.
+- `Mispr Flow.app` runs this checkout's `.venv` Python; a DMG needs a bundled portable Python (see Distribution).
+- Speaker grouping is a heuristic: similar voices can merge, and male/female is a pitch guess.
+- Whisper mishears names ("Mispr" → "Misper"); a custom dictionary would fix it.
 - Transcription is English-only today despite the multilingual model.
 - Text-box detection gives Electron apps (VS Code, Slack, Discord) the benefit of the doubt when they report no focus, so ⌘V can still go nowhere there; Chrome's focused web content often reads as an unfamiliar role (UNKNOWN), which also pastes.
 - The mutation score (97.6%) predates the sounds, notice, and text-box work; re-run `tools/mutation_test.py`.
-- The new app icon only shows in Finder/the Dock once there's an `.app` bundle; today it appears in alerts and About.
 
 ## Languages (planned)
 
@@ -245,6 +249,7 @@ Findings: detection was correct on every clip, but auto-detect roughly doubles t
 - `main`: merged, working code (via GitHub PRs).
 - `build`: day-to-day development; merged into `main` through PRs.
 - `planning`, `Rebranding`, `widget`, `dictation-complete`, `widgets-fn-record-complete`, `setup-screens`: milestone and feature branches (all merged).
-- `original-sounds`: sound cues, paste-only-into-text-boxes, mic notice, app icon (on top of `build`; not merged yet).
+- `original-sounds`: merged into `build`.
+- `ui`: the SwiftUI app, main window, and meeting notes (on top of `build`; not merged yet).
 - `fix-setup-window-space`: opens the setup window on the active Space (not merged yet).
 - Tags: `v0.1-dictation` (end-to-end dictation), `v0.2-llm-cleanup` (LLM cleanup + guard).

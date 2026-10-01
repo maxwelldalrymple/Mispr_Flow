@@ -25,14 +25,17 @@ Mispr Flow is an open clone of [Wispr Flow](https://wisprflow.ai), built for fou
 
 ## What it does
 
-- **Dictate anywhere with `fn`.** Hold for push-to-talk, or double-tap for hands-free.
+- **Dictate anywhere with `fn`** (or any key you pick in Settings). Hold for push-to-talk, or double-tap for hands-free.
 - **Local transcription.** whisper.cpp (large-v3-turbo) on the Mac's GPU: about 1.1 s for a 5-6 s clip.
 - **Local cleanup that never invents words.** A small LLM (Gemma-3-4B) removes "um/uh/like", repeated words, and retracted phrases ("Tuesday, no wait, Wednesday" becomes "Wednesday"), and fixes punctuation. A code-level check rejects any output containing a word you didn't say and pastes the raw transcript instead.
 - **Pastes into the focused app,** then restores your clipboard. The pasted text is marked private so clipboard managers ignore it. If nothing you can type into is focused (Finder, the desktop, a page with no text box), it skips the paste, plays the error sound, and leaves the text on your clipboard with a "No text box · Copied to clipboard" notice.
 - **Floating widget** above the Dock: live waveform, hands-free controls, a 5-second Undo after cancelling, and tooltips. On the first dictation after launch it names the mic in use ("Using Built-in mic (recommended)"). It follows the screen you're working on and hides in fullscreen apps.
 - **Sound cues** for every event (start, stop, hands-free lock, paste, cancel, errors). All original, synthesized by the app's own generator script.
-- **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito setting turns this off completely.
-- **Dock and menu-bar app.** The logo sits in the Dock while it runs (click it to open the app's window), with a menu-bar icon too. It captures fn itself so macOS's emoji picker doesn't open.
+- **History on disk (on by default).** Each dictation is saved as audio plus a JSON record (transcript, timing, the app it went into, and the page URL for browsers). The Incognito switch turns this off completely; in Incognito text is typed in rather than pasted, so it never touches the clipboard either.
+- **A main window (SwiftUI).** Home (history with search, playback, copy), Insights (pace, streaks, time saved, where your words go, your voice profile, fun facts), Notetaker, Prompts (edit the cleanup model's instructions and try them live), and Settings (profile, six color themes, dictation key, sounds, launch at login, privacy).
+- **Meeting notes.** ⌥M (or ◉ on the widget) opens a side panel and records your mic ("You") and the Mac's sound (the other people on a call) at once. Text appears live as people talk; other voices are labelled Male 1, Female 1, Person 1 (rename them). Stop saves the note with a local summary and action items; ask questions about it; split screen with the call window. Notetaker lists past meetings and a People view: click someone, or several people, to see the meetings you shared.
+- **Knows what kind of meeting it is:** Zoom, Google Meet, Teams, FaceTime, Webex, Slack huddles, or in person, from what's running on the Mac.
+- **Dock and menu-bar app.** The logo sits in the Dock while it runs (click it to open the main window), with a menu-bar icon too. It captures fn itself so macOS's emoji picker doesn't open.
 - **Guided setup.** A 4-step window on first launch (Welcome → Permissions → Models → Ready) explains each permission before asking for it. Reopen it anytime from the menu bar: **Setup Guide…**
 
 End to end, text appears about 1.8 s after you stop talking.
@@ -45,7 +48,7 @@ End to end, text appears about 1.8 s after you stop talking.
 - Permissions (the setup window asks for each, with an explanation):
   - **Microphone** (required).
   - **Accessibility** (required): captures fn (so the emoji picker stays closed), pastes, and reads the browser URL.
-  - **Screen & System Audio** (optional): for the upcoming meeting notetaker.
+  - **Screen & System Audio** (for meeting notes): hears the other people on a call.
 
 ## Install and run (from source)
 
@@ -56,7 +59,15 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m mispr
 ```
 
-`llama-cpp-python` builds from source with Metal (GPU) support, which takes a few minutes. On first launch the **setup window** walks you through allowing the Microphone and Accessibility (and optionally Screen & System Audio for meeting notes), then downloads the models with a progress bar. Dictation unlocks once both models are verified. Quit from the logo in the menu bar.
+To run it as the app (Dock icon, main window, meeting notes), build `Mispr Flow.app` with Xcode's Swift toolchain:
+
+```bash
+tools/make_signing_cert.sh      # once: a local signing certificate, so permissions survive rebuilds
+tools/trust_signing_cert.sh     # once: needed for Screen & System Audio to stick (asks for your password)
+tools/build_app.sh --open
+```
+
+The app runs this checkout's Python engine in the background. `llama-cpp-python` builds from source with Metal (GPU) support, which takes a few minutes. On first launch the **setup window** walks you through allowing the Microphone and Accessibility (and optionally Screen & System Audio for meeting notes), then downloads the models with a progress bar. Dictation unlocks once both models are verified. Quit from the logo in the menu bar.
 
 ## Using it
 
@@ -144,8 +155,15 @@ mispr/
   screens.py     which screen to follow; fullscreen detection
   draw.py, sounds.py, levels.py, threads.py
   assets/        logo, app icon (.icns), menu-bar icon, GitHub social preview
+  host.py        talking to the Swift app (JSON lines over stdin/stdout)
+  meeting.py     meeting chunks, live previews, voice grouping, summaries, Q&A
+  prompts.py     the cleanup prompt the Prompts page edits
+macos/
+  Sources/MisprCore/  testable logic: engine protocol, recordings, stats, meetings, detection, chunking
+  Sources/MisprFlow/  the app: windows, pages, meeting recorder, system probes
+  Tests/              XCTest suite (swift test)
 tests/           pytest suite + golden files
-tools/           stress test, mutation test, cleanup-model eval, state renderer, icon and sound generators
+tools/           build_app.sh, signing scripts, sample data, stress/mutation tests, cleanup eval, icon and sound generators
 logs/            stress-test and bug-fix reports
 ```
 
@@ -156,7 +174,7 @@ logs/            stress-test and bug-fix reports
 .venv/bin/python -m pytest
 ```
 
-- **841 unit tests, about 15 s.** They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
+- **958 Python unit tests (about 15 s) and 90 Swift tests** (`cd macos && swift test`). They never touch the real microphone, clipboard, keyboard, models, recordings, or settings: those are faked or redirected to temporary folders. Any warning fails the run.
 - **Integration tests (opt-in).** Real Whisper, Gemma, and microphone:
   ```bash
   MISPR_INTEGRATION=1 .venv/bin/python -m pytest tests/test_integration.py
@@ -169,7 +187,7 @@ logs/            stress-test and bug-fix reports
 
 ## Status
 
-Dictation works end to end, with original sound cues and a guided setup window. Next up: the main window (history, stats, settings), modeled screen by screen on Wispr Flow's; then languages, the meeting notetaker, and an installable app (DMG/`.pkg`). See [plan.md](plan.md) for the decisions and roadmap.
+Dictation, the main window, and live meeting notes all work, as a signed local `.app`. Next up: languages, a dictionary and snippets, and an installable app for other Macs (DMG/`.pkg` with a bundled Python). See [plan.md](plan.md) for the decisions and roadmap.
 
 ## Documentation
 

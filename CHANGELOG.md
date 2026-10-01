@@ -4,6 +4,21 @@ All notable changes to Mispr Flow. Dates are 2026.
 
 ## Unreleased
 
+### Main window (SwiftUI) and meeting notes — branch `ui`
+
+- **Mispr Flow.app:** a SwiftUI app (`macos/`) that runs the Python engine in the background (JSON lines over stdin/stdout), restarts it if it crashes, and quits with it. `tools/build_app.sh` builds and signs it; with the local certificate (`tools/make_signing_cert.sh`, trusted via `tools/trust_signing_cert.sh`) macOS keeps its permissions across rebuilds.
+- **Pages:** Home (history by day, search, play, copy, delete; stats), Insights (WPM vs typing, cleanup fixes, usage by kind of app, streak calendar, time saved, week over week, hours and weekdays, top apps, pace, fun facts; Your voice: style, tone, habits, word cloud), Notetaker, Prompts, and Settings (Profile with six color themes, General with a click-to-set dictation key, System, Data and Privacy).
+- **Prompts page:** the cleanup system prompt, your own rules, and the examples are editable, with a Try it box and a switch for the no-invented-words guard.
+- **Incognito:** a switch in the window's corner; purple outline on the widget and the window while on; text is typed instead of pasted and is never copied.
+- **Any dictation key:** fn, one side of a modifier, or any other key.
+- **Meeting notes:** ⌥M or the widget's ◉ opens a side panel and records mic + system audio; live text while people talk, final lines at pauses; speakers grouped by voice and labelled Male/Female/Person N (renamable); Stop saves the note, writes a summary and title, and Resume continues it; Ask anything / What did I miss?; search; Share; split screen with the call window. Meeting type (Zoom, Meet, Teams, FaceTime, Webex, Slack, in person) is detected automatically.
+- **Notetaker:** past notes (summary, transcript, per-meeting insights, your notes), overall insights, and People: click one person or several to see the meetings you shared, talk share, topics, and their action items.
+- **Fixes:** the app connects to the engine even while Gemma loads (a private stdout copy); smooth history scrolling; paste is skipped (copied instead) when a native app has no text box focused; windows never outgrow the screen; quiet continuous meeting audio keeps transcribing.
+- **Sample data:** `tools/make_sample_meetings.py` and `tools/make_sample_dictations.py` (with `--remove`).
+- **Tests:** 958 Python unit tests, 90 Swift tests.
+
+### Earlier on `build`
+
 - **Dock icon:** Mispr Flow is now a regular Dock app with the logo as its tile (it was menu-bar only), named "Mispr Flow" in the menu bar and ⌘-Tab, with an app menu (About, Setup Guide…, Hide, Quit). Clicking the Dock icon opens the setup window until the main window exists.
 - **Original sound cues** replace the macOS system sounds (Tink, Pop, Bottle). Ten cues, all synthesized from scratch by `tools/make_sounds.py` into `mispr/assets/sounds/`; a test checks the shipped WAVs match the generator byte for byte. Levels are baked into the files, so they play at full volume.
 - **Every sound is hooked up** to the events that exist today: start, stop, lock (double-tap into hands-free), paste (text landed), cancel, alert (recorded but no words came out), error (mic won't open, no text box, or model download failed), success (models installed, or a permission granted in setup), and achievement (setup finished). `notification` is reserved for the main window.
