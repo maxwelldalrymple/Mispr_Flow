@@ -14,6 +14,14 @@ Please report security issues **privately** through GitHub's "Report a vulnerabi
 
 The latest audit is in [`logs/*_security-audit.md`](logs/README.md): its method, findings, fixes, and what's needed for a signed, notarized release.
 
+## Verifying a download
+
+Releases are **unsigned DMGs** on GitHub Releases (no Apple notarization), so macOS warns on first open. Before opening:
+
+1. Download only from this repository's **Releases** page.
+2. Check the DMG's checksum against the one in the release notes: `shasum -a 256 Mispr-Flow.dmg`.
+3. Then right-click the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+
 ## Supported versions
 
 Only the latest `main` gets security fixes until the first public release.
