@@ -1625,6 +1625,8 @@ class TestAppSwitcher:
         monkeypatch.setattr(W.apps, "quit_app", quit_.append)
         self.say(controller, clock, "quit chrome")
         assert quit_ == [11] and controller.notice[0] == "Quit Google Chrome"
+        self.say(controller, clock, "Quit.")  # no name: the app you're in
+        assert quit_ == [11, 99] and controller.notice[0] == "Quit TestApp"
 
     @pytest.fixture
     def sound(self, monkeypatch):

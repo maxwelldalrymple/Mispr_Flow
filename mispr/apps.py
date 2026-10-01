@@ -58,7 +58,7 @@ def parse(text):
         return ("shortcut", SHORTCUT_ALIASES.get(name, name), _FILLER.sub("", app).strip() if app else None)
     m = _QUIT.match(said)
     if m:
-        return ("quit", _FILLER.sub("", m["app"]).strip())
+        return ("quit", _FILLER.sub("", m["app"]).strip() if m["app"] else None)  # none named: the app you're in
     m = _ACTION.match(said)
     if m:  # close / minimize / expand, of an app or (none named) the current one
         target = _FILLER.sub("", m["rest"] or "").strip() or None
@@ -437,7 +437,7 @@ SHORTCUT_ALIASES = {
 _SHORTCUT_WORDS = "|".join(sorted((re.escape(k) for k in list(SHORTCUTS) + list(SHORTCUT_ALIASES)), key=len, reverse=True))
 _SHORTCUT = re.compile(rf"^(?:please\s+)?(?:(?P<app>.+?)\s+)?(?P<cmd>{_SHORTCUT_WORDS}|(?:go to |switch to )?tab \d+)"
                        rf"(?:\s+(?:in|on|for)\s+(?P<app2>.+))?$")
-_QUIT = re.compile(r"^(?:please\s+)?(?:quit|exit)\s+(?P<app>.+)$")
+_QUIT = re.compile(r"^(?:please\s+)?(?:quit|exit)(?:\s+(?:this\s+app|the\s+app|app|it))?(?:\s+(?P<app>.+))?$")
 
 
 def press_shortcut(name, post=None):

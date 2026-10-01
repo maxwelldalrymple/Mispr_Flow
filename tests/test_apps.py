@@ -136,7 +136,8 @@ class TestShortcuts:
         ("go forward in safari", ("shortcut", "forward", "safari")),
         ("Refresh", ("shortcut", "reload", None)),
         ("reopen closed tab", ("shortcut", "reopen tab", None)),
-        ("quit slack", ("quit", "slack")),
+        ("quit slack", ("quit", "slack")), ("Quit.", ("quit", None)), ("quit this app", ("quit", None)),
+        ("exit", ("quit", None)),
         ("tab 12", None),
     ])
     def test_commands(self, said, expected):

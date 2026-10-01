@@ -735,6 +735,13 @@ class WidgetController:
             AppHelper.callLater(SHORTCUT_DELAY, apps.press_shortcut, shortcut)  # once it's in front
             return self._switch_done(f"{shortcut.capitalize()} · {hit[0]}")
         if kind == "quit":
+            if command[1] is None:  # "quit": the app you're in
+                front = context.frontmost(include_page=False) or {}
+                pid = apps.frontmost_pid()
+                if not pid:
+                    return self._switch_failed("No app to quit")
+                apps.quit_app(pid)
+                return self._switch_done(f"Quit {front.get('app') or 'the app'}")
             hit = find(command[1])
             pid = hit and apps.pid_for(hit[1])
             if not pid:
