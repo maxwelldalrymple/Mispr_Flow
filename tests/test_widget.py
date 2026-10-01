@@ -1823,13 +1823,13 @@ class TestTerminalDictation:
         controller.rec_recorded_in = {"app": "Notes", "bundle_id": "com.apple.Notes"}
         assert controller._post_processor() == controller.cleaner.clean
 
-    def test_auto_enter_skips_terminals(self, controller, monkeypatch):
+    def test_auto_enter_runs_the_command_in_terminals_too(self, controller, monkeypatch):
         enters = []
         monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
         controller.settings.auto_enter = True
         controller.begin_handsfree(); controller.finish()
         controller._on_transcribed("ls -a", "ls flag a", {"terminal": True, "applied": False, "ms": 0, "rejected": "x"}, 1.0, "finished")
-        assert controller.pasted == ["ls -a"] and enters == []
+        assert controller.pasted == ["ls -a"] and enters == [True]
 
 
 class TestIncognitoNeverUsesTheClipboard:

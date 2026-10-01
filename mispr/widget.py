@@ -479,7 +479,7 @@ class WidgetController:
             else:
                 # Incognito types the words in directly so they never pass through the clipboard.
                 (type_text if incognito else paste_text)(text)
-                if self.settings.auto_enter and not (info or {}).get("terminal"):  # never run a command on its own
+                if self.settings.auto_enter:
                     AppHelper.callLater(ENTER_DELAY, press_enter)  # send it, so you can just talk
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
