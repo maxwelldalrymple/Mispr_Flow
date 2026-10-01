@@ -10,7 +10,8 @@ public enum EngineEvent: Equatable {
     /// The result of a "Try it" run on the Prompts page.
     case tried(TryResult)
     /// A meeting chunk was transcribed (speaker: 0 = you, 1+ = voices on the other side).
-    case chunkText(meeting: String, stream: String, speaker: Int, offset: Double, text: String, voice: String)
+    /// `partial`: live text for a phrase still being spoken (replaced by the final text).
+    case chunkText(meeting: String, stream: String, speaker: Int, offset: Double, text: String, voice: String, partial: Bool = false)
     /// The meeting summary (nil if the model couldn't write one), with a suggested title.
     case summary(meeting: String, summary: Meeting.Summary?, title: String)
     /// An answer to "Ask anything" / "What did I miss?".
@@ -54,7 +55,8 @@ public enum EngineEvent: Equatable {
         case "chunk_text":
             return .chunkText(meeting: object["id"] as? String ?? "", stream: object["stream"] as? String ?? "them",
                               speaker: object["speaker"] as? Int ?? 0, offset: object["offset"] as? Double ?? 0,
-                              text: object["text"] as? String ?? "", voice: object["voice"] as? String ?? "person")
+                              text: object["text"] as? String ?? "", voice: object["voice"] as? String ?? "person",
+                              partial: object["partial"] as? Bool ?? false)
         case "summary":
             let summary = Meeting.Summary(json: object["summary"])
             let title = (object["summary"] as? [String: Any])?["title"] as? String ?? ""

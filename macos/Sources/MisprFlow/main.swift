@@ -14,6 +14,17 @@ if CommandLine.arguments.contains("--detect") {
     exit(0)
 }
 
+// Development: `MisprFlow --segment file.wav` prints where the chunker would cut a recording.
+if let i = CommandLine.arguments.firstIndex(of: "--segment"), i + 1 < CommandLine.arguments.count,
+   let data = FileManager.default.contents(atPath: CommandLine.arguments[i + 1]), data.count > 44 {
+    let samples = data.dropFirst(44).withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }.map { Float($0) / 32768 }
+    var segmenter = Segmenter()
+    for chunk in segmenter.feed(samples) + [segmenter.flush()].compactMap({ $0 }) {
+        print(String(format: "chunk at %5.1fs  %4.1fs long", chunk.start, Double(chunk.samples.count) / 16_000))
+    }
+    exit(0)
+}
+
 // Development: `open "Mispr Flow.app" --args --record-test` records 8 s of mic + system audio as the
 // app (so its own permissions apply) and writes chunk sizes and levels to /tmp/mispr-record-test.txt.
 if CommandLine.arguments.contains("--record-test") {

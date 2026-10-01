@@ -117,6 +117,8 @@ final class NoteModel: ObservableObject {
     /// Seconds already recorded before this stretch (Resume continues the same note).
     private var offsetBase = 0.0
     private var stretchStart: Date?
+    private var previewTimer: Timer?
+    private var previewed: [String: (start: Double, samples: Int)] = [:]  // per stream: the phrase and how much of it was sent
     private var pendingChunks = 0
     private var savedURL: URL?
     private var poll: Timer?
@@ -206,6 +208,8 @@ final class NoteModel: ObservableObject {
         tab = .transcript
         stopDetecting()
         engine?.send(.startMeeting)  // the widget shows its meeting pill
+        previewTimer?.invalidate()
+        previewTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in self?.preview() }
         Task { @MainActor in
             do {
                 if let warning = try await recorder.start(systemAudio: systemAudio, saveTo: audioDir) {
@@ -229,6 +233,8 @@ final class NoteModel: ObservableObject {
         guard phase == .recording else { return }
         finishedDuration = offsetBase + Date().timeIntervalSince(stretchStart ?? Date())
         phase = .finishing
+        previewTimer?.invalidate()
+        previewTimer = nil
         recorder?.stop()  // flushes the last chunks
         recorder = nil
         engine?.send(.stopMeeting)
@@ -251,9 +257,31 @@ final class NoteModel: ObservableObject {
         }
     }
 
+    /// Every 0.8 s: send each stream's in-progress phrase for live text (only if it grew).
+    private func preview() {
+        guard recording, let recorder else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for current in recorder.inProgress() {
+                let offset = self.offsetBase + current.start
+                let url = self.chunkDir.appendingPathComponent("\(self.meetingID)-\(current.stream)-live-\(UUID().uuidString.prefix(6)).wav")
+                DispatchQueue.main.async {
+                    let last = self.previewed[current.stream]
+                    let sent = last?.start == current.start ? last!.samples : 0  // a new phrase starts from zero
+                    guard current.samples.count > sent + 4_000 else { return }  // only when 0.25 s more was heard
+                    self.previewed[current.stream] = (current.start, current.samples.count)
+                    guard (try? WAV.data(current.samples).write(to: url)) != nil else { return }
+                    self.engine?.send(.transcribeChunk, ["id": self.meetingID, "path": url.path, "stream": current.stream,
+                                                         "offset": offset, "partial": true])
+                }
+            }
+        }
+    }
+
     func handle(_ event: EngineEvent) {
         switch event {
-        case let .chunkText(id, stream, speaker, offset, text, voice) where id == meetingID:
+        case let .chunkText(id, stream, _, offset, text, _, true) where id == meetingID:
+            transcript.setPartial(stream: stream, offset: offset, text: text)
+        case let .chunkText(id, stream, speaker, offset, text, voice, false) where id == meetingID:
             pendingChunks = max(0, pendingChunks - 1)
             transcript.add(stream: stream, speaker: speaker, offset: offset, text: text, voice: voice)
         case let .summary(id, summary, suggested) where id == meetingID:
@@ -517,7 +545,7 @@ struct NoteView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 18).padding(.top, 14)
 
-            if note.transcript.lines.isEmpty {
+            if note.transcript.lines.isEmpty && note.transcript.partials.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     if note.recording {
@@ -556,11 +584,28 @@ struct NoteView: View {
                                 }
                                 .id(index)
                             }
+                            ForEach(["them", "you"], id: \.self) { stream in
+                                if let live = note.transcript.partials[stream] {
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack(spacing: 6) {
+                                            Circle().fill(SpeakerColors.color(note.transcript.partialSpeaker(stream))).frame(width: 8, height: 8)
+                                            Text(note.transcript.partialLabel(stream)).font(.system(size: 13, weight: .semibold))
+                                                .foregroundStyle(SpeakerColors.color(note.transcript.partialSpeaker(stream)))
+                                            Image(systemName: "waveform").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                                                .symbolEffect(.variableColor.iterative)
+                                        }
+                                        Text(live.text).font(.system(size: 14)).foregroundStyle(Theme.secondary)
+                                            .padding(.horizontal, 12).padding(.vertical, 8)
+                                            .background(RoundedRectangle(cornerRadius: 10).stroke(Theme.cardStroke, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                                    }
+                                }
+                            }
                             Color.clear.frame(height: 1).id("end")
                         }
                         .padding(.horizontal, 22).padding(.vertical, 14)
                     }
                     .onChange(of: note.transcript.lines.count) { withAnimation { proxy.scrollTo("end") } }
+                    .onChange(of: note.transcript.partials.values.map(\.text)) { proxy.scrollTo("end") }
                 }
             }
         }

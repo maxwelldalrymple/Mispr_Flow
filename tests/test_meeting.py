@@ -174,3 +174,34 @@ class TestVoiceKind:
         write_wav(tmp_path / "c.wav", tone(HIGH))
         s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="them", offset=0)
         assert s.sent[0][1]["voice"] == "female"
+
+
+class TestPreview:
+    def test_preview_is_marked_partial_and_skips_speakers(self, tmp_path):
+        s = Sync()
+        write_wav(tmp_path / "p.wav", tone(HIGH))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "p.wav"), stream="them", offset=4.0, partial=True)
+        assert s.sent == [("chunk_text", {"id": "m1", "stream": "them", "offset": 4.0, "text": "hello there",
+                                          "speaker": 0, "voice": "", "partial": True})]
+        assert "m1" not in s.worker._voices  # previews don't train the speaker groups
+
+    def test_only_the_newest_preview_runs(self, tmp_path):
+        s = Sync()
+        queued = []
+        s.worker._jobs.put = queued.append  # hold jobs, like a busy worker
+        for i in range(3):
+            write_wav(tmp_path / f"{i}.wav", tone(LOW))
+            s.worker.transcribe_chunk(id="m1", path=str(tmp_path / f"{i}.wav"), stream="them", offset=float(i), partial=True)
+        assert len(queued) == 1
+        assert not (tmp_path / "0.wav").exists() and not (tmp_path / "1.wav").exists()  # stale ones dropped
+        queued[0]()
+        assert [f["offset"] for _, f in s.sent] == [2.0]
+
+    def test_streams_preview_independently(self, tmp_path):
+        s = Sync()
+        queued = []
+        s.worker._jobs.put = queued.append
+        for stream in ("you", "them"):
+            write_wav(tmp_path / f"{stream}.wav", tone(LOW))
+            s.worker.transcribe_chunk(id="m1", path=str(tmp_path / f"{stream}.wav"), stream=stream, offset=0, partial=True)
+        assert len(queued) == 2

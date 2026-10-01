@@ -6,16 +6,17 @@ public struct Segmenter {
     public static let rate = 16_000.0
     static let frame = 480  // 30 ms
 
-    public var minSpeech = 1.0     // seconds of speech before a pause can end a chunk
-    public var pauseToCut = 0.7    // seconds of quiet that end a chunk
-    public var maxChunk = 15.0     // seconds; cut anyway (long monologues)
+    public var minSpeech = 0.6     // seconds of speech before a pause can end a chunk
+    public var pauseToCut = 0.5    // seconds of quiet that end a chunk
+    public var maxChunk = 10.0     // seconds; cut anyway (long monologues, music under speech)
 
     private var buffer: [Float] = []
     private var chunkStart = 0.0   // stream time of buffer[0], seconds
     private var position = 0       // samples consumed so far
     private var speechFrames = 0
     private var silentFrames = 0
-    private var noiseFloor: Float = 0.004
+    // Frame levels of the last ~5 s, starting from a quiet room.
+    private var recentLevels = [Float](repeating: 0.001, count: 166)
     private var pending: [Float] = []
 
     public init() {}
@@ -31,13 +32,17 @@ public struct Segmenter {
             buffer += frame
             position += Self.frame
             let rms = (frame.reduce(0) { $0 + $1 * $1 } / Float(frame.count)).squareRoot()
-            let speaking = rms > max(0.006, noiseFloor * 3)
+            // Background = the quietest moment of the last 5 s (speech always has gaps
+            // between syllables, so this stays low even under music); speech is well above it.
+            recentLevels.append(rms)
+            if recentLevels.count > 166 { recentLevels.removeFirst(recentLevels.count - 166) }
+            let floor = recentLevels.min() ?? 0
+            let speaking = rms > max(0.003, floor * 2.5)
             if speaking {
                 speechFrames += 1
                 silentFrames = 0
             } else {
                 silentFrames += 1
-                noiseFloor = noiseFloor * 0.95 + rms * 0.05  // track the room's background level
             }
             let seconds = Double(buffer.count) / Self.rate
             let speech = Double(speechFrames * Self.frame) / Self.rate
@@ -49,6 +54,11 @@ public struct Segmenter {
             }
         }
         return chunks
+    }
+
+    /// The phrase being spoken right now (for live, not-yet-final text), if any.
+    public var inProgress: (start: Double, samples: [Float])? {
+        Double(speechFrames * Self.frame) / Self.rate >= 0.5 ? (chunkStart, buffer) : nil
     }
 
     /// Whatever is left when recording stops.
@@ -101,11 +111,32 @@ public struct LiveTranscript: Equatable {
     public var names: [Int: String] = [:]
     /// What each voice on the other side sounds like: "male", "female", or "person".
     public private(set) var voices: [Int: String] = [:]
+    /// Live, not-yet-final text per stream ("you"/"them"), shown greyed until the phrase ends.
+    public private(set) var partials: [String: Line] = [:]
+
+    /// Show what's being said right now; ignored once that phrase has been finalized.
+    public mutating func setPartial(stream: String, offset: Double, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalized = lines.contains { $0.stream == stream && $0.offset >= offset - 0.05 }
+        guard !trimmed.isEmpty, !finalized else { return }
+        partials[stream] = Line(stream: stream, speaker: 0, offset: offset, text: trimmed)
+    }
+
+    /// Who a live line is from: you, or the other side's most recent speaker.
+    public func partialLabel(_ stream: String) -> String {
+        if stream == "you" { return "You" }
+        return lines.last { $0.stream == "them" }.map(label) ?? "Them"
+    }
+
+    public func partialSpeaker(_ stream: String) -> Int {
+        stream == "you" ? 0 : (lines.last { $0.stream == "them" }?.speaker ?? 1)
+    }
 
     public init() {}
 
     public mutating func add(stream: String, speaker: Int, offset: Double, text: String, voice: String = "person") {
         if stream == "them" { voices[max(1, speaker)] = voice }  // the latest guess wins (it firms up over time)
+        if let live = partials[stream], live.offset <= offset + 0.05 { partials[stream] = nil }  // the phrase is final now
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let line = Line(stream: stream, speaker: stream == "you" ? 0 : max(1, speaker), offset: offset, text: trimmed)

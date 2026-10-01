@@ -717,7 +717,10 @@ final class MeetingDetectorTests: XCTestCase {
 }
 
 final class LiveMeetingTests: XCTestCase {
-    func voice(_ seconds: Double) -> [Float] { (0..<Int(seconds * 16_000)).map { Float(sin(Double($0) * 0.2)) * 0.3 } }
+    /// Speech-like: a tone with a short dip every 0.6 s, like the gaps between syllables.
+    func voice(_ seconds: Double) -> [Float] {
+        (0..<Int(seconds * 16_000)).map { i in Float(sin(Double(i) * 0.2)) * ((i / 2_400) % 4 == 3 ? 0.03 : 0.3) }
+    }
     func quiet(_ seconds: Double) -> [Float] { Array(repeating: 0.0005, count: Int(seconds * 16_000)) }
 
     func testCutsAtAPause() {
@@ -725,15 +728,37 @@ final class LiveMeetingTests: XCTestCase {
         let chunks = s.feed(voice(2) + quiet(1) + voice(1.5))
         XCTAssertEqual(chunks.count, 1)
         XCTAssertEqual(chunks[0].start, 0)
-        XCTAssertEqual(Double(chunks[0].samples.count) / 16_000, 2.7, accuracy: 0.05)  // speech + the 0.7 s pause
+        XCTAssertEqual(Double(chunks[0].samples.count) / 16_000, 2.5, accuracy: 0.05)  // speech + the 0.5 s pause
         let rest = s.flush()
         XCTAssertNotNil(rest)
-        XCTAssertEqual(rest!.start, 2.7, accuracy: 0.05)
+        XCTAssertEqual(rest!.start, 2.5, accuracy: 0.05)
     }
 
     func testLongSpeechIsCutAtMax() {
         var s = Segmenter()
-        XCTAssertEqual(s.feed(voice(31)).count, 2)
+        XCTAssertEqual(s.feed(voice(31)).count, 3)
+    }
+
+    func testQuietContinuousSpeechKeepsComing() {
+        // A soft voice over steady background (a video): every 10 s must still be a chunk.
+        var s = Segmenter()
+        var soft = [Float](repeating: 0, count: 16_000 * 40)
+        for i in soft.indices {
+            let syllables = (i / 2_400) % 4 == 3 ? Float(0.1) : 1  // a short dip every 0.6 s
+            let voice = Float(sin(Double(i) * 0.2)) * 0.012 * syllables
+            let hum = Float(sin(Double(i) * 0.013)) * 0.002
+            soft[i] = voice + hum
+        }
+        XCTAssertEqual(s.feed(soft).count, 3)  // 3 full 10 s chunks...
+        XCTAssertNotNil(s.flush())              // ...and the last ~10 s when recording stops
+    }
+
+    func testInProgressShowsTheCurrentPhrase() {
+        var s = Segmenter()
+        XCTAssertNil(s.inProgress)
+        _ = s.feed(voice(1.2))
+        XCTAssertEqual(s.inProgress?.start, 0)
+        XCTAssertEqual(Double(s.inProgress!.samples.count) / 16_000, 1.2, accuracy: 0.05)
     }
 
     func testSilenceProducesNothing() {
@@ -845,5 +870,47 @@ final class PeopleIndexTests: XCTestCase {
         XCTAssertEqual(g.topics.first, "release")
         XCTAssertEqual(PeopleIndex.group(ms, names: ["Ana"]).meetings, 2)
         XCTAssertEqual(PeopleIndex.group(ms, names: ["Nobody"]).meetings, 0)
+    }
+}
+
+
+final class LivePreviewTests: XCTestCase {
+    func testPartialShowsThenFinalReplacesIt() {
+        var t = LiveTranscript()
+        t.setPartial(stream: "them", offset: 4, text: "Let's ship")
+        XCTAssertEqual(t.partials["them"]?.text, "Let's ship")
+        t.setPartial(stream: "them", offset: 4, text: "Let's ship on Friday")
+        XCTAssertEqual(t.partials["them"]?.text, "Let's ship on Friday")
+        t.add(stream: "them", speaker: 1, offset: 4, text: "Let's ship on Friday.", voice: "female")
+        XCTAssertNil(t.partials["them"])
+        XCTAssertEqual(t.lines.map(\.text), ["Let's ship on Friday."])
+    }
+
+    func testLatePartialForAFinishedPhraseIsIgnored() {
+        var t = LiveTranscript()
+        t.add(stream: "you", speaker: 0, offset: 2, text: "Done.")
+        t.setPartial(stream: "you", offset: 2, text: "Do")
+        XCTAssertNil(t.partials["you"])
+    }
+
+    func testFinalWithNoWordsStillClearsThePreview() {
+        var t = LiveTranscript()
+        t.setPartial(stream: "them", offset: 1, text: "uh")
+        t.add(stream: "them", speaker: 1, offset: 1, text: "")
+        XCTAssertNil(t.partials["them"])
+    }
+
+    func testPartialLabelFollowsTheLastSpeaker() {
+        var t = LiveTranscript()
+        XCTAssertEqual(t.partialLabel("them"), "Them")
+        t.add(stream: "them", speaker: 2, offset: 0, text: "Hi.", voice: "male")
+        XCTAssertEqual(t.partialLabel("them"), "Male 1")
+        XCTAssertEqual(t.partialSpeaker("them"), 2)
+        XCTAssertEqual(t.partialLabel("you"), "You")
+    }
+
+    func testPartialEventParses() {
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "chunk_text", "id": "m", "stream": "you", "speaker": 0, "offset": 1.5, "text": "Hel", "voice": "", "partial": true}"#),
+                       .chunkText(meeting: "m", stream: "you", speaker: 0, offset: 1.5, text: "Hel", voice: "", partial: true))
     }
 }

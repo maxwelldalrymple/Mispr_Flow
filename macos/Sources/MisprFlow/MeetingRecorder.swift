@@ -45,6 +45,15 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
+    /// The phrase each stream is in the middle of (for live text).
+    func inProgress() -> [(stream: String, start: Double, samples: [Float])] {
+        queue.sync {
+            ["you", "them"].compactMap { stream in
+                segmenters[stream]?.inProgress.map { (stream, $0.start, $0.samples) }
+            }
+        }
+    }
+
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()

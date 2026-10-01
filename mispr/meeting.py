@@ -10,6 +10,7 @@ import json
 import queue
 import re
 import sys
+import threading
 import wave
 from pathlib import Path
 
@@ -169,6 +170,8 @@ class MeetingWorker:
         self.transcriber, self.cleaner, self.send = transcriber, cleaner, send
         self._jobs = queue.Queue()
         self._voices = {}  # meeting id -> VoiceClusters for "them"
+        self._partials = {}  # (meeting id, stream) -> newest live-preview request
+        self._partials_lock = threading.Lock()
         start(self._run, "meeting-worker")
 
     def _run(self):
@@ -181,7 +184,10 @@ class MeetingWorker:
 
     # Commands from the app (host.listen calls these with the message's arguments).
 
-    def transcribe_chunk(self, id="", path="", stream="them", offset=0.0, delete=True):
+    def transcribe_chunk(self, id="", path="", stream="them", offset=0.0, delete=True, partial=False):
+        if partial:
+            return self._preview(id, path, stream, offset, delete)
+
         def job():
             text, speaker, voice = "", 0, "person"
             try:
@@ -195,6 +201,30 @@ class MeetingWorker:
                 if delete:
                     Path(path).unlink(missing_ok=True)
                 self.send("chunk_text", id=id, stream=stream, offset=offset, text=text, speaker=speaker, voice=voice)
+        self._jobs.put(job)
+
+    def _preview(self, id, path, stream, offset, delete):
+        """Live text for the phrase still being spoken. Only the newest request per stream
+        runs; older ones still waiting are dropped, so previews never fall behind."""
+        key = (id, stream)
+        with self._partials_lock:
+            stale = self._partials.get(key)
+            self._partials[key] = (path, offset, delete)
+        if stale is not None:
+            if stale[2]:
+                Path(stale[0]).unlink(missing_ok=True)
+            return  # a run is already queued; it will pick up this newer audio
+
+        def job():
+            with self._partials_lock:
+                path_, offset_, delete_ = self._partials.pop(key)
+            text = ""
+            try:
+                text = self.transcriber.transcribe(read_wav(path_))
+            finally:
+                if delete_:
+                    Path(path_).unlink(missing_ok=True)
+                self.send("chunk_text", id=id, stream=stream, offset=offset_, text=text, speaker=0, voice="", partial=True)
         self._jobs.put(job)
 
     def summarize(self, id="", lines=()):
