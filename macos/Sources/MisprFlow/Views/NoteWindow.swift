@@ -183,7 +183,10 @@ final class NoteModel: ObservableObject {
         guard !needsPermission else { tab = .transcript; return }  // the setup card asks first
         if phase == .done && !resume { resetForNewNote() }
         offsetBase = resume ? (finishedDuration ?? 0) : 0
-        let systemAudio = source.needsSystemAudio
+        // Always try to record the Mac's sound, not only for detected calls: a call in a
+        // background browser tab can look "in person", and missing the other side is worse than
+        // capturing a quiet stream. If macOS refuses, the mic keeps going and a banner says why.
+        let systemAudio = true
         let audioDir = incognito() ? nil : meetingsDir()?.appendingPathComponent(String(meetingID.prefix(10)))
             .appendingPathComponent(meetingID)
         try? FileManager.default.createDirectory(at: chunkDir, withIntermediateDirectories: true)
