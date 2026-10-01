@@ -80,3 +80,24 @@ rm -rf voice-recordings/                                         # saved dictati
 ```
 
 Keep `models/` unless you want to re-download 3 GB. Deleting saved recordings doesn't reliably erase them from an SSD; use Incognito if a recording must never be recoverable.
+
+## "open folder" can't find a folder
+
+- Folders inside **Documents, Desktop or Downloads** need **Full Disk Access**. Open Setup Guide… → Optional features → Allow…, then switch Mispr Flow on in the list. The engine log says "no permission to look in …" when this is the cause.
+- Whisper may mishear the name. Sound-alikes are matched ("clawed" → claude), but very short names (under 4 letters) aren't. A [nickname](features/voice-commands.md) can't be used for folders, so say a longer part of the name.
+
+## "open …" in Finder doesn't change the window
+
+It needs the **Control Finder** permission (macOS's Automation prompt, or setup's Optional features page). Without it, folders open in a new window.
+
+## A voice command opened nothing ("Not sure you meant …")
+
+On purpose: a weak guess never launches an app that isn't running. Say the app's full name, or set a nickname ("set nickname C to Chrome").
+
+## Meeting notes show my speaker's sound as "You"
+
+The echo gate learns your speakers in the first second or two of the call, so a little early echo can get through. Headphones avoid echo entirely.
+
+## Meeting speakers are merged
+
+On compressed call audio (Zoom), similar voices can merge into one person. That's by design: one person is never split into two. Rename the speaker, or edit names afterwards on the People page.

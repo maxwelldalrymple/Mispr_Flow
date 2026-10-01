@@ -2,6 +2,36 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Oct 1: Documentation (branch `documentation`)
+
+- Feature guides (`docs/features/`), engine protocol, models, testing.
+- A README in every folder.
+- A knowledge base (`knowledge-base/`) for bringing an AI assistant up to speed.
+
+## Oct 1: Tests, meetings, voice commands (PR #16)
+
+- **Test audit:** every UI and engine function tested, with a test catalogue in `logs/`.
+- **Meeting notes:**
+  - TitaNet speaker diarization: a new person only after two matching sentences; lookalikes merged.
+  - Gender from fingerprint plus pitch.
+  - Echo gate on the mic, plus echo removal from text.
+  - Silero click filtering; fast `base.en` previews on their own thread.
+  - Save / Discard / Keep editing.
+- **Notetaker:** delete one or many notes; rename, merge or remove people; contact cards.
+- **Voice commands (app switcher):**
+  - switch key or combo;
+  - apps and windows (close, minimize, expand, quit, side by side, percent);
+  - tabs and browser shortcuts;
+  - media, skip, volume, mute mic and tab;
+  - scrolling;
+  - open folders and files (Spotlight, sound-alike names);
+  - nicknames;
+  - safe matching;
+  - Commands history with real names.
+- **Dictation:** Auto-Enter with badge and chime (works in terminals); terminal mode (spoken syntax → shell, never adds commands); browser text-box recheck.
+- **Setup:** two permission pages (required; optional: System Audio, Full Disk Access, Control Finder).
+- **Home:** Voice commands card.
+
 ## Unreleased
 
 ### Main window (SwiftUI) and meeting notes — branch `ui`

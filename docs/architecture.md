@@ -109,3 +109,42 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 4. Opens the setup window (`onboarding.py`) if setup is needed: first run, a required permission missing, or a model missing. Adds **Setup Guide…** to the menu.
 5. Every second, `maintain_hotkey` installs the fn tap as soon as a permission allows it, and upgrades a listen-only tap to the active one once Accessibility is granted. No restart needed.
 6. On Quit or SIGTERM/INT/HUP: stop the mic, zero and unlock the audio buffer, free the llama.cpp model (its Metal backend asserts otherwise), and remove the menu-bar icon.
+
+## The app and the engine
+
+Two processes:
+
+- **Mispr Flow.app** (SwiftUI, `macos/`): the main window, the meeting side panel, the meeting audio recorder and the echo gate.
+- **The Python engine** (`mispr/`): the widget, the hotkeys, dictation, voice commands and all the models.
+
+The app starts the engine and restarts it if it crashes. They talk in JSON lines ([engine protocol](engine-protocol.md)) and share `settings.json`: the app writes it, then sends `reload_settings`.
+
+## Voice commands
+
+```
+hold switch key ─► hotkey.FnMonitor (switch edge: down / up / combo)
+                   └► widget.switch_key: record (opens a muted mic just for the command)
+let go ──────────► Whisper (raw, no cleanup)
+                   └► widget._on_switch_heard: save to history (status "command")
+                      └► apps.parse(text) → ("switch" | "open" | "open_folder" | "close" | "minimize" | "expand"
+                          | "beside" | "size" | "shortcut" | "media" | "seek" | "volume" | "mic" | "mute_tab"
+                          | "mute_app" | "scroll" | "scroll_end" | "quit" | "nickname", …)
+                          └► widget._do_switch_command → apps.* (match_scored, window_action, press_shortcut,
+                             press_media, seek, scroll, set_volume, spotlight / find_in, finder_go …)
+                             └► notice + sound; the outcome rewrites the history entry ("Opened claude")
+```
+
+Folder searches run on a background thread (`_in_background`). App matching is confidence-scored, so weak guesses never launch an app that isn't running.
+
+## Meeting notes
+
+```
+App: MeetingRecorder ─ mic (AVAudioEngine) ──► Resampler 16k ─► EchoGate.mic ─► Segmenter("you") ─┐
+                     └ system (ScreenCaptureKit) ► Resampler ─► EchoGate.system, Segmenter("them") ┤
+     NoteModel: chunks at pauses ─► transcribe_chunk;  every 0.5 s ─► transcribe_chunk(partial) ───┘
+Engine: MeetingWorker
+   final queue (one thread): SpeechDetector (Silero) → Whisper turbo segments → VoiceClusters.split
+                             (TitaNet fingerprints, join/confirm/merge, GenderModel + pitch) → chunk_text, speakers_merged
+   preview queue (own thread): SpeechDetector → Whisper base.en → chunk_text(partial)
+App: LiveTranscript.add (Echo text removal, merges) → the panel; Stop → summarize → Save note
+```
