@@ -1,10 +1,11 @@
-pyobjc-core
-pyobjc-framework-Cocoa
-pyobjc-framework-Quartz
-pyobjc-framework-ApplicationServices
-pyobjc-framework-AVFoundation
-soxr
-numpy
-pywhispercpp
-llama-cpp-python
-sherpa-onnx
+# Pinned to the versions tested (security audit, 2026-10-01). Update deliberately and re-run pip-audit.
+pyobjc-core==12.2.2
+pyobjc-framework-Cocoa==12.2.2
+pyobjc-framework-Quartz==12.2.2
+pyobjc-framework-ApplicationServices==12.2.2
+pyobjc-framework-AVFoundation==12.2.2
+soxr==1.1.0
+numpy==2.5.3
+pywhispercpp==1.5.1
+llama-cpp-python==0.3.35
+sherpa-onnx==1.13.8

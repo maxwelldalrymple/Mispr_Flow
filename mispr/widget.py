@@ -616,7 +616,7 @@ class WidgetController:
     def _do_switch_command(self, text):
         """Act on what was said: teach a nickname, or bring an app to the front. The audio is
         wiped and never saved (switching apps isn't dictation history)."""
-        log(f"switch heard {text!r}")
+        log(f"switch heard {len(text or '')} chars")  # never the words: the log isn't private (security audit)
         self._command_record = None
         if text and text.strip():  # into history like dictation (never in Incognito); the outcome replaces the text
             self._command_record = self._save(storage.COMMAND, text.strip())

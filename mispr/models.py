@@ -111,6 +111,8 @@ def ensure_model(spec=DEFAULT_MODEL, progress=None):
     """
     if is_installed(spec):
         return spec.path
+    if not spec.url.startswith("https://"):  # integrity also needs the SHA-256 below, but never plain HTTP
+        raise ValueError(f"refusing a non-HTTPS model download: {spec.url}")
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     part = spec.path.with_suffix(spec.path.suffix + ".part")
     digest = hashlib.sha256()

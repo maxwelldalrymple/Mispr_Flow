@@ -353,3 +353,11 @@ class TestFakeLevels:
             "offset": round(src._offset, 9),
             "levels": [round(src.level(t / 20), 9) for t in range(120)],
         })
+
+
+def test_model_downloads_must_be_https(tmp_path, monkeypatch):
+    from mispr import models
+    monkeypatch.setattr(models, "MODELS_DIR", tmp_path)
+    spec = models.ModelSpec("x.bin", 1, "0" * 64, source="http://example.com/x.bin")
+    with pytest.raises(ValueError, match="non-HTTPS"):
+        models.ensure_model(spec)

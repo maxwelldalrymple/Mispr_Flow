@@ -10,4 +10,5 @@ One file per change, named `YYYY-MM-DD_HH-MM-SS_<topic>.md`, with real results: 
 | Meeting notes | `*_speaker-id.md`, `*_echo-removal.md`, `*_clicks-echo-speed.md`, `*_diarization-gender.md`, `*_save-delete-people.md` |
 | Voice commands | `*_app-switcher.md`, `*_switcher-windows.md`, `*_switcher-tabs.md`, `*_switcher-sound.md`, `*_switcher-unmute.md`, `*_switcher-seek.md`, `*_switcher-scroll.md`, `*_commands-history-and-safe-matching.md`, `*_open-folder.md`, `*_folders-find-anything.md`, `*_commands-history-outcome.md` |
 | Home | `*_home-voice-commands.md` |
+| Security | `*_security-audit.md` |
 | Documentation | `*_documentation.md`, `*_documentation-complete.md` |

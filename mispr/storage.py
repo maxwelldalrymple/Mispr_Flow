@@ -10,6 +10,7 @@ Nothing here is ever uploaded.
 """
 
 import json
+import os
 import sys
 import wave
 from pathlib import Path
@@ -86,3 +87,27 @@ def set_transcript(wav_path, text):
     meta["transcript"], meta["words"] = text, len(text.split())
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
     return meta_path
+
+
+LOG_DIR = Path.home() / "Library" / "Logs" / "Mispr Flow"
+
+
+def private_dirs():
+    """Folders holding the user's words and audio: only their own account may read them."""
+    from .settings import SETTINGS_PATH
+    return [RECORDINGS_DIR, RECORDINGS_DIR.parent / "meeting-recordings", SETTINGS_PATH.parent,
+            LOG_DIR]
+
+
+def lock_down(dirs=None):
+    """Make each existing data folder owner-only (0700), so other accounts on the Mac can't read
+    dictations, meetings, settings or the log. Returns the folders changed."""
+    changed = []
+    for d in dirs if dirs is not None else private_dirs():
+        try:
+            if Path(d).is_dir() and Path(d).stat().st_mode & 0o077:
+                os.chmod(d, 0o700)
+                changed.append(Path(d))
+        except OSError:
+            pass
+    return changed

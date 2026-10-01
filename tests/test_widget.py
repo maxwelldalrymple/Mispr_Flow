@@ -1539,6 +1539,12 @@ class TestAppSwitcher:
         self.say(controller, clock, "")
         assert fronted == [] and controller.sounds.played[-1] == "alert"
 
+    def test_the_log_never_holds_what_was_said(self, controller, clock, fronted, monkeypatch):
+        lines = []
+        monkeypatch.setattr(W, "log", lines.append)
+        self.say(controller, clock, "open my secret project")
+        assert not any("secret" in line for line in lines) and any("switch heard 22 chars" in line for line in lines)
+
     def test_commands_go_into_history_then_audio_is_wiped(self, controller, clock, fronted, monkeypatch):
         saved = []
         monkeypatch.setattr(controller, "_save", lambda *a, **kw: saved.append(a))
