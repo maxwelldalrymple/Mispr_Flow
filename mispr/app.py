@@ -185,6 +185,8 @@ def _setup_flow(widget):
 def main():
     lock = _single_instance_lock()
     hosted = host.hosted()  # run by the Swift app, which owns the Dock icon and main window
+    if hosted:
+        host.open_channel()  # before WidgetController starts loading the models
     _brand_process()
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory if hosted

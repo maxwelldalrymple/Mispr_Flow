@@ -15,13 +15,25 @@ from . import threads
 
 PREFIX = "@mispr "
 
+_channel = None  # our own copy of stdout; see open_channel()
+
+
+def open_channel():
+    """Duplicate stdout for messages to the app. Call before any model loads: llama.cpp
+    points file descriptor 1 at /dev/null while it loads (on a worker thread), which would
+    silently swallow anything written to stdout then, like the hello event."""
+    global _channel
+    if _channel is None:
+        _channel = os.fdopen(os.dup(sys.stdout.fileno()), "w", buffering=1)
+    return _channel
+
 
 def hosted():
     return os.environ.get("MISPR_HOSTED") == "1"
 
 
 def send(event, out=None, **fields):
-    out = out or sys.stdout
+    out = out or _channel or sys.stdout
     out.write(PREFIX + json.dumps({"event": event, **fields}) + "\n")
     out.flush()
 

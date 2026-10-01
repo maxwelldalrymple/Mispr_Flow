@@ -45,6 +45,7 @@ public final class Engine: ObservableObject {
     private let logURL: URL?
     private var process: Process?
     private var input: FileHandle?
+    private var output: Pipe?  // retained: if the pipe is released, its read handler stops firing
     private var splitter = LineSplitter()
     private var crashes: [Date] = []
     private var stopping = false
@@ -85,6 +86,7 @@ public final class Engine: ObservableObject {
             try process.run()
             self.process = process
             self.input = stdin.fileHandleForWriting
+            self.output = stdout
         } catch {
             state = .failed("Couldn't start the engine: \(error.localizedDescription)")
         }
@@ -128,8 +130,10 @@ public final class Engine: ObservableObject {
     }
 
     func exited(status: Int32, now: Date = Date()) {
+        output?.fileHandleForReading.readabilityHandler = nil
         process = nil
         input = nil
+        output = nil
         if stopping { state = .stopped; return }
         if status == 0 { state = .stopped; onCleanExit(); return }
         crashes = crashes.filter { now.timeIntervalSince($0) < Self.restartWindow } + [now]

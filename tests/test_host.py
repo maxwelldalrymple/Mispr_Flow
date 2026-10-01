@@ -24,9 +24,34 @@ class TestSend:
         assert line.startswith("@mispr ") and line.endswith("\n") and line.count("\n") == 1
         assert json.loads(line[len("@mispr "):]) == {"event": "saved", "path": "/x/a.json"}
 
-    def test_defaults_to_stdout(self, capsys):
+    def test_defaults_to_stdout(self, capsys, monkeypatch):
+        monkeypatch.setattr(host, "_channel", None)
         host.send("hello")
         assert capsys.readouterr().out == '@mispr {"event": "hello"}\n'
+
+
+class TestChannel:
+    def test_survives_stdout_being_pointed_at_dev_null(self, monkeypatch, tmp_path):
+        """llama.cpp dup2()s /dev/null over fd 1 while loading; our channel must not care."""
+        import os
+        import sys
+        target = open(tmp_path / "pipe", "w")
+        saved = os.dup(1)
+        monkeypatch.setattr(host, "_channel", None)
+        monkeypatch.setattr(sys, "stdout", target)
+        try:
+            os.dup2(target.fileno(), 1)
+            channel = host.open_channel()
+            assert host.open_channel() is channel  # opened once
+            with open(os.devnull, "w") as null:
+                os.dup2(null.fileno(), 1)  # what llama.cpp does during a model load
+                host.send("hello")
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
+            channel.close()
+            target.close()
+        assert (tmp_path / "pipe").read_text() == '@mispr {"event": "hello"}\n'
 
 
 class TestParse:
