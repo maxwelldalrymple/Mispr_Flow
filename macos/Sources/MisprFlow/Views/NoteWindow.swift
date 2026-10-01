@@ -312,7 +312,7 @@ final class NoteModel: ObservableObject {
         stopDetecting()
         engine?.send(.startMeeting)  // the widget shows its meeting pill
         previewTimer?.invalidate()
-        previewTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in self?.preview() }
+        previewTimer = Timer.scheduledTimer(withTimeInterval: Self.previewEvery, repeats: true) { [weak self] _ in self?.preview() }
         Task { @MainActor in
             do {
                 if let warning = try await recorder.start(systemAudio: systemAudio, saveTo: audioDir) {
@@ -360,7 +360,12 @@ final class NoteModel: ObservableObject {
         }
     }
 
-    /// Every 0.8 s: send each stream's in-progress phrase for live text (only if it grew).
+    /// Live text refresh: every 0.5 s, when at least 0.2 s more was heard. The engine runs
+    /// these on a small, fast model (~0.15 s each) on its own thread, so they keep up.
+    static let previewEvery = 0.5
+    static let previewGrowth = 3_200  // samples (0.2 s at 16 kHz)
+
+    /// Every `previewEvery`: send each stream's in-progress phrase for live text (only if it grew).
     func preview() {
         guard recording, let recorder else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -370,7 +375,7 @@ final class NoteModel: ObservableObject {
                 DispatchQueue.main.async {
                     let last = self.previewed[current.stream]
                     let sent = last?.start == current.start ? last!.samples : 0  // a new phrase starts from zero
-                    guard current.samples.count > sent + 4_000 else { return }  // only when 0.25 s more was heard
+                    guard current.samples.count > sent + Self.previewGrowth else { return }  // only when it grew
                     self.previewed[current.stream] = (current.start, current.samples.count)
                     guard (try? WAV.data(current.samples).write(to: url)) != nil else { return }
                     self.engine?.send(.transcribeChunk, ["id": self.meetingID, "path": url.path, "stream": current.stream,

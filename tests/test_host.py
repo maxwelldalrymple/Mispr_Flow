@@ -149,6 +149,7 @@ class TestConnectHost:
         from mispr import models
         assert worker.preview.spec is models.PREVIEW_MODEL and not worker.preview._loading  # loads on first meeting
         assert worker.embedder.spec is models.SPEAKER_MODEL and worker.embedder._extractor is None
+        assert worker.speech.spec is models.VAD_MODEL and worker.speech._config is None
         widget.on_meeting_changed(True)
         assert sent[-1] == ("meeting", {"active": True})
         widget.on_settings_changed()  # a nickname set by voice: the app re-reads settings

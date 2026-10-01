@@ -30,7 +30,7 @@ HIGH = [(260 * k, 1 / (k ** 0.5)) for k in range(1, 10)]   # higher, brighter vo
 class Sync:
     """Runs MeetingWorker jobs right away and records what it sends."""
 
-    def __init__(self, text="hello there", reply=None, segments=None, preview=None, embedder=None):
+    def __init__(self, text="hello there", reply=None, segments=None, preview=None, embedder=None, speech=None):
         self.sent = []
         # segments(audio) -> [(start, end, text)]: by default one segment covering the chunk.
         segs = segments or (lambda audio: [(0.0, len(audio) / 16_000, text)] if text else [])
@@ -39,7 +39,7 @@ class Sync:
         self.threads = []
         self.worker = meeting.MeetingWorker(transcriber, cleaner, lambda event, **f: self.sent.append((event, f)),
                                             start=lambda target, name: self.threads.append(name),
-                                            preview=preview, embedder=embedder)
+                                            preview=preview, embedder=embedder, speech=speech)
         self.worker._jobs.put = lambda job: job()
         if preview is not None:
             self.worker._preview_jobs.put = lambda job: job()
@@ -171,6 +171,69 @@ class TestEmbeddingClusters:
         v = meeting.VoiceClusters(dead)
         assert v.assign(tone(LOW)) == 1 and v.assign(tone(HIGH)) == 2
         assert v.fingerprint(tone(LOW))[1] == meeting.VoiceClusters.SAME_SPEAKER_SIGNATURE
+
+
+class NoSpeech:
+    """A detector that hears nothing (the audio was a click)."""
+
+    def __init__(self, seconds=0.0):
+        self.seconds, self.calls = seconds, 0
+
+    def has_speech(self, audio):
+        self.calls += 1
+        return self.seconds >= meeting.SpeechDetector.MIN_SPEECH
+
+
+class TestClicksAreNotWords:
+    """Mouse clicks and typing during a meeting must never become "okay." or "Thank you."."""
+
+    def test_a_chunk_with_no_speech_is_skipped_but_still_reported_done(self, tmp_path):
+        said = []
+        s = Sync(speech=NoSpeech(), segments=lambda audio: said.append(1) or [(0, 1, "Thank you.")])
+        write_wav(tmp_path / "c.wav", tone(LOW))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="you", offset=3.0)
+        assert said == [] and s.sent == [("chunk_text", {"id": "m1", "stream": "you", "offset": 3.0, "text": "",
+                                                          "speaker": 0, "voice": "person", "last": True})]
+        assert not (tmp_path / "c.wav").exists()
+
+    def test_speech_goes_through(self, tmp_path):
+        s = Sync(speech=NoSpeech(seconds=1.0))
+        write_wav(tmp_path / "c.wav", tone(LOW))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="them", offset=0)
+        assert s.sent[-1][1]["text"] == "hello there"
+
+    def test_previews_of_clicks_show_nothing(self, tmp_path):
+        s = Sync(speech=NoSpeech())
+        write_wav(tmp_path / "p.wav", tone(LOW))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "p.wav"), stream="you", offset=0, partial=True)
+        assert s.sent[-1][1]["text"] == "" and s.sent[-1][1]["partial"] is True
+
+    def test_timing_is_logged(self, tmp_path, capsys):
+        s = Sync()
+        write_wav(tmp_path / "c.wav", tone(LOW))
+        s.worker.transcribe_chunk(id="m1", path=str(tmp_path / "c.wav"), stream="you", offset=0)
+        assert "meeting: you 1.5s chunk -> 1 line(s) in" in capsys.readouterr().err
+
+
+class TestSpeechDetector:
+    def test_unavailable_means_keep_everything(self, capsys):
+        d = meeting.SpeechDetector(ensure=lambda spec: (_ for _ in ()).throw(OSError("offline")))
+        assert d.speech_seconds(tone(LOW)) is None and d.has_speech(tone(LOW)) is True
+        assert "speech detector unavailable" in capsys.readouterr().err
+
+    @pytest.mark.skipif(not meeting.VAD_MODEL.path.exists(), reason="Silero VAD not downloaded")
+    def test_real_model_clicks_typing_and_silence_are_not_speech(self):
+        rng = np.random.default_rng(0)
+        d = meeting.SpeechDetector()
+        def clicks(times, loud):
+            x = 0.002 * rng.standard_normal(16_000 * 3).astype(np.float32)
+            for t in times:
+                i = int(t * 16_000)
+                x[i:i + 400] += (rng.standard_normal(400) * np.exp(-np.arange(400) / 60) * loud).astype(np.float32)
+            return x
+        assert d.speech_seconds(clicks((0.3, 0.9, 1.4), 0.5)) == 0  # mouse clicks
+        assert d.speech_seconds(clicks(np.cumsum(rng.uniform(0.08, 0.25, 15)), 0.3)) == 0  # typing
+        assert not d.has_speech(np.zeros(32_000, dtype=np.float32))
 
 
 class TestSpeakerEmbedder:

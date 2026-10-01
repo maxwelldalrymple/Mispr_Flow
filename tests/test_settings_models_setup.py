@@ -121,9 +121,9 @@ class TestModelSpec:
         assert spec.size > 100_000_000
         assert spec.url.startswith("https://huggingface.co/") and spec.url.endswith(spec.filename)
 
-    @pytest.mark.parametrize("spec", [models.WHISPER_BASE_EN, models.WESPEAKER_RESNET34])
+    @pytest.mark.parametrize("spec", [models.WHISPER_BASE_EN, models.WESPEAKER_RESNET34, models.SILERO_VAD])
     def test_meeting_models_are_pinned_https_downloads(self, spec):
-        assert re.fullmatch(r"[0-9a-f]{64}", spec.sha256) and spec.size > 20_000_000
+        assert re.fullmatch(r"[0-9a-f]{64}", spec.sha256) and spec.size > 500_000
         assert spec.url.startswith("https://") and spec.url.endswith(spec.filename)
 
     def test_full_source_url_wins(self):
@@ -132,7 +132,7 @@ class TestModelSpec:
 
     def test_meeting_models_are_not_required_at_first_run(self):
         from mispr import setup
-        assert models.PREVIEW_MODEL not in setup.REQUIRED and models.SPEAKER_MODEL not in setup.REQUIRED
+        assert not {models.PREVIEW_MODEL, models.SPEAKER_MODEL, models.VAD_MODEL} & set(setup.REQUIRED)
 
     def test_spec_is_immutable(self):
         import dataclasses

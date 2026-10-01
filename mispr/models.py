@@ -63,6 +63,17 @@ WESPEAKER_RESNET34 = ModelSpec(
 
 SPEAKER_MODEL = WESPEAKER_RESNET34
 
+# Speech detection (Silero VAD): tells real speech from clicks, typing and noise, so a mouse
+# click during a meeting never becomes "okay." or "Thank you." From sherpa-onnx's release.
+SILERO_VAD = ModelSpec(
+    "silero_vad.onnx",
+    643_854,
+    "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    source="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+)
+
+VAD_MODEL = SILERO_VAD
+
 # Text cleanup LLM. Chosen over Qwen2.5-1.5B/3B and Qwen3-4B-Instruct-2507 in a 27-case
 # eval: zero invented words, zero lost key words, and the most conservative on ambiguous
 # self-corrections (~550 ms on an M1 Pro). Gemma Terms of Use apply.
@@ -123,7 +134,8 @@ def progress_printer(out=None):
 def cli(args, ensure=None):
     """python -m mispr.models [whisper] [cleanup]: download and verify models."""
     ensure = ensure or ensure_model
-    names = {"whisper": DEFAULT_MODEL, "cleanup": CLEANUP_MODEL, "preview": PREVIEW_MODEL, "speakers": SPEAKER_MODEL}
+    names = {"whisper": DEFAULT_MODEL, "cleanup": CLEANUP_MODEL, "preview": PREVIEW_MODEL, "speakers": SPEAKER_MODEL,
+             "vad": VAD_MODEL}
     report = progress_printer()
     return [ensure(names[name], progress=report) for name in args or ["whisper", "cleanup"]]
 

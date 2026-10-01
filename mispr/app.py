@@ -155,7 +155,8 @@ def _connect_host(app, widget, open_setup, fn=None):
     # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
     # loaded (downloaded the first time) when a meeting first needs them.
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
-                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder())
+                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
+                                   speech=meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     def reload_settings():
         widget.reload_settings()

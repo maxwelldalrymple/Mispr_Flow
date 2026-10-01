@@ -1125,3 +1125,89 @@ final class EchoTests: XCTestCase {
         XCTAssertEqual(t.partials["you"]?.text, "Agreed, let's post the role")
     }
 }
+
+/// The call coming back in through the mic (speakers, no headphones) is silenced before it
+/// becomes "You"; your own voice, and everything with headphones, gets through.
+final class EchoGateTests: XCTestCase {
+    var rng = SystemRandomNumberGenerator()
+
+    /// Speech-like audio: noise shaped by syllables of irregular length (80-350 ms) and
+    /// loudness, with short gaps, like real talk. `seconds` long.
+    func talk(_ seconds: Double, loud: Float = 0.2, seed: Int = 0) -> [Float] {
+        var out: [Float] = []
+        while out.count < Int(seconds * 16_000) {
+            let n = Int.random(in: 1_280...5_600), level = loud * Float.random(in: 0.4...1)
+            out += (0..<n).map { i in level * Float(sin(Double.pi * Double(i) / Double(n))) * Float.random(in: -1...1) }
+            out += (0..<Int.random(in: 0...1_600)).map { _ in Float.random(in: -0.0005...0.0005) }
+        }
+        return Array(out.prefix(Int(seconds * 16_000)))
+    }
+
+    func quiet(_ seconds: Double) -> [Float] { (0..<Int(seconds * 16_000)).map { _ in Float.random(in: -0.0005...0.0005) } }
+
+    /// Feeds the call and the mic in 100 ms buffers, the mic's copy `delay` s late and `leak` loud.
+    func run(_ gate: EchoGate, call: [Float], own: [Float], leak: Float, delay: Double = 0.08) -> [Float] {
+        let lag = Int(delay * 16_000)
+        var out: [Float] = []
+        let step = 1_600
+        for start in stride(from: 0, to: call.count, by: step) {
+            let end = min(start + step, call.count)
+            let t = Double(end) / 16_000
+            gate.system(Array(call[start..<end]), at: t)
+            let mic = (start..<end).map { i in (i >= lag ? leak * call[i - lag] : 0) + (i < own.count ? own[i] : 0) + Float.random(in: -0.0005...0.0005) }
+            out += gate.mic(mic, at: t + 0.02)  // mic buffers arrive a bit later
+        }
+        return out + gate.flush()
+    }
+
+    func energy(_ x: ArraySlice<Float>) -> Float { x.reduce(0) { $0 + $1 * $1 } }
+
+    func testPureEchoIsSilenced() {
+        let gate = EchoGate()
+        let call = talk(6)
+        let out = run(gate, call: call, own: [], leak: 0.25)
+        XCTAssertEqual(out.count, call.count)  // nothing lost or added
+        XCTAssertLessThan(energy(out[16_000...]), 0.05 * energy(ArraySlice(call.map { 0.25 * $0 })[16_000...]))
+        XCTAssertEqual(gate.delaySlots, 5)  // 80 ms of room delay + 20 ms later arrival
+        XCTAssertEqual(gate.leak, 0.25, accuracy: 0.1)
+    }
+
+    func testYourVoiceGetsThroughEvenOverTheCall() {
+        let gate = EchoGate()
+        let call = talk(8, loud: 0.2)
+        var own = quiet(8)
+        let mine = talk(3, loud: 0.15, seed: 2)
+        for i in 0..<mine.count { own[4 * 16_000 + i] = mine[i] }  // you talk from 4 s to 7 s, over them
+        let out = run(gate, call: call, own: own, leak: 0.2)
+        let yours = out[(4 * 16_000 + 4_800)..<(7 * 16_000)]
+        // A hard case on purpose: your voice only ~3x the echo (usually it's far more). Most of
+        // it must get through; any echo words that ride along are removed from the text.
+        XCTAssertGreaterThan(energy(yours), 0.6 * energy(ArraySlice(mine)[4_800...]))
+    }
+
+    func testHeadphonesLetEverythingThrough() {
+        let gate = EchoGate()
+        let call = talk(6)
+        var own = quiet(6)
+        let mine = talk(2, loud: 0.05, seed: 1)  // even a quiet voice
+        for i in 0..<mine.count { own[3 * 16_000 + i] = mine[i] }
+        let out = run(gate, call: call, own: own, leak: 0)  // no leak at all
+        XCTAssertGreaterThan(energy(out[(3 * 16_000 + 4_800)..<(5 * 16_000)]), 0.8 * energy(ArraySlice(mine)[4_800...]))
+        XCTAssertLessThan(gate.leak, 0.05)
+    }
+
+    func testNoCallMeansNothingIsTouched() {
+        let gate = EchoGate()
+        let own = talk(2, loud: 0.1)
+        let out = gate.mic(own, at: 2) + gate.flush()
+        XCTAssertEqual(out, own)
+        XCTAssertEqual(gate.silencedFrames, 0)
+    }
+
+    func testMicIsHeldBackBrieflyThenReleased() {
+        let gate = EchoGate()
+        XCTAssertEqual(gate.mic(Array(repeating: 0.1, count: 3_200), at: 0.2), [])  // 0.2 s < hold
+        XCTAssertEqual(gate.mic(Array(repeating: 0.1, count: 3_200), at: 0.4).count, 1_600)
+        XCTAssertEqual(gate.flush().count, 4_800)
+    }
+}

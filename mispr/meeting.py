@@ -13,6 +13,7 @@ Whisper's segments change speaker.
 
 import json
 import queue
+import time
 import re
 import sys
 import threading
@@ -21,8 +22,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .models import PREVIEW_MODEL, SPEAKER_MODEL, ensure_model
+from .models import PREVIEW_MODEL, SPEAKER_MODEL, VAD_MODEL, ensure_model
 from .threads import start_daemon
+
+
+def log(message):
+    """One line in the engine log (stderr), with the time."""
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", file=sys.stderr, flush=True)
 
 SUMMARY_PROMPT = """You write meeting notes from a transcript. "You" is the person taking notes; "Them" is everyone else on the call.
 Return only JSON with these keys:
@@ -45,6 +51,58 @@ def read_wav(path):
         if w.getsampwidth() != 2 or w.getnchannels() != 1:
             raise ValueError(f"expected 16-bit mono, got {w.getsampwidth() * 8}-bit x{w.getnchannels()}")
         return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+
+
+class SpeechDetector:
+    """How much real speech a clip has (Silero VAD via sherpa-onnx), loaded on first use.
+    Clicks, typing and background noise count as none. Returns None if the model is
+    unavailable, so callers keep the clip rather than lose words."""
+
+    MIN_SPEECH = 0.15  # seconds of speech for a clip to be worth transcribing
+    THRESHOLD, MIN_SPEECH_RUN, MIN_SILENCE = 0.5, 0.1, 0.25  # tested: clicks/typing 0 s, short "yeah"s kept
+
+    def __init__(self, spec=VAD_MODEL, ensure=ensure_model):
+        self.spec, self.ensure = spec, ensure
+        self._config = None
+        self._failed = False
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._config is None and not self._failed:
+            try:
+                import sherpa_onnx
+                config = sherpa_onnx.VadModelConfig()
+                config.silero_vad.model = str(self.ensure(self.spec))
+                config.silero_vad.threshold = self.THRESHOLD
+                config.silero_vad.min_speech_duration = self.MIN_SPEECH_RUN
+                config.silero_vad.min_silence_duration = self.MIN_SILENCE
+                config.sample_rate = 16_000
+                self._sherpa, self._config = sherpa_onnx, config
+            except Exception as e:
+                self._failed = True
+                print(f"mispr: speech detector unavailable, transcribing every clip: {e}", file=sys.stderr)
+        return self._config
+
+    def speech_seconds(self, audio, rate=16_000):
+        with self._lock:
+            config = self._load()
+            if config is None:
+                return None
+            vad = self._sherpa.VoiceActivityDetector(config, buffer_size_in_seconds=max(30, len(audio) / rate + 5))
+            window = config.silero_vad.window_size
+            for i in range(0, len(audio) - window + 1, window):
+                vad.accept_waveform(audio[i:i + window])
+            vad.flush()
+            total = 0
+            while not vad.empty():
+                total += len(vad.front.samples)
+                vad.pop()
+        return total / rate
+
+    def has_speech(self, audio, rate=16_000):
+        """False only when the detector is sure there's no speech (a click, typing, silence)."""
+        seconds = self.speech_seconds(audio, rate)
+        return seconds is None or seconds >= self.MIN_SPEECH
 
 
 class SpeakerEmbedder:
@@ -259,10 +317,13 @@ class MeetingWorker:
     """`preview` is the fast Whisper model for live text (its own thread); without one,
     previews share the final-text queue. `embedder` fingerprints voices."""
 
-    def __init__(self, transcriber, cleaner, send, start=start_daemon, preview=None, embedder=None):
+    def __init__(self, transcriber, cleaner, send, start=start_daemon, preview=None, embedder=None, speech=None,
+                 clock=time.monotonic):
         self.transcriber, self.cleaner, self.send = transcriber, cleaner, send
         self.preview = preview
         self.embedder = embedder
+        self.speech = speech  # SpeechDetector: clips with no real speech (clicks, typing) are skipped
+        self.clock = clock
         self._jobs = queue.Queue()
         self._preview_jobs = queue.Queue() if preview is not None else self._jobs
         self._voices = {}  # meeting id -> VoiceClusters for "them"
@@ -287,12 +348,18 @@ class MeetingWorker:
         if partial:
             return self._preview(id, path, stream, offset, delete)
 
+        queued = self.clock()
+
         def job():
             # [(offset, text, speaker)]: one line per speaker in this chunk. The last event for
             # a chunk carries last=True so the app knows the chunk is done.
             lines = []
+            started = self.clock()
             try:
                 audio = read_wav(path)
+                if self.speech is not None and not self.speech.has_speech(audio):
+                    log(f"meeting: {stream} {len(audio) / 16_000:.1f}s chunk skipped, no speech (a click or noise)")
+                    return
                 if stream == "them":
                     segments = self.transcriber.segments(audio)
                     if segments:
@@ -301,6 +368,8 @@ class MeetingWorker:
                 else:
                     text = self.transcriber.transcribe(audio)
                     lines = [(offset, text, 0)] if text else []
+                log(f"meeting: {stream} {len(audio) / 16_000:.1f}s chunk -> {len(lines)} line(s) "
+                    f"in {self.clock() - started:.2f}s, waited {started - queued:.2f}s in line")
             finally:
                 if delete:
                     Path(path).unlink(missing_ok=True)
@@ -330,7 +399,9 @@ class MeetingWorker:
             try:
                 if self.preview is not None:
                     self.preview.ensure_loaded()  # first meeting: fetch/load the small model here, off the final queue
-                text = (self.preview or self.transcriber).transcribe(read_wav(path_))
+                audio = read_wav(path_)
+                if self.speech is None or self.speech.has_speech(audio):
+                    text = (self.preview or self.transcriber).transcribe(audio)
             finally:
                 if delete_:
                     Path(path_).unlink(missing_ok=True)

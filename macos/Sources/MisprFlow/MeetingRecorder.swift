@@ -29,6 +29,10 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, Meeting
     private var segmenters = ["you": Segmenter(), "them": Segmenter()]
     private var writers: [String: StreamingWAV] = [:]
     private var levels = ["you": Float(0), "them": Float(0)]
+    /// Silences the call's sound coming back in through the mic (speakers, no headphones).
+    private(set) var echo = EchoGate()
+    /// A steady clock for matching the two streams in time (tests set their own).
+    var clock: () -> Double = { ProcessInfo.processInfo.systemUptime }
     private var lastLevelSent = Date.distantPast
 
     /// `saveTo`: folder for you.wav / them.wav (nil = keep nothing, e.g. Incognito).
@@ -71,6 +75,7 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, Meeting
         self.screen = nil
         Task { try? await screen?.stopCapture() }
         queue.sync {
+            for chunk in segmenters["you"]?.feed(echo.flush()) ?? [] { onChunk("you", chunk.start, chunk.samples) }
             for stream in ["you", "them"] {
                 if let chunk = segmenters[stream]?.flush() { onChunk(stream, chunk.start, chunk.samples) }
             }
@@ -133,8 +138,11 @@ final class MeetingRecorder: NSObject, SCStreamOutput, SCStreamDelegate, Meeting
 
     /// On `queue`: save, chunk, and meter one batch of 16 kHz samples.
     private func take(_ stream: String, _ samples: [Float]) {
-        writers[stream]?.append(samples)
-        for chunk in segmenters[stream]?.feed(samples) ?? [] { onChunk(stream, chunk.start, chunk.samples) }
+        writers[stream]?.append(samples)  // the saved recording keeps everything as heard
+        let now = clock()
+        if stream == "them" { echo.system(samples, at: now) }
+        let heard = stream == "you" ? echo.mic(samples, at: now) : samples  // echo silenced, a moment later
+        for chunk in segmenters[stream]?.feed(heard) ?? [] { onChunk(stream, chunk.start, chunk.samples) }
         let rms = (samples.reduce(0) { $0 + $1 * $1 } / Float(max(samples.count, 1))).squareRoot()
         levels[stream] = rms
         if Date().timeIntervalSince(lastLevelSent) > 0.1 {

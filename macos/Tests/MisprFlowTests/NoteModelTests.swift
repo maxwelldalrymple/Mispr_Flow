@@ -142,6 +142,11 @@ final class NoteModelTests: XCTestCase {
         XCTAssertEqual(t.sent.filter { $0.0 == .transcribeChunk }.count, 2)
     }
 
+    func testLiveTextRefreshesTwiceASecond() {
+        XCTAssertEqual(NoteModel.previewEvery, 0.5)
+        XCTAssertEqual(NoteModel.previewGrowth, 3_200)  // 0.2 s more speech before asking again
+    }
+
     func testRenameASpeaker() {
         note.start()
         say("them", 1, "Hello.", speaker: 2, voice: "male")
