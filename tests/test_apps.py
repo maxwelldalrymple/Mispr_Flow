@@ -16,7 +16,7 @@ class TestParse:
         ("Set the nickname for Terminal to T.", ("nickname", "t", "terminal")),
         ("Make a nick name L as Slack", ("nickname", "l", "slack")),
         ("Chrome.", ("switch", "chrome")),
-        ("Open the terminal, please.", ("switch", "terminal")),
+        ("Open the terminal, please.", ("open", "terminal")),
         ("Switch to Slack", ("switch", "slack")),
         ("Go to FaceTime app", ("switch", "facetime")),
         ("C", ("switch", "c")),
@@ -259,3 +259,51 @@ class TestConfidentMatching:
     ])
     def test_scores(self, said, running, expected):
         assert apps.match_scored(said, self.APPS, None, running) == expected
+
+
+class TestFolders:
+    @pytest.mark.parametrize("said,expected", [
+        ("Open folder Projects.", ("open_folder", "projects")), ("open the downloads folder", ("open_folder", "downloads")),
+        ("go to my voice recordings folder", ("open_folder", "voice recordings")), ("Open Budget.", ("open", "budget")),
+        ("open the terminal please", ("open", "terminal")),
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def tree(self, tmp_path):
+        for d in ("Work/Projects/Mispr_Flow/voice-recordings", "Projects", ".hidden/Taxes", "Library/Taxes", "Docs/Old/Taxes"):
+            (tmp_path / d).mkdir(parents=True)
+        (tmp_path / "Docs" / "Budget 2026.xlsx").write_text("x")
+        (tmp_path / "Docs" / "budget").mkdir()
+        return tmp_path
+
+    def test_highest_level_wins_and_names_are_loose(self, tmp_path):
+        root = self.tree(tmp_path)
+        assert apps.find_in(root, "projects", files=False) == str(root / "Projects")  # not Work/Projects
+        assert apps.find_in(root, "mispr flow", files=False) == str(root / "Work/Projects/Mispr_Flow")
+        assert apps.find_in(root, "voice recordings", files=False).endswith("voice-recordings")
+
+    def test_skips_hidden_and_library(self, tmp_path):
+        root = self.tree(tmp_path)
+        assert apps.find_in(root, "taxes", files=False) == str(root / "Docs/Old/Taxes")
+
+    def test_files_by_name_without_extension_and_folders_first(self, tmp_path):
+        root = self.tree(tmp_path)
+        assert apps.find_in(root / "Docs", "budget") == str(root / "Docs/budget")  # a folder named exactly that
+        assert apps.find_in(root / "Docs", "budget 2026") == str(root / "Docs/Budget 2026.xlsx")
+        assert apps.find_in(root, "nope") is None and apps.find_in(root, "...") is None
+
+    def test_gives_up_after_its_time_budget(self, tmp_path):
+        root = self.tree(tmp_path)
+        ticks = iter(range(100))
+        assert apps.find_in(root, "voice recordings", budget=1, clock=lambda: next(ticks)) is None
+
+    def test_finder_scripts(self):
+        ran = []
+        assert apps.finder_folder(lambda cmd: ran.append(cmd[2]) or "/Users/me/Docs/") == "/Users/me/Docs"
+        assert apps.finder_folder(lambda cmd: "") is None  # no window, or not allowed
+        apps.finder_go('/Users/me/My "Quoted" Folder', lambda cmd: ran.append(cmd[2]))
+        assert 'POSIX file "/Users/me/My \\"Quoted\\" Folder"' in ran[-1]
+
+    def test_finder_permission_check_never_prompts(self):
+        assert apps.finder_control() in (True, False, None)

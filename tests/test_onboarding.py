@@ -13,7 +13,7 @@ class Perms:
     """Controllable permissions: `granted[key]` drives check(); requests are recorded."""
 
     def __init__(self, granted=None, prompt_available=True):
-        self.granted = {"microphone": False, "accessibility": False, "screen_audio": False}
+        self.granted = {"microphone": False, "accessibility": False, "screen_audio": False, "finder": False}
         self.granted.update(granted or {})
         self.requests = []
         self.prompt_available = prompt_available
@@ -58,14 +58,14 @@ def opened_panes(monkeypatch):
 class TestDefaultPermissions:
     def test_keys_and_requirements(self):
         perms = {p.key: p for p in o.default_permissions()}
-        assert list(perms) == ["microphone", "accessibility", "screen_audio"]
+        assert list(perms) == ["microphone", "accessibility", "screen_audio", "finder"]
         assert perms["microphone"].required and perms["accessibility"].required
         assert not perms["screen_audio"].required  # only for meeting notes
 
     def test_settings_panes(self):
         panes = {p.key: p.pane for p in o.default_permissions()}
         assert panes == {"microphone": "Privacy_Microphone", "accessibility": "Privacy_Accessibility",
-                         "screen_audio": "Privacy_ScreenCapture"}
+                         "screen_audio": "Privacy_ScreenCapture", "finder": "Privacy_Automation"}
 
     def test_every_permission_explains_why(self):
         for p in o.default_permissions():
@@ -203,7 +203,7 @@ class TestNavigation:
 
     def test_granted_reports_every_permission(self):
         flow, perms, _ = make_flow(Perms({"screen_audio": True}))
-        assert flow.granted() == {"microphone": False, "accessibility": False, "screen_audio": True}
+        assert flow.granted() == {"microphone": False, "accessibility": False, "screen_audio": True, "finder": False}
 
     def test_finish_marks_onboarded_and_saves(self):
         flow, _, _ = make_flow()
@@ -441,3 +441,10 @@ def test_dark_mode_matches_golden_image(window, golden_image):
     go(w, PERMISSIONS)
     pixels, rep = snapshot(w, dark=True)
     golden_image("setup_permissions_dark", pixels, rep)
+
+
+def test_setup_offers_finder_control_as_optional():
+    from mispr import onboarding
+    finder = next(p for p in onboarding.default_permissions() if p.key == "finder")
+    assert not finder.required and finder.pane == "Privacy_Automation" and finder.title == "Control Finder"
+    assert finder.check() in (True, False)

@@ -1695,6 +1695,45 @@ class TestAppSwitcher:
         finally:
             del self.APPS["Logic Pro"]
 
+    @pytest.fixture
+    def files(self, monkeypatch, tmp_path):
+        log = {"open": [], "go": []}
+        monkeypatch.setattr(W, "start_daemon", lambda target, name: target())
+        monkeypatch.setattr(W.apps, "open_path", log["open"].append)
+        monkeypatch.setattr(W.apps, "finder_go", log["go"].append)
+        (tmp_path / "Docs" / "Taxes").mkdir(parents=True)
+        (tmp_path / "Docs" / "Budget.xlsx").write_text("x")
+        log["root"] = tmp_path
+        return log
+
+    def in_finder(self, monkeypatch, folder):
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"app": "Finder", "bundle_id": "com.apple.finder"})
+        monkeypatch.setattr(W.apps, "finder_folder", lambda: str(folder))
+
+    def test_open_folder_searches_from_home(self, controller, clock, fronted, files, monkeypatch):
+        monkeypatch.setattr(W.Path, "home", lambda: files["root"])
+        self.say(controller, clock, "Open folder taxes")
+        assert files["open"] == [str(files["root"] / "Docs/Taxes")] and controller.notice[0] == "Opened Taxes"
+        self.say(controller, clock, "open the nowhere folder")
+        assert controller.notice[0] == "Couldn't find a “nowhere” folder"
+
+    def test_in_finder_open_goes_into_folders_and_opens_files(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"])
+        self.say(controller, clock, "Open taxes")  # a folder below: same Finder window
+        assert files["go"] == [str(files["root"] / "Docs/Taxes")]
+        self.say(controller, clock, "Open budget")  # a file: its app
+        assert files["open"] == [str(files["root"] / "Docs/Budget.xlsx")]
+
+    def test_in_finder_not_found_says_where(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"] / "Docs")
+        self.say(controller, clock, "open receipts")
+        assert controller.notice[0] == "“receipts” can't be found in Docs" and fronted == []
+
+    def test_in_finder_open_an_app_still_works(self, controller, clock, fronted, files, monkeypatch):
+        self.in_finder(monkeypatch, files["root"])
+        self.say(controller, clock, "Open Chrome")
+        assert fronted == ["/A/Google Chrome.app"]
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()

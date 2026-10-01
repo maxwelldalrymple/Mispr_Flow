@@ -70,8 +70,110 @@ def parse(text):
     m = _SIZE.match(said)
     if m and 10 <= int(m["pct"]) <= 100:  # "chrome 80%"
         return ("size", _FILLER.sub("", m["app"]).strip(), int(m["pct"]))
+    m = _OPEN_FOLDER.match(said)
+    if m:  # "open folder projects", "open the downloads folder"
+        return ("open_folder", m["a"] or m["b"])
+    m = _OPEN.match(said)
+    if m:  # "open budget": in Finder, something in this folder; elsewhere, an app
+        return ("open", m["name"])
     name = _FILLER.sub("", said).strip()
     return ("switch", name) if name else None
+
+
+_OPEN_FOLDER = re.compile(r"^(?:please\s+)?(?:open|show|go\s+to)\s+(?:the\s+|my\s+)?(?:folder\s+(?P<a>.+)|(?P<b>.+?)\s+folder)$")
+_OPEN = re.compile(r"^(?:please\s+)?open\s+(?:the\s+|up\s+)?(?P<name>.+?)(?:\s+please)?$")
+
+
+# --- Folders and files -------------------------------------------------------------------
+
+SKIP_DIRS = {"Library", "node_modules", "__pycache__", "venv", ".venv", "site-packages", "build", "dist",
+             "DerivedData", "Pods", "target"}
+
+
+def name_key(name):
+    """Folder/file names as spoken: "Mispr_Flow" / "voice-recordings" -> "misprflow" / "voicerecordings"."""
+    return re.sub(r"[\W_]+", "", name.lower())
+
+
+def find_in(root, name, files=True, max_depth=8, budget=1.5, clock=None):
+    """The shallowest folder (or file, by name with or without its extension) under `root` whose
+    name sounds like `name`, searching level by level so duplicates resolve to the highest one.
+    Hidden folders, Library and build/dependency folders are skipped. None if not found in time."""
+    import time as _time
+    clock = clock or _time.monotonic
+    want = name_key(name)
+    if not want:
+        return None
+    deadline = clock() + budget
+    level = [str(root)]
+    for _ in range(max_depth):
+        found, below = [], []
+        for folder in level:
+            try:
+                entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
+            except OSError:
+                continue
+            for e in entries:
+                if e.name.startswith("."):
+                    continue
+                is_dir = e.is_dir(follow_symlinks=False)
+                stem = e.name if is_dir else os.path.splitext(e.name)[0]
+                if (is_dir or files) and want in (name_key(e.name), name_key(stem)):
+                    found.append(e.path)
+                if is_dir and e.name not in SKIP_DIRS and not e.name.endswith((".app", ".photoslibrary", ".bundle")):
+                    below.append(e.path)
+            if clock() > deadline:
+                return found[0] if found else None
+        if found:
+            return min(found, key=lambda p: (not os.path.isdir(p), len(p)))  # folders first
+        level = below
+        if not level:
+            return None
+    return None
+
+
+def finder_control(ask=False):
+    """May Mispr Flow tell Finder what to show ("open folder")? True / False, or None when
+    macOS hasn't asked yet. With `ask`, macOS shows its one-time prompt if it hasn't."""
+    import ctypes
+    cs = ctypes.CDLL("/System/Library/Frameworks/CoreServices.framework/CoreServices")
+
+    class Desc(ctypes.Structure):
+        _fields_ = [("descriptorType", ctypes.c_uint32), ("dataHandle", ctypes.c_void_p)]
+
+    four = lambda code: int.from_bytes(code.encode(), "big")
+    bundle = b"com.apple.finder"
+    desc = Desc()
+    if cs.AECreateDesc(four("bund"), bundle, len(bundle), ctypes.byref(desc)) != 0:
+        return None
+    try:
+        cs.AEDeterminePermissionToAutomateTarget.restype = ctypes.c_int32
+        status = cs.AEDeterminePermissionToAutomateTarget(ctypes.byref(desc), four("****"), four("****"), bool(ask))
+    finally:
+        cs.AEDisposeDesc(ctypes.byref(desc))
+    return {0: True, -1743: False}.get(status)  # -1744: not decided yet
+
+
+def _quote(path):
+    return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def finder_folder(run=None):
+    """The folder shown in the front Finder window, or None (no window, or not allowed)."""
+    out = _osascript('tell application "Finder" to if (count of Finder windows) > 0 then '
+                     'get POSIX path of (target of front Finder window as alias)', run)
+    return (out.rstrip("/") or "/") if out.startswith("/") else None
+
+
+def finder_go(path, run=None):
+    """Show `path` in the front Finder window (same window, like double-clicking a folder)."""
+    _osascript(f'tell application "Finder" to set target of front Finder window to (POSIX file "{_quote(path)}" as alias)', run)
+
+
+def open_path(path, run=None):
+    """Open a folder in a new Finder window, or a file in its usual app."""
+    import subprocess
+    (run or (lambda cmd: subprocess.run(cmd, capture_output=True, timeout=5)))(["open", path])
 
 
 # Sound: media keys, volume, mic, tab muting.

@@ -42,7 +42,7 @@ from AppKit import (
 )
 from Foundation import NSObject
 
-from . import hotkey, settings as settings_mod, sounds
+from . import apps, hotkey, settings as settings_mod, sounds
 
 WELCOME, PERMISSIONS, MODELS, READY = range(4)
 STEP_NAMES = ("Welcome", "Permissions", "Models", "Ready")
@@ -119,6 +119,13 @@ def default_permissions():
             "screen_audio", "Screen & System Audio",
             "For meeting notes: hears the other people on a call. You may need to reopen Mispr Flow after allowing it.",
             "waveform.badge.mic", False, screen_audio_granted, request_screen_audio, "Privacy_ScreenCapture",
+        ),
+        Permission(
+            "finder", "Control Finder",
+            "For “open folder …” by voice: shows the folder you say in Finder.",
+            "folder", False, lambda: apps.finder_control() is True, lambda: apps.finder_control(ask=True),
+            "Privacy_Automation",
+            prompt_available=lambda: apps.finder_control() is None,
         ),
     ]
 

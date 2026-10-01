@@ -20,6 +20,7 @@ the focused app. The meeting notetaker is still a stub with a simulated waveform
 
 import math
 import os
+from pathlib import Path
 from datetime import datetime
 import random
 import sys
@@ -58,6 +59,7 @@ from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
 from .paste import ENTER_DELAY, copy_text, paste_text, press_enter, type_text
+from .threads import start_daemon
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -638,6 +640,30 @@ class WidgetController:
             return (target, path) if path else None
 
         kind = command[0]
+        if kind == "open_folder":  # "open folder projects": the highest-level match under your home folder
+            name = command[1]
+            return self._in_background(lambda: apps.find_in(Path.home(), name, files=False),
+                                       lambda path: (apps.open_path(path), self._switch_done(f"Opened {Path(path).name}"))
+                                       if path else self._switch_failed(f"Couldn't find a “{name}” folder"))
+        if kind == "open":
+            name = command[1]
+            if (context.frontmost(include_page=False) or {}).get("bundle_id") == "com.apple.finder":
+                folder = apps.finder_folder()
+                if folder:  # in Finder: a folder or file inside the one you're looking at
+                    def opened(path):
+                        if path is None:
+                            hit = find(name)  # "open chrome" while in Finder still opens Chrome
+                            if hit and apps.match_scored(name, {**installed, **running}, self.settings.app_nicknames, running)[1]:
+                                apps.bring_to_front(hit[1])
+                                return self._switch_done(f"→ {hit[0]}")
+                            return self._switch_failed(f"“{name}” can't be found in {Path(folder).name or folder}")
+                        if os.path.isdir(path):
+                            apps.finder_go(path)
+                        else:
+                            apps.open_path(path)
+                        self._switch_done(f"Opened {Path(path).name}")
+                    return self._in_background(lambda: apps.find_in(folder, name), opened)
+            command, kind = ("switch", name), "switch"  # elsewhere "open X" means the app X
         if kind == "media":
             apps.press_media(command[1])
             return self._switch_done({"play": "Play / pause", "next": "Next", "previous": "Previous"}[command[1]])
@@ -742,6 +768,11 @@ class WidgetController:
         pid = apps.pid_for(path)
         if (pid is None or not apps.window_action(pid, "frame", frame)) and tries > 1:
             AppHelper.callLater(0.75, self._place, path, frame, tries - 1)
+
+    def _in_background(self, work, done):
+        """Run a search off the main thread, then `done(result)` back on it."""
+        self.show_notice("Looking…", 5, (IDLE, HOVER))
+        start_daemon(lambda: AppHelper.callAfter(done, work()), "find-folder")
 
     def _switch_done(self, message):
         self.sounds.play(sounds.PASTE)

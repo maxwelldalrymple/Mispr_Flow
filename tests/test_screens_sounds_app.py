@@ -528,4 +528,4 @@ class TestSetupWiring:
         assert not flow.models_ready() and flow.settings.onboarded is True
         flow.retry_models()
         assert retries == [True]
-        assert [p.key for p in flow.permissions] == ["microphone", "accessibility", "screen_audio"]
+        assert [p.key for p in flow.permissions] == ["microphone", "accessibility", "screen_audio", "finder"]
