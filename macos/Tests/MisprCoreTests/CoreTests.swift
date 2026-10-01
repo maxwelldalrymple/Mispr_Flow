@@ -644,3 +644,65 @@ final class MeetingTests: XCTestCase {
         XCTAssertEqual(meetings[0].durationText, "12 min")
     }
 }
+
+final class MeetingDetectorTests: XCTestCase {
+    typealias W = SystemSnapshot.WindowTitle
+
+    func detect(_ s: SystemSnapshot) -> MeetingSource { MeetingDetector.detect(s).source }
+
+    func testZoomAppInAMeeting() {
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["us.zoom.xos"], processNames: ["CptHost"])), .zoom)
+        XCTAssertEqual(detect(.init(windowTitles: [W("us.zoom.xos", "Zoom Meeting")])), .zoom)
+    }
+
+    func testZoomOpenButNotInACallIsInPerson() {
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["us.zoom.xos"], windowTitles: [W("us.zoom.xos", "Zoom Workplace")])), .inPerson)
+    }
+
+    func testGoogleMeetTabWithName() {
+        let d = MeetingDetector.detect(.init(windowTitles: [W("com.google.Chrome", "Meet – Weekly product sync - Google Chrome")]))
+        XCTAssertEqual(d.source, .googleMeet)
+        XCTAssertEqual(d.title, "Weekly product sync")
+    }
+
+    func testMeetCodeIsNotAName() {
+        let d = MeetingDetector.detect(.init(windowTitles: [W("com.apple.Safari", "Meet - abc-defg-hij")]))
+        XCTAssertEqual(d.source, .googleMeet)
+        XCTAssertEqual(d.title, "")
+    }
+
+    func testBrowserCallsNeedTheMic() {
+        let teams = W("com.google.Chrome", "Chat | Microsoft Teams")
+        XCTAssertEqual(detect(.init(windowTitles: [teams], micInUse: true)), .teams)
+        XCTAssertEqual(detect(.init(windowTitles: [teams], micInUse: false)), .inPerson)  // just reading chat
+    }
+
+    func testCallAppsNeedTheMic() {
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["com.apple.FaceTime"], micInUse: true)), .facetime)
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["com.apple.FaceTime"], micInUse: false)), .inPerson)
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["com.microsoft.teams2"], micInUse: true)), .teams)
+        XCTAssertEqual(detect(.init(runningBundleIDs: ["us.zoom.xos"], micInUse: true)), .zoom)
+    }
+
+    func testSlackHuddle() {
+        XCTAssertEqual(detect(.init(windowTitles: [W("com.tinyspeck.slackmacgap", "Huddle with Priya")])), .slack)
+    }
+
+    func testZoomBeatsAnIdleMeetTab() {
+        let s = SystemSnapshot(processNames: ["CptHost"], windowTitles: [W("com.google.Chrome", "Meet – Old call")])
+        XCTAssertEqual(detect(s), .zoom)
+    }
+
+    func testUnknownMicUserIsACall() {
+        let d = MeetingDetector.detect(.init(runningBundleIDs: ["com.google.Chrome"], micInUse: true))
+        XCTAssertEqual(d.source, .otherCall)
+        XCTAssertTrue(d.source.needsSystemAudio)
+    }
+
+    func testNothingIsInPerson() {
+        let d = MeetingDetector.detect(.init())
+        XCTAssertEqual(d.source, .inPerson)
+        XCTAssertFalse(d.source.needsSystemAudio)
+        XCTAssertTrue(MeetingSource.zoom.needsSystemAudio)
+    }
+}

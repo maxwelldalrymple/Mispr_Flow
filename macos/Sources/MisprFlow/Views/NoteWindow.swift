@@ -24,6 +24,7 @@ final class NoteWindowController {
         let window = self.window ?? makeWindow()
         self.window = window
         model.note.refreshPermission()
+        model.note.startDetecting()
         if window.isVisible {
             window.setFrame(target, display: true, animate: true)
         } else {
@@ -50,6 +51,7 @@ final class NoteWindowController {
             window.animator().setFrame(off, display: true)
             window.animator().alphaValue = 0
         }, completionHandler: { window.orderOut(nil) })
+        model.note.stopDetecting()
     }
 
     private func makeWindow() -> NSWindow {
@@ -84,7 +86,38 @@ final class NoteModel: ObservableObject {
     @Published var screenAudioAllowed = CGPreflightScreenCaptureAccess()
     @Published var tipDismissed = false
     @Published private(set) var startedAt: Date?
+    /// What the Mac says the meeting is (refreshed until Start), and the user's pick, if any.
+    @Published private(set) var detection = MeetingDetection(source: .inPerson, title: nil, evidence: "Checking…")
+    @Published var chosenSource: MeetingSource?
     private var poll: Timer?
+    private var detectTimer: Timer?
+
+    var source: MeetingSource { chosenSource ?? detection.source }
+    var needsPermission: Bool { source.needsSystemAudio && !screenAudioAllowed }
+
+    /// Look for a call now and every 3 s while the window is open and not recording.
+    func startDetecting() {
+        detect()
+        detectTimer?.invalidate()
+        detectTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.detect() }
+    }
+
+    func stopDetecting() {
+        detectTimer?.invalidate()
+        detectTimer = nil
+    }
+
+    private func detect() {
+        guard startedAt == nil else { return }  // fixed once the meeting starts
+        DispatchQueue.global(qos: .utility).async {
+            let found = MeetingDetector.detect(SystemProbe.snapshot())
+            DispatchQueue.main.async {
+                guard self.startedAt == nil else { return }
+                self.detection = found
+                if self.title.isEmpty, let name = found.title, !name.isEmpty { self.title = name }
+            }
+        }
+    }
 
     func refreshPermission() {
         screenAudioAllowed = CGPreflightScreenCaptureAccess()
@@ -106,6 +139,7 @@ final class NoteModel: ObservableObject {
 
     func meetingChanged(_ active: Bool) {
         startedAt = active ? (startedAt ?? Date()) : nil
+        if !active { chosenSource = nil }
     }
 }
 
@@ -123,11 +157,12 @@ struct NoteView: View {
             TextField("New note", text: Binding(get: { note.title }, set: { note.title = $0 }))
                 .textFieldStyle(.plain).font(Theme.display(34))
                 .padding(.horizontal, 26).padding(.top, 14)
-            tabs.padding(.top, 18)
+            SourceChip().padding(.horizontal, 26).padding(.top, 8)
+            tabs.padding(.top, 14)
             Divider().overlay(Theme.cardStroke)
             ZStack {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                if !note.screenAudioAllowed && !setupDismissed {
+                if note.needsPermission && !setupDismissed {
                     Color.black.opacity(0.18).ignoresSafeArea()
                     SetupCard(back: { setupDismissed = true }, turnOn: note.requestPermission)
                         .padding(.horizontal, 18).padding(.top, 2)
@@ -278,8 +313,8 @@ struct NoteView: View {
                 .overlay(Capsule().stroke(Theme.cardStroke))
             }
             .buttonStyle(.plain)
-            .disabled(!note.screenAudioAllowed && !recording)
-            .opacity(!note.screenAudioAllowed && !recording ? 0.5 : 1)
+            .disabled(note.needsPermission && !recording)
+            .opacity(note.needsPermission && !recording ? 0.5 : 1)
             .help(recording ? "Stop the meeting" : "Start recording the meeting")
             HStack {
                 Text("Ask anything").font(.system(size: 14)).foregroundStyle(Theme.secondary)
@@ -414,5 +449,43 @@ struct DarkButton: ButtonStyle {
             .padding(.horizontal, 14).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.text))
             .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
+/// "Google Meet · detected": what kind of meeting this is. Click to pick another.
+struct SourceChip: View {
+    @EnvironmentObject var note: NoteModel
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        let recording = model.engine.meetingActive
+        Menu {
+            Button("Detect automatically") { note.chosenSource = nil }
+            Divider()
+            ForEach(MeetingSource.allCases) { source in
+                Button { note.chosenSource = source } label: {
+                    Label(source.rawValue, systemImage: source.symbol)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: note.source.symbol).font(.system(size: 11))
+                Text(note.source.rawValue).font(.system(size: 12, weight: .medium))
+                Text(note.chosenSource == nil ? "· detected" : "· chosen").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                if !note.source.needsSystemAudio {
+                    Text("· mic only").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                }
+                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(Theme.secondary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Capsule().fill(Theme.card))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .disabled(recording)
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        note.chosenSource == nil ? note.detection.evidence : "You chose this. Pick Detect automatically to go back."
     }
 }
