@@ -49,7 +49,16 @@ final class AppModel: ObservableObject {
         }.store(in: &cancellables)
         engine.saved.sink { [weak self] _ in self?.reloadRecordings() }.store(in: &cancellables)
         profile.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
-        engine.noteRequested.sink { [weak self] in self?.openNote() }.store(in: &cancellables)
+        engine.noteRequested.sink { [weak self] start in
+            guard let self else { return }
+            self.openNote()
+            if start { self.note.toggle() }  // ⌥M / ◉: start, or stop if already recording
+        }.store(in: &cancellables)
+        engine.meetingEvents.sink { [weak self] event in self?.note.handle(event) }.store(in: &cancellables)
+        note.engine = engine
+        note.meetingsDir = { [weak self] in self?.meetingsDir }
+        note.incognito = { [weak self] in self?.setting("incognito") ?? false }
+        note.onSaved = { [weak self] in self?.reloadRecordings() }
         engine.$meetingActive.sink { [weak self] active in self?.note.meetingChanged(active) }.store(in: &cancellables)
     }
 

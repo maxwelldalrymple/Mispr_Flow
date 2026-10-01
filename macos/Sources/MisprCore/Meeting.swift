@@ -34,6 +34,12 @@ public struct Meeting: Codable, Identifiable, Hashable {
         public var owner: String
         public var task: String
         public var due: String?
+
+        public init(owner: String, task: String, due: String?) {
+            self.owner = owner
+            self.task = task
+            self.due = due
+        }
     }
 
     public struct Summary: Codable, Hashable {
@@ -46,6 +52,26 @@ public struct Meeting: Codable, Identifiable, Hashable {
             case overview, decisions
             case actionItems = "action_items"
             case openQuestions = "open_questions"
+        }
+
+        public init(overview: String, decisions: [String], actionItems: [ActionItem], openQuestions: [String]) {
+            self.overview = overview
+            self.decisions = decisions
+            self.actionItems = actionItems
+            self.openQuestions = openQuestions
+        }
+
+        /// From the engine's summary event.
+        public init?(json: Any?) {
+            guard let d = json as? [String: Any] else { return nil }
+            overview = d["overview"] as? String ?? ""
+            decisions = d["decisions"] as? [String] ?? []
+            openQuestions = d["open_questions"] as? [String] ?? []
+            actionItems = (d["action_items"] as? [[String: Any]] ?? []).compactMap { item in
+                guard let task = item["task"] as? String else { return nil }
+                let due = (item["due"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                return ActionItem(owner: item["owner"] as? String ?? "You", task: task, due: due)
+            }
         }
     }
 

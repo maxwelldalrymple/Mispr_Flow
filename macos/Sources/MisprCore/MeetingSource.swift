@@ -39,7 +39,7 @@ public struct SystemSnapshot: Equatable {
     public var windowTitles: [WindowTitle]
     public var micInUse: Bool
 
-    public struct WindowTitle: Equatable {
+    public struct WindowTitle: Equatable, Hashable {
         public var bundleID: String
         public var title: String
 
@@ -64,11 +64,14 @@ public struct MeetingDetection: Equatable {
     public var title: String?
     /// Why we think so, shown on hover ("Zoom's meeting process is running").
     public var evidence: String
+    /// The call's window, when known (for Split screen).
+    public var window: SystemSnapshot.WindowTitle?
 
-    public init(source: MeetingSource, title: String?, evidence: String) {
+    public init(source: MeetingSource, title: String?, evidence: String, window: SystemSnapshot.WindowTitle? = nil) {
         self.source = source
         self.title = title
         self.evidence = evidence
+        self.window = window
     }
 }
 
@@ -83,24 +86,23 @@ public enum MeetingDetector {
 
     public static func detect(_ s: SystemSnapshot) -> MeetingDetection {
         // 1. Zoom app: its meeting process exists only during a call.
-        if !s.processNames.isDisjoint(with: zoomMeetingProcesses) {
-            return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom's meeting window is open")
-        }
-        if s.windowTitles.contains(where: { $0.bundleID == "us.zoom.xos" && ($0.title == "Zoom Meeting" || $0.title.hasPrefix("Zoom Webinar")) }) {
-            return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom's meeting window is open")
+        let zoomWindow = s.windowTitles.first { $0.bundleID == "us.zoom.xos" && ($0.title == "Zoom Meeting" || $0.title.hasPrefix("Zoom Webinar")) }
+        if !s.processNames.isDisjoint(with: zoomMeetingProcesses) || zoomWindow != nil {
+            return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom's meeting window is open",
+                                    window: zoomWindow ?? .init("us.zoom.xos", "Zoom Meeting"))
         }
         // 2. Calls in a browser tab (window titles show the active tab).
         for w in s.windowTitles where browsers.contains(w.bundleID) {
             if let title = meetTitle(w.title) {
-                return MeetingDetection(source: .googleMeet, title: title, evidence: "A Google Meet tab is open")
+                return MeetingDetection(source: .googleMeet, title: title, evidence: "A Google Meet tab is open", window: w)
             }
         }
         if s.micInUse {
             for w in s.windowTitles where browsers.contains(w.bundleID) {
                 let t = w.title.lowercased()
-                if t.contains("microsoft teams") { return MeetingDetection(source: .teams, title: nil, evidence: "Teams is open in the browser and the mic is in use") }
-                if t.contains("zoom") { return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom is open in the browser and the mic is in use") }
-                if t.contains("webex") { return MeetingDetection(source: .webex, title: nil, evidence: "Webex is open in the browser and the mic is in use") }
+                if t.contains("microsoft teams") { return MeetingDetection(source: .teams, title: nil, evidence: "Teams is open in the browser and the mic is in use", window: w) }
+                if t.contains("zoom") { return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom is open in the browser and the mic is in use", window: w) }
+                if t.contains("webex") { return MeetingDetection(source: .webex, title: nil, evidence: "Webex is open in the browser and the mic is in use", window: w) }
             }
         }
         // 3. Call apps that don't announce calls: running + the mic busy.
@@ -110,12 +112,14 @@ public enum MeetingDetector {
             (["com.apple.FaceTime"], .facetime),
             (["com.hnc.Discord"], .discord),
         ]
-        if s.windowTitles.contains(where: { $0.bundleID == "com.tinyspeck.slackmacgap" && $0.title.localizedCaseInsensitiveContains("huddle") }) {
-            return MeetingDetection(source: .slack, title: nil, evidence: "A Slack huddle window is open")
+        if let huddle = s.windowTitles.first(where: { $0.bundleID == "com.tinyspeck.slackmacgap" && $0.title.localizedCaseInsensitiveContains("huddle") }) {
+            return MeetingDetection(source: .slack, title: nil, evidence: "A Slack huddle window is open", window: huddle)
         }
         if s.micInUse {
             for (ids, source) in apps where !s.runningBundleIDs.isDisjoint(with: ids) {
-                return MeetingDetection(source: source, title: nil, evidence: "\(source.rawValue) is running and the mic is in use")
+                let bundle = ids.first { s.runningBundleIDs.contains($0) }!
+                return MeetingDetection(source: source, title: nil, evidence: "\(source.rawValue) is running and the mic is in use",
+                                        window: .init(bundle, ""))  // "" = the app's front window
             }
             if s.runningBundleIDs.contains("us.zoom.xos") {
                 return MeetingDetection(source: .zoom, title: nil, evidence: "Zoom is running and the mic is in use")

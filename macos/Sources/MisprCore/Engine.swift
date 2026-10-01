@@ -39,8 +39,10 @@ public final class Engine: ObservableObject {
     public let tried = PassthroughSubject<TryResult, Never>()
     /// Fires on the main thread for each saved dictation.
     public let saved = PassthroughSubject<URL, Never>()
-    /// The widget's note button was clicked.
-    public let noteRequested = PassthroughSubject<Void, Never>()
+    /// The widget's note button or ⌥M (true: start or stop recording too).
+    public let noteRequested = PassthroughSubject<Bool, Never>()
+    /// Meeting results: transcribed chunks, summaries, answers.
+    public let meetingEvents = PassthroughSubject<EngineEvent, Never>()
     /// A meeting is being recorded (the widget shows its meeting pill).
     @Published public private(set) var meetingActive = false
     /// The engine exited cleanly by itself (e.g. Quit from its menu-bar icon): quit the app too.
@@ -136,8 +138,10 @@ public final class Engine: ObservableObject {
             tried.send(result)
         case let .saved(url):
             saved.send(url)
-        case .openNote:
-            noteRequested.send()
+        case let .openNote(start):
+            noteRequested.send(start)
+        case .chunkText, .summary, .answer:
+            meetingEvents.send(event)
         case let .meeting(active):
             meetingActive = active
         case .unknown:

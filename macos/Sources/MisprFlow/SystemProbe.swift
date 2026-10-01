@@ -66,3 +66,44 @@ enum SystemProbe {
         return running != 0
     }
 }
+
+/// Split screen: the call's window fills the left of the screen and the note sits on the right.
+enum WindowArranger {
+    /// Returns false when the call's window can't be found or moved.
+    @discardableResult
+    static func split(meeting: SystemSnapshot.WindowTitle, note: NSWindow, noteWidth: CGFloat = 470, gap: CGFloat = 8) -> Bool {
+        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == meeting.bundleID }),
+              let window = axWindow(pid: app.processIdentifier, title: meeting.title) else { return false }
+        let screen = note.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let visible = screen.visibleFrame
+        let noteFrame = NSRect(x: visible.maxX - noteWidth - gap, y: visible.minY + gap,
+                               width: noteWidth, height: visible.height - 2 * gap)
+        note.setFrame(noteFrame, display: true, animate: true)
+        // Accessibility uses top-left coordinates measured from the primary screen's top.
+        let primaryTop = NSScreen.screens[0].frame.maxY
+        var origin = CGPoint(x: visible.minX + gap, y: primaryTop - visible.maxY + gap)
+        var size = CGSize(width: noteFrame.minX - visible.minX - 2 * gap, height: visible.height - 2 * gap)
+        guard let position = AXValueCreate(.cgPoint, &origin), let dimensions = AXValueCreate(.cgSize, &size) else { return false }
+        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, position)
+        AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, dimensions)
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        app.activate()
+        note.orderFront(nil)
+        return true
+    }
+
+    /// The window with this title (or the app's main/first window when the title is empty).
+    static func axWindow(pid: pid_t, title: String) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement], !windows.isEmpty else { return nil }
+        guard !title.isEmpty else { return windows.first }
+        return windows.first { window in
+            var t: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &t)
+            return (t as? String) == title
+        } ?? windows.first
+    }
+}

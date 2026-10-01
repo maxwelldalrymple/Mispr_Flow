@@ -17,7 +17,14 @@ final class EngineProtocolTests: XCTestCase {
     }
 
     func testNoteAndMeetingEvents() {
-        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note"}"#), .openNote)
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note"}"#), .openNote(start: false))
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "open_note", "start": true}"#), .openNote(start: true))
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "chunk_text", "id": "m", "stream": "them", "speaker": 2, "offset": 3.5, "text": "Hi."}"#),
+                       .chunkText(meeting: "m", stream: "them", speaker: 2, offset: 3.5, text: "Hi."))
+        let summary = EngineEvent.parse(#"@mispr {"event": "summary", "id": "m", "summary": {"title": "Plan", "overview": "O", "decisions": ["D"], "action_items": [{"owner": "You", "task": "T", "due": ""}], "open_questions": []}}"#)
+        XCTAssertEqual(summary, .summary(meeting: "m", summary: Meeting.Summary(overview: "O", decisions: ["D"],
+                       actionItems: [.init(owner: "You", task: "T", due: nil)], openQuestions: []), title: "Plan"))
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "summary", "id": "m", "summary": null}"#), .summary(meeting: "m", summary: nil, title: ""))
         XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "meeting", "active": true}"#), .meeting(active: true))
         XCTAssertNil(EngineEvent.parse(#"@mispr {"event": "meeting"}"#))
         XCTAssertEqual(EngineCommand.startMeeting.rawValue, "start_meeting")  // must match mispr/app.py
@@ -27,7 +34,7 @@ final class EngineProtocolTests: XCTestCase {
     func testEngineTracksMeetingAndNoteRequests() {
         let engine = Engine(config: nil)
         var requests = 0
-        let sub = engine.noteRequested.sink { requests += 1 }
+        let sub = engine.noteRequested.sink { _ in requests += 1 }
         engine.receive(Data("@mispr {\"event\": \"open_note\"}\n@mispr {\"event\": \"meeting\", \"active\": true}\n".utf8))
         XCTAssertEqual(requests, 1)
         XCTAssertTrue(engine.meetingActive)
@@ -663,6 +670,8 @@ final class MeetingDetectorTests: XCTestCase {
         let d = MeetingDetector.detect(.init(windowTitles: [W("com.google.Chrome", "Meet – Weekly product sync - Google Chrome")]))
         XCTAssertEqual(d.source, .googleMeet)
         XCTAssertEqual(d.title, "Weekly product sync")
+        XCTAssertEqual(d.window, W("com.google.Chrome", "Meet – Weekly product sync - Google Chrome"))  // for Split screen
+        XCTAssertNil(MeetingDetector.detect(.init()).window)
     }
 
     func testMeetCodeIsNotAName() {
@@ -704,5 +713,83 @@ final class MeetingDetectorTests: XCTestCase {
         XCTAssertEqual(d.source, .inPerson)
         XCTAssertFalse(d.source.needsSystemAudio)
         XCTAssertTrue(MeetingSource.zoom.needsSystemAudio)
+    }
+}
+
+final class LiveMeetingTests: XCTestCase {
+    func voice(_ seconds: Double) -> [Float] { (0..<Int(seconds * 16_000)).map { Float(sin(Double($0) * 0.2)) * 0.3 } }
+    func quiet(_ seconds: Double) -> [Float] { Array(repeating: 0.0005, count: Int(seconds * 16_000)) }
+
+    func testCutsAtAPause() {
+        var s = Segmenter()
+        let chunks = s.feed(voice(2) + quiet(1) + voice(1.5))
+        XCTAssertEqual(chunks.count, 1)
+        XCTAssertEqual(chunks[0].start, 0)
+        XCTAssertEqual(Double(chunks[0].samples.count) / 16_000, 2.7, accuracy: 0.05)  // speech + the 0.7 s pause
+        let rest = s.flush()
+        XCTAssertNotNil(rest)
+        XCTAssertEqual(rest!.start, 2.7, accuracy: 0.05)
+    }
+
+    func testLongSpeechIsCutAtMax() {
+        var s = Segmenter()
+        XCTAssertEqual(s.feed(voice(31)).count, 2)
+    }
+
+    func testSilenceProducesNothing() {
+        var s = Segmenter()
+        XCTAssertTrue(s.feed(quiet(10)).isEmpty)
+        XCTAssertNil(s.flush())
+    }
+
+    func testFeedInSmallPieces() {
+        var s = Segmenter()
+        var chunks: [(start: Double, samples: [Float])] = []
+        let audio = voice(2) + quiet(1)
+        for i in stride(from: 0, to: audio.count, by: 1024) { chunks += s.feed(Array(audio[i..<min(i + 1024, audio.count)])) }
+        XCTAssertEqual(chunks.count, 1)
+    }
+
+    func testWAVHeader() {
+        let d = WAV.data([0, 1, -1])
+        XCTAssertEqual(d.count, 44 + 6)
+        XCTAssertEqual(String(decoding: d.prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertEqual(d[22], 1)          // mono
+        XCTAssertEqual(d[34], 16)         // bits
+        XCTAssertEqual(d[46], 0xFF); XCTAssertEqual(d[47], 0x7F)  // +1.0 -> 32767
+    }
+
+    func testTranscriptOrderLabelsAndGroups() {
+        var t = LiveTranscript()
+        t.add(stream: "them", speaker: 1, offset: 5, text: "Second.")
+        t.add(stream: "you", speaker: 0, offset: 1, text: "First.")
+        t.add(stream: "them", speaker: 1, offset: 8, text: "Third.")
+        t.add(stream: "you", speaker: 0, offset: 9, text: "  ")
+        XCTAssertEqual(t.lines.map(\.text), ["First.", "Second.", "Third."])
+        XCTAssertEqual(t.groups.map(\.label), ["You", "Them"])
+        XCTAssertEqual(t.groups[1].lines.count, 2)
+        t.add(stream: "them", speaker: 2, offset: 12, text: "Fourth.")
+        XCTAssertEqual(t.groups.map(\.label), ["You", "Speaker 1", "Speaker 2"])
+        t.names[2] = "Priya"
+        XCTAssertEqual(t.groups.last?.label, "Priya")
+        XCTAssertEqual(t.engineLines.last, ["speaker": "Priya", "text": "Fourth."])
+    }
+
+    func testSavesAsAMeetingTheNotesPageCanRead() throws {
+        var t = LiveTranscript()
+        t.add(stream: "you", speaker: 0, offset: 0, text: "Hello.")
+        t.add(stream: "them", speaker: 1, offset: 2, text: "Hi!")
+        let start = Date(timeIntervalSince1970: 1_790_800_000)
+        let meeting = t.meeting(id: Meeting.newID(start), title: "", startedAt: start, duration: 65, source: "Zoom",
+                                thoughts: "note", summary: nil)
+        XCTAssertEqual(meeting.title, "Meeting")
+        XCTAssertEqual(meeting.participants.map(\.name), ["You", "Them"])
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try meeting.save(in: dir)
+        let loaded = MeetingStore.load(from: dir)
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded[0].transcript.map(\.text), ["Hello.", "Hi!"])
+        XCTAssertEqual(loaded[0].app, "Zoom")
+        XCTAssertEqual(loaded[0].startedAt.timeIntervalSince1970, start.timeIntervalSince1970, accuracy: 0.01)
     }
 }

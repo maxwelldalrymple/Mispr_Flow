@@ -9,10 +9,16 @@ public enum EngineEvent: Equatable {
     case hello(recordingsDir: URL, settingsFile: URL, promptsFile: URL?, defaultPrompts: DefaultPrompts?)
     /// The result of a "Try it" run on the Prompts page.
     case tried(TryResult)
+    /// A meeting chunk was transcribed (speaker: 0 = you, 1+ = voices on the other side).
+    case chunkText(meeting: String, stream: String, speaker: Int, offset: Double, text: String)
+    /// The meeting summary (nil if the model couldn't write one), with a suggested title.
+    case summary(meeting: String, summary: Meeting.Summary?, title: String)
+    /// An answer to "Ask anything" / "What did I miss?".
+    case answer(meeting: String, question: String, text: String)
     /// A dictation was saved (not sent in Incognito).
     case saved(URL)
-    /// The widget's note button was clicked: show the note window.
-    case openNote
+    /// The widget's note button or ⌥M: show the note window (and start/stop recording).
+    case openNote(start: Bool)
     /// A meeting recording started or stopped (from the note window or the widget's pill).
     case meeting(active: Bool)
     /// A well-formed event this version doesn't know.
@@ -44,7 +50,18 @@ public enum EngineEvent: Equatable {
             guard let path = object["path"] as? String else { return nil }
             return .saved(URL(fileURLWithPath: path))
         case "open_note":
-            return .openNote
+            return .openNote(start: object["start"] as? Bool ?? false)
+        case "chunk_text":
+            return .chunkText(meeting: object["id"] as? String ?? "", stream: object["stream"] as? String ?? "them",
+                              speaker: object["speaker"] as? Int ?? 0, offset: object["offset"] as? Double ?? 0,
+                              text: object["text"] as? String ?? "")
+        case "summary":
+            let summary = Meeting.Summary(json: object["summary"])
+            let title = (object["summary"] as? [String: Any])?["title"] as? String ?? ""
+            return .summary(meeting: object["id"] as? String ?? "", summary: summary, title: title)
+        case "answer":
+            return .answer(meeting: object["id"] as? String ?? "", question: object["question"] as? String ?? "",
+                           text: object["text"] as? String ?? "")
         case "meeting":
             guard let active = object["active"] as? Bool else { return nil }
             return .meeting(active: active)
@@ -72,6 +89,10 @@ public enum EngineCommand: String {
     case startMeeting = "start_meeting"
     case stopMeeting = "stop_meeting"
     case tryPrompt = "try_prompt"
+    case transcribeChunk = "transcribe_chunk"
+    case summarize
+    case ask
+    case meetingLevel = "meeting_level"
     case quit
 
     public var line: String { line() }
