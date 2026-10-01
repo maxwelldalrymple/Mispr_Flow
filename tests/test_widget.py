@@ -1608,6 +1608,43 @@ class TestAppSwitcher:
         self.say(controller, clock, "quit chrome")
         assert quit_ == [11] and controller.notice[0] == "Quit Google Chrome"
 
+    @pytest.fixture
+    def sound(self, monkeypatch):
+        log = {"mic": [], "volume": [], "media": []}
+        monkeypatch.setattr(W.apps, "press_media", log["media"].append)
+        monkeypatch.setattr(W.apps, "set_volume", lambda change: log["volume"].append(change) or 55)
+        monkeypatch.setattr(W.apps, "mic_level", lambda: 70)
+        monkeypatch.setattr(W.apps, "set_mic_level", log["mic"].append)
+        return log
+
+    def test_play_pause_and_volume(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Pause")
+        self.say(controller, clock, "volume up")
+        assert sound["media"] == ["play"] and sound["volume"] == ["up"] and controller.notice[0] == "Volume 55%"
+
+    def test_mute_mic_and_unmute_it_by_voice(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Mute mic")
+        assert controller.mic_saved == 70 and sound["mic"] == [0]
+        controller.switch_key("down")  # hold the key: the mic opens to hear you
+        assert sound["mic"] == [0, 70]
+        clock.advance(1.0)
+        controller.switch_key("up")
+        controller.transcriber.calls[-1][1]("unmute mic", "unmute mic", None, 0.2)
+        assert controller.mic_saved is None and sound["mic"] == [0, 70, 70] and controller.notice[0] == "Mic on"
+
+    def test_other_commands_while_muted_keep_it_muted(self, controller, clock, fronted, sound):
+        self.say(controller, clock, "Mute mic")
+        self.say(controller, clock, "Pause")
+        assert sound["mic"] == [0, 70, 0]  # opened for the command, muted again after
+
+    def test_mute_tab_and_mute_app(self, controller, clock, fronted, monkeypatch, windows):
+        tabs = []
+        monkeypatch.setattr(W.apps, "mute_tab", lambda pid: tabs.append(pid) or pid == 11)
+        self.say(controller, clock, "mute tab in chrome")
+        assert tabs == [11] and controller.notice[0] == "Muted / unmuted Google Chrome"
+        self.say(controller, clock, "mute terminal")
+        assert "can't mute one app" in controller.notice[0]
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()

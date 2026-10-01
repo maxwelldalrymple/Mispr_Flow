@@ -40,6 +40,10 @@ def parse(text):
         if m:
             return ("nickname", m["nick"].strip(), m["app"].strip())
     said = _number_words(said)
+    for pattern, make in _SOUND:
+        m = pattern.match(said)
+        if m:
+            return make(m)
     m = _SHORTCUT.match(said)
     if m:  # "new tab", "close tab in chrome", "chrome reload", "tab 3"
         lead = r"^(?:(?:please|go|to|open|switch|then|and|a|the)\b\s*)+"
@@ -68,6 +72,91 @@ def parse(text):
         return ("size", _FILLER.sub("", m["app"]).strip(), int(m["pct"]))
     name = _FILLER.sub("", said).strip()
     return ("switch", name) if name else None
+
+
+# Sound: media keys, volume, mic, tab muting.
+_SOUND = (
+    (re.compile(r"^(?:please\s+)?(?:play|pause|resume|play pause|stop the music|stop music|unpause)(?:\s+(?:music|it|the music|video|the video|song))?$"),
+     lambda m: ("media", "play")),
+    (re.compile(r"^(?:next|skip)(?:\s+(?:track|song|one))?$"), lambda m: ("media", "next")),
+    (re.compile(r"^(?:previous|last|go back a)\s+(?:track|song)$"), lambda m: ("media", "previous")),
+    (re.compile(r"^(?:volume up|turn (?:it|the volume) up|louder|turn up(?: the volume)?)$"), lambda m: ("volume", "up")),
+    (re.compile(r"^(?:volume down|turn (?:it|the volume) down|quieter|softer|turn down(?: the volume)?)$"), lambda m: ("volume", "down")),
+    (re.compile(r"^(?:set\s+)?volume\s+(?:to\s+)?(?P<n>\d{1,3})(?:\s*percent)?$"), lambda m: ("volume", min(100, int(m["n"])))),
+    (re.compile(r"^(?P<un>un)?mute\s+(?:my\s+|the\s+)?(?:mic|microphone)$"), lambda m: ("mic", not m["un"])),
+    (re.compile(r"^(?P<un>un)?mute(?:\s+(?:the\s+)?(?:sound|volume|audio|speakers?|computer|mac))?$"), lambda m: ("volume", "unmute" if m["un"] else "mute")),
+    (re.compile(r"^(?:un)?mute\s+(?:this\s+|the\s+)?(?:tab|site)(?:\s+(?:in|on)\s+(?P<app>.+))?$"), lambda m: ("mute_tab", m["app"])),
+    (re.compile(r"^(?:un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"])),
+)
+
+MEDIA_KEYS = {"play": 16, "next": 17, "previous": 18}  # NX_KEYTYPE_PLAY / NEXT / PREVIOUS
+
+
+def press_media(key, post=None):
+    """Press a media key (play/pause, next, previous): it goes to whatever is playing."""
+    import Quartz
+    from AppKit import NSEvent
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGHIDEventTap, event))
+    for state in (0xA, 0xB):  # key down, key up
+        event = NSEvent.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
+            14, (0, 0), state << 8, 0, 0, None, 8, (MEDIA_KEYS[key] << 16) | (state << 8), -1)
+        post(event.CGEvent())
+
+
+def _osascript(script, run=None):
+    import subprocess
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip())
+    return run(["osascript", "-e", script])
+
+
+def set_volume(change, run=None):
+    """"up"/"down" (10 points), "mute"/"unmute", or a level 0-100. Returns the new level (or None)."""
+    if change in ("mute", "unmute"):
+        _osascript(f"set volume output muted {'true' if change == 'mute' else 'false'}", run)
+        return None
+    if change in ("up", "down"):
+        step = 10 if change == "up" else -10
+        script = f"set volume output volume ((output volume of (get volume settings)) + {step}) without output muted"
+    else:
+        script = f"set volume output volume {int(change)} without output muted"
+    _osascript(script, run)
+    level = _osascript("output volume of (get volume settings)", run)
+    return int(level) if level.isdigit() else None
+
+
+def mic_level(run=None):
+    level = _osascript("input volume of (get volume settings)", run)
+    return int(level) if level.isdigit() else None
+
+
+def set_mic_level(level, run=None):
+    _osascript(f"set volume input volume {int(level)}", run)
+
+
+def mute_tab(pid):
+    """Chrome-style browsers: the selected tab's own menu has "Mute site"/"Unmute site". True if pressed."""
+    import ApplicationServices as AS
+    def attr(el, name):
+        err, v = AS.AXUIElementCopyAttributeValue(el, name, None)
+        return v if err == 0 else None
+    def find(el, test, depth=0):
+        if el is None or depth > 12:
+            return None
+        if test(el):
+            return el
+        for child in attr(el, "AXChildren") or []:
+            hit = find(child, test, depth + 1)
+            if hit is not None:
+                return hit
+        return None
+    win = _window(pid)
+    tab = find(win, lambda e: attr(e, "AXRole") == "AXRadioButton" and attr(e, "AXValue") == 1
+               and attr(attr(e, "AXParent"), "AXRole") == "AXTabGroup")
+    if tab is None or AS.AXUIElementPerformAction(tab, "AXShowMenu") != 0:
+        return False
+    menu = find(AS.AXUIElementCreateApplication(pid), lambda e: attr(e, "AXRole") == "AXMenuItem"
+                and str(attr(e, "AXTitle") or "").lower() in ("mute site", "unmute site", "mute tab", "unmute tab"))
+    return menu is not None and AS.AXUIElementPerformAction(menu, "AXPress") == 0
 
 
 # Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).

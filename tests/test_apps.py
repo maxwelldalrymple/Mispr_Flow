@@ -156,3 +156,40 @@ class TestShortcuts:
         flags = Quartz.CGEventGetFlags(events[0])
         masks = {"cmd": Quartz.kCGEventFlagMaskCommand, "shift": Quartz.kCGEventFlagMaskShift, "ctrl": Quartz.kCGEventFlagMaskControl}
         assert {m for m, bit in masks.items() if flags & bit} == mods
+
+
+class TestSound:
+    """Play/pause, volume, mic and tab muting."""
+
+    @pytest.mark.parametrize("said,expected", [
+        ("Pause.", ("media", "play")), ("play the music", ("media", "play")), ("next song", ("media", "next")),
+        ("previous track", ("media", "previous")), ("Volume up", ("volume", "up")), ("turn it down", ("volume", "down")),
+        ("volume 40%", ("volume", 40)), ("set volume to thirty percent", ("volume", 30)),
+        ("mute", ("volume", "mute")), ("unmute the sound", ("volume", "unmute")),
+        ("Mute mic.", ("mic", True)), ("unmute my microphone", ("mic", False)),
+        ("mute tab", ("mute_tab", None)), ("mute this tab in chrome", ("mute_tab", "chrome")),
+        ("mute Spotify", ("mute_app", "spotify")),
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_volume_scripts(self):
+        ran = []
+        run = lambda cmd: ran.append(cmd[2]) or "60"
+        assert apps.set_volume("up", run) == 60
+        assert "+ 10) without output muted" in ran[0]
+        apps.set_volume(35, run)
+        assert ran[2] == "set volume output volume 35 without output muted"
+        assert apps.set_volume("mute", run) is None and ran[-1] == "set volume output muted true"
+
+    def test_mic_level(self):
+        assert apps.mic_level(lambda cmd: "72") == 72 and apps.mic_level(lambda cmd: "missing value") is None
+        ran = []
+        apps.set_mic_level(0, lambda cmd: ran.append(cmd[2]))
+        assert ran == ["set volume input volume 0"]
+
+    def test_media_key_events(self):
+        import Quartz
+        events = []
+        apps.press_media("play", post=events.append)
+        assert len(events) == 2 and all(Quartz.CGEventGetType(e) == 14 for e in events)  # system-defined

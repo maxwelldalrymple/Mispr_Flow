@@ -276,6 +276,7 @@ class WidgetController:
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
+        self.mic_saved = None  # the mic's level while "mute mic" has it at 0
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -572,6 +573,8 @@ class WidgetController:
         if edge == "down":
             if self.state not in (IDLE, HOVER, CANCELLED):
                 return  # busy dictating, processing or in a meeting
+            if self.mic_saved is not None:  # muted: open the mic just to hear the command
+                apps.set_mic_level(self.mic_saved)
             self.begin_hold("switch")
             if self.state == HOLD:
                 self.fn_press_at = time.monotonic()
@@ -581,6 +584,7 @@ class WidgetController:
             return
         if edge == "combo" or time.monotonic() - self.fn_press_at < FN_TAP_MAX:
             self.discard_quietly()
+            self._remute()
             return
         self._stop_recording()
         self.sounds.play(sounds.STOP)
@@ -588,7 +592,17 @@ class WidgetController:
         # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
         self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text))
 
+    def _remute(self):
+        if self.mic_saved is not None:
+            apps.set_mic_level(0)
+
     def _on_switch_heard(self, text):
+        try:
+            self._do_switch_command(text)
+        finally:
+            self._remute()
+
+    def _do_switch_command(self, text):
         """Act on what was said: teach a nickname, or bring an app to the front. The audio is
         wiped and never saved (switching apps isn't dictation history)."""
         log(f"switch heard {text!r}")
@@ -617,6 +631,34 @@ class WidgetController:
             return (target, path) if path else None
 
         kind = command[0]
+        if kind == "media":
+            apps.press_media(command[1])
+            return self._switch_done({"play": "Play / pause", "next": "Next", "previous": "Previous"}[command[1]])
+        if kind == "volume":
+            level = apps.set_volume(command[1])
+            words = {"mute": "Sound muted", "unmute": "Sound on"}
+            return self._switch_done(words.get(command[1]) or f"Volume {level if level is not None else command[1]}%")
+        if kind == "mic":
+            if command[1] and self.mic_saved is None:
+                self.mic_saved = apps.mic_level() or 50
+                return self._switch_done("Mic muted · hold the switch key and say “unmute mic”")
+            if not command[1] and self.mic_saved is not None:
+                apps.set_mic_level(self.mic_saved)
+                self.mic_saved = None
+                return self._switch_done("Mic on")
+            return self._switch_done("Mic already " + ("muted" if command[1] else "on"))
+        if kind in ("mute_tab", "mute_app"):
+            name = command[1]
+            hit = find(name) if name else None
+            if name and hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            pid = apps.pid_for(hit[1]) if hit else apps.frontmost_pid()
+            label = hit[0] if hit else "this tab"
+            if pid and apps.mute_tab(pid):
+                return self._switch_done(f"Muted / unmuted {label}")
+            if kind == "mute_app":
+                return self._switch_failed("macOS can't mute one app. Say “pause”, or “mute tab” in a browser")
+            return self._switch_failed("No tab to mute here")
         if kind == "shortcut":  # "new tab", "close tab in chrome"
             _, shortcut, name = command
             if name is None:
