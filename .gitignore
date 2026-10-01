@@ -8,3 +8,5 @@ meeting-recordings/
 .venv-build/
 build/
 dist/
+macos/.build/
+macos/.swiftpm/

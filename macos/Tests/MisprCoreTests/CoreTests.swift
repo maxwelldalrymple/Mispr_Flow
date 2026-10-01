@@ -1,0 +1,303 @@
+import Combine
+import XCTest
+@testable import MisprCore
+
+final class EngineProtocolTests: XCTestCase {
+    func testHello() {
+        let event = EngineEvent.parse(#"@mispr {"event": "hello", "recordings_dir": "/r", "settings_path": "/s/settings.json"}"#)
+        XCTAssertEqual(event, .hello(recordingsDir: URL(fileURLWithPath: "/r"), settingsFile: URL(fileURLWithPath: "/s/settings.json")))
+    }
+
+    func testSaved() {
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "saved", "path": "/r/a.wav"}"#), .saved(URL(fileURLWithPath: "/r/a.wav")))
+    }
+
+    func testIgnoresOtherOutput() {
+        for line in ["", "hello", "mispr: already running", #"{"event": "saved", "path": "/x"}"#, "@mispr not json",
+                     #"@mispr {"no_event": 1}"#, #"@mispr {"event": "hello"}"#, #"@mispr {"event": "saved"}"#] {
+            XCTAssertNil(EngineEvent.parse(line), line)
+        }
+    }
+
+    func testUnknownEventsAreKept() {
+        XCTAssertEqual(EngineEvent.parse(#"@mispr {"event": "future"}"#), .unknown("future"))
+    }
+
+    func testCommandsAreJSONLines() throws {
+        for command in [EngineCommand.openSetup, .reloadSettings, .quit] {
+            XCTAssertTrue(command.line.hasSuffix("\n"))
+            let object = try JSONSerialization.jsonObject(with: Data(command.line.utf8)) as? [String: String]
+            XCTAssertEqual(object, ["cmd": command.rawValue])
+        }
+        XCTAssertEqual(EngineCommand.openSetup.rawValue, "open_setup")  // must match mispr/app.py
+        XCTAssertEqual(EngineCommand.reloadSettings.rawValue, "reload_settings")
+    }
+
+    func testLineSplitterHoldsPartialLines() {
+        var splitter = LineSplitter()
+        XCTAssertEqual(splitter.feed(Data("one\ntw".utf8)), ["one"])
+        XCTAssertEqual(splitter.feed(Data("o\n\nthree".utf8)), ["two", ""])
+        XCTAssertEqual(splitter.feed(Data("\n".utf8)), ["three"])
+    }
+}
+
+final class EngineTests: XCTestCase {
+    func testConfigFromInfoPlist() {
+        let config = EngineConfig.resolve(info: ["MisprProjectRoot": "/p", "MisprPython": "/p/py"], env: [:])
+        XCTAssertEqual(config, EngineConfig(python: URL(fileURLWithPath: "/p/py"), projectRoot: URL(fileURLWithPath: "/p")))
+    }
+
+    func testEnvironmentOverridesAndVenvDefault() {
+        let config = EngineConfig.resolve(info: ["MisprProjectRoot": "/p"], env: ["MISPR_PROJECT_ROOT": "/q"])
+        XCTAssertEqual(config?.projectRoot.path, "/q")
+        XCTAssertEqual(config?.python.path, "/q/.venv/bin/python")
+    }
+
+    func testNoConfigFails() {
+        XCTAssertNil(EngineConfig.resolve(info: [:], env: [:]))
+        let engine = Engine(config: nil)
+        engine.start()
+        guard case .failed = engine.state else { return XCTFail("expected failed, got \(engine.state)") }
+    }
+
+    func testHelloMarksRunningAndStoresPaths() {
+        let engine = Engine(config: nil)
+        engine.receive(Data((#"@mispr {"event": "hello", "recordings_dir": "/r", "settings_path": "/s"}"# + "\n").utf8))
+        XCTAssertEqual(engine.state, .running)
+        XCTAssertEqual(engine.recordingsDir?.path, "/r")
+        XCTAssertEqual(engine.settingsFile?.path, "/s")
+    }
+
+    func testSavedIsRelayed() {
+        let engine = Engine(config: nil)
+        var saved: [URL] = []
+        let sub = engine.saved.sink { saved.append($0) }
+        engine.receive(Data("[log] noise\n@mispr {\"event\": \"saved\", \"path\": \"/r/a.wav\"}\n".utf8))
+        XCTAssertEqual(saved, [URL(fileURLWithPath: "/r/a.wav")])
+        sub.cancel()
+    }
+
+    func testCleanExitQuitsTheApp() {
+        let engine = Engine(config: nil)
+        var quit = 0
+        engine.onCleanExit = { quit += 1 }
+        engine.exited(status: 0)
+        XCTAssertEqual(quit, 1)
+        XCTAssertEqual(engine.state, .stopped)
+    }
+
+    func testCrashLoopGivesUp() {
+        let engine = Engine(config: nil)
+        let now = Date()
+        for i in 0..<Engine.maxRestarts {
+            engine.exited(status: 1, now: now.addingTimeInterval(Double(i)))
+            if case .failed = engine.state { XCTFail("gave up too early") }
+        }
+        engine.exited(status: 1, now: now.addingTimeInterval(10))
+        guard case .failed = engine.state else { return XCTFail("expected failed") }
+    }
+
+    func testOldCrashesAreForgotten() {
+        let engine = Engine(config: nil)
+        let now = Date()
+        for i in 0..<10 {  // one crash every two minutes never trips the limit
+            engine.exited(status: 1, now: now.addingTimeInterval(Double(i) * 120))
+        }
+        if case .failed = engine.state { XCTFail("should keep restarting") }
+    }
+
+    func testStoppingIsNotACrash() {
+        let engine = Engine(config: nil)
+        var quit = 0
+        engine.onCleanExit = { quit += 1 }
+        engine.stop()
+        engine.exited(status: 15)
+        XCTAssertEqual(engine.state, .stopped)
+        XCTAssertEqual(quit, 0)
+    }
+}
+
+final class RecordingTests: XCTestCase {
+    var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("2026-09-30"), withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func write(_ name: String, _ json: String) throws {
+        try Data(json.utf8).write(to: dir.appendingPathComponent("2026-09-30/\(name).json"))
+    }
+
+    static let sample = """
+    {"id": "2026-09-30_16-21-43-757", "started_at": "2026-09-30T16:21:43.757-04:00",
+     "ended_at": "2026-09-30T16:21:52.382-04:00", "duration_s": 8.6, "status": "pasted",
+     "transcript": "Hello there.", "raw_transcript": "um hello there", "words": 2,
+     "recorded_in": {"app": "Claude", "bundle_id": "com.anthropic.claudefordesktop"},
+     "pasted_into": {"app": "Chrome", "bundle_id": "com.google.Chrome", "url": "https://mail.google.com/x", "page_title": "Inbox"},
+     "model": "m", "cleanup": {"applied": true}, "audio_file": "2026-09-30_16-21-43-757.wav"}
+    """
+
+    func testDecodesTheEnginesFormat() throws {
+        try write("a", Self.sample)
+        let records = RecordingStore.load(from: dir)
+        XCTAssertEqual(records.count, 1)
+        let r = records[0]
+        XCTAssertEqual(r.status, .pasted)
+        XCTAssertEqual(r.words, 2)
+        XCTAssertEqual(r.startedAt.timeIntervalSince1970, 1790799703.757, accuracy: 0.001)
+        XCTAssertEqual(r.app?.pageTitle, "Inbox")
+        XCTAssertTrue(r.wasCleaned)
+        // The audio sits next to its JSON (compared that way because the temp folder is
+        // reachable as both /var and /private/var).
+        XCTAssertEqual(r.audioURL?.lastPathComponent, "2026-09-30_16-21-43-757.wav")
+        XCTAssertEqual(r.audioURL?.deletingLastPathComponent(), r.fileURL?.deletingLastPathComponent())
+    }
+
+    func testNewestFirstAndBadFilesSkipped() throws {
+        try write("a", Self.sample)
+        try write("b", Self.sample.replacingOccurrences(of: "16:21:43.757", with: "17:00:00").replacingOccurrences(of: "\"id\": \"2026-09-30_16-21-43-757\"", with: "\"id\": \"later\""))
+        try write("broken", "{not json")
+        try Data("x".utf8).write(to: dir.appendingPathComponent("2026-09-30/a.wav"))
+        XCTAssertEqual(RecordingStore.load(from: dir).map(\.id), ["later", "2026-09-30_16-21-43-757"])
+    }
+
+    func testMissingFolderIsEmpty() {
+        XCTAssertEqual(RecordingStore.load(from: dir.appendingPathComponent("nope")), [])
+    }
+
+    func testDeleteRemovesJSONAndAudio() throws {
+        try write("2026-09-30_16-21-43-757", Self.sample)
+        let wav = dir.appendingPathComponent("2026-09-30/2026-09-30_16-21-43-757.wav")
+        try Data("x".utf8).write(to: wav)
+        let record = RecordingStore.load(from: dir)[0]
+        try RecordingStore.delete(record)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: wav.path))
+        XCTAssertEqual(RecordingStore.load(from: dir), [])
+    }
+}
+
+final class StatsTests: XCTestCase {
+    let calendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        return c
+    }()
+
+    func day(_ d: Int, hour: Int = 10) -> Date {
+        calendar.date(from: DateComponents(year: 2026, month: 9, day: d, hour: hour))!
+    }
+
+    func rec(_ d: Int, words: Int = 10, seconds: Double = 6, status: Recording.Status = .pasted,
+             bundle: String? = "com.apple.Terminal", url: String? = nil, raw: String? = nil, text: String = "hello world") -> Recording {
+        Recording(id: UUID().uuidString, startedAt: day(d), endedAt: day(d), durationS: seconds, status: status,
+                  transcript: text, rawTranscript: raw, words: words, pastedInto: AppRef(app: "App", bundleId: bundle, url: url))
+    }
+
+    func testTotalsAndWPMSkipCancelled() {
+        let stats = Stats([rec(28, words: 10, seconds: 6), rec(29, words: 20, seconds: 18), rec(29, words: 99, status: .cancelled)],
+                          now: day(30), calendar: calendar)
+        XCTAssertEqual(stats.totalWords, 30)
+        XCTAssertEqual(stats.dictations, 2)
+        XCTAssertEqual(stats.wordsPerMinute, 75)  // 30 words / 0.4 min
+    }
+
+    func testCopiedCountsAsDelivered() {
+        XCTAssertEqual(Stats([rec(30, status: .copied)], now: day(30), calendar: calendar).dictations, 1)
+    }
+
+    func testStreakCountsBackFromToday() {
+        let stats = Stats([rec(26), rec(28), rec(29), rec(30)], now: day(30, hour: 18), calendar: calendar)
+        XCTAssertEqual(stats.currentStreak, 3)
+        XCTAssertEqual(stats.longestStreak, 3)
+    }
+
+    func testStreakSurvivesUntilTheDayIsOver() {
+        XCTAssertEqual(Stats([rec(28), rec(29)], now: day(30), calendar: calendar).currentStreak, 2)
+        XCTAssertEqual(Stats([rec(27), rec(28)], now: day(30), calendar: calendar).currentStreak, 0)
+    }
+
+    func testLongestStreakCanBeInThePast() {
+        let stats = Stats([rec(10), rec(11), rec(12), rec(13), rec(30)], now: day(30), calendar: calendar)
+        XCTAssertEqual(stats.currentStreak, 1)
+        XCTAssertEqual(stats.longestStreak, 4)
+    }
+
+    func testPerDayCounts() {
+        let stats = Stats([rec(29), rec(29), rec(30)], now: day(30), calendar: calendar)
+        XCTAssertEqual(stats.perDay[calendar.startOfDay(for: day(29))], 2)
+    }
+
+    func testCategoriesAndApps() {
+        let stats = Stats([rec(30, bundle: "com.anthropic.claudefordesktop"), rec(30, bundle: "com.google.Chrome", url: "https://mail.google.com/u/0"),
+                           rec(30, bundle: "com.tinyspeck.slackmacgap"), rec(30, bundle: "com.unknown.app"), rec(30, bundle: "com.anthropic.claudefordesktop")],
+                          now: day(30), calendar: calendar)
+        let counts = Dictionary(uniqueKeysWithValues: stats.categories.map { ($0.category, $0.count) })
+        XCTAssertEqual(counts[.aiPrompts], 2)
+        XCTAssertEqual(counts[.emails], 1)
+        XCTAssertEqual(counts[.workMessages], 1)
+        XCTAssertEqual(counts[.other], 1)
+        XCTAssertEqual(stats.categories.first?.category, .aiPrompts)  // biggest first
+        XCTAssertEqual(stats.categories.count, UsageCategory.allCases.count)  // zeros shown too
+        XCTAssertEqual(stats.appsUsed, 4)
+        XCTAssertEqual(stats.percent(2), 40)
+    }
+
+    func testURLBeatsBundle() {
+        XCTAssertEqual(UsageCategory.of(AppRef(bundleId: "com.google.Chrome", url: "https://claude.ai/chat/1")), .aiPrompts)
+        XCTAssertEqual(UsageCategory.of(AppRef(bundleId: "com.google.Chrome", url: "https://evilclaude.ai")), .other)
+        XCTAssertEqual(UsageCategory.of(nil), .other)
+    }
+
+    func testCleanedCount() {
+        let stats = Stats([rec(30, raw: "um hello world"), rec(30, raw: "hello world"), rec(30, raw: nil)], now: day(30), calendar: calendar)
+        XCTAssertEqual(stats.cleaned, 1)
+    }
+
+    func testEmpty() {
+        let stats = Stats([], now: day(30), calendar: calendar)
+        XCTAssertEqual(stats.wordsPerMinute, 0)
+        XCTAssertEqual(stats.percent(0), 0)
+        XCTAssertEqual(stats.currentStreak, 0)
+    }
+
+    func testVoiceProfile() {
+        let records = [
+            rec(30, words: 6, text: "Deploy the widget, then deploy the docs."),
+            rec(29, words: 4, text: "Widget looks great now."),
+            rec(29, words: 2, status: .cancelled, text: "ignored ignored ignored"),
+        ]
+        let profile = VoiceProfile(records, calendar: calendar)
+        XCTAssertEqual(profile.mostUsedWords, ["deploy", "widget"])
+        XCTAssertEqual(profile.peakHour, 10)
+        XCTAssertEqual(profile.topApp, "App")
+        XCTAssertEqual(profile.averageWords, 5)
+        XCTAssertEqual(profile.longestWords, 6)
+        XCTAssertEqual(VoiceProfile([], calendar: calendar), VoiceProfile())
+    }
+}
+
+final class SettingsFileTests: XCTestCase {
+    func testDefaultsWhenMissing() {
+        let file = SettingsFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/settings.json"))
+        XCTAssertTrue(file.bool("cleanup"))
+        XCTAssertTrue(file.bool("sounds"))
+        XCTAssertFalse(file.bool("incognito"))
+    }
+
+    func testSetKeepsOtherKeys() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID())/settings.json")
+        let file = SettingsFile(url: url)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"onboarded": true, "future_key": "x"}"#.utf8).write(to: url)
+        try file.set("incognito", true)
+        let object = file.read()
+        XCTAssertEqual(object["incognito"] as? Bool, true)
+        XCTAssertEqual(object["onboarded"] as? Bool, true)
+        XCTAssertEqual(object["future_key"] as? String, "x")
+    }
+}
