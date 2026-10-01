@@ -22,6 +22,10 @@ class Settings:
     sounds: bool = True
     # The dictation key; see hotkey.normalize_trigger. Default: fn.
     hotkey: dict = field(default_factory=lambda: {"kind": "fn", "keycode": 63, "label": "fn"})
+    # The app switcher key (hold it, say an app, let go): same format as `hotkey`; None = off.
+    switch_hotkey: dict = None
+    # Spoken nicknames for apps: {"c": "Google Chrome", "scooby snacks": "Google Chrome"}.
+    app_nicknames: dict = field(default_factory=dict)
     # Set once the user finishes the first-run setup window.
     onboarded: bool = False
 
@@ -41,3 +45,11 @@ def load():
 def save(settings):
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(asdict(settings), indent=2))
+
+
+def save_nickname(nick, app):
+    """Add one nickname to settings.json, keeping everything else the app may have changed."""
+    current = load()
+    current.app_nicknames = {**current.app_nicknames, nick: app}
+    save(current)
+    return current

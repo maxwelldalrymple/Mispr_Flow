@@ -147,6 +147,7 @@ def _connect_host(app, widget, open_setup, fn=None):
     quit_app = lambda: app.terminate_(None)
     widget.on_saved = lambda path: host.send("saved", path=str(path))
     widget.on_note_requested = lambda: host.send("open_note", start=True)
+    widget.on_settings_changed = lambda: host.send("settings_changed")  # e.g. a nickname set by voice
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send)
@@ -155,6 +156,7 @@ def _connect_host(app, widget, open_setup, fn=None):
         widget.reload_settings()
         if fn is not None:
             fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
+            fn.set_switch_trigger(widget.settings.switch_hotkey)
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
@@ -247,7 +249,8 @@ def main():
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
-                          trigger=widget.settings.hotkey, on_note=widget.request_note)
+                          trigger=widget.settings.hotkey, on_note=widget.request_note,
+                          on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)

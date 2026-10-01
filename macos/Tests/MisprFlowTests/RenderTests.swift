@@ -102,6 +102,16 @@ final class RenderTests: XCTestCase {
         }
     }
 
+    func testSettingsWithTheAppSwitcherAndNicknames() {
+        t.model.setSwitchKey(DictationKey.combo(mods: ["control", "option"]))
+        t.model.setNickname("c", app: "Google Chrome")
+        t.model.showSettings = true
+        t.model.settingsSection = .general
+        check(RootView())
+        check(NicknameList().frame(width: 500))
+        check(KeyRecorder(slot: .appSwitch).padding())
+    }
+
     func testIncognitoLook() {
         t.model.setSetting("incognito", true)
         check(RootView())

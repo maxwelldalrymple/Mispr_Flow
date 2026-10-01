@@ -41,6 +41,44 @@ def normalize_trigger(trigger):
     return dict(FN_TRIGGER)
 
 
+# Combos: modifiers held together (by name), optionally plus one key, e.g. ⌃⌥ or ⌥S.
+COMBO_FLAGS = {
+    "control": Quartz.kCGEventFlagMaskControl, "option": Quartz.kCGEventFlagMaskAlternate,
+    "shift": Quartz.kCGEventFlagMaskShift, "command": Quartz.kCGEventFlagMaskCommand,
+}
+_ALL_COMBO_FLAGS = sum(COMBO_FLAGS.values())
+
+
+def normalize_combo(trigger):
+    """{"kind": "combo", "mods": [...], "keycode": int | None, "label"} or None if unusable:
+    it needs a key with at least one modifier, or at least two modifiers on their own."""
+    mods = trigger.get("mods")
+    if not isinstance(mods, list) or not mods or any(m not in COMBO_FLAGS for m in mods):
+        return None
+    keycode = trigger.get("keycode")
+    if keycode is not None and not (isinstance(keycode, int) and 0 <= keycode < 256 and keycode != GLOBE_KEYCODE):
+        return None
+    if keycode is None and len(set(mods)) < 2:
+        return None
+    return {"kind": "combo", "mods": sorted(set(mods)), "keycode": keycode, "label": str(trigger.get("label") or "keys")}
+
+
+def combo_mask(trigger):
+    return sum(COMBO_FLAGS[m] for m in trigger["mods"])
+
+
+def normalize_switch_trigger(trigger, dictation=None):
+    """The app switcher key, or None when it's off, malformed, fn, or the dictation key itself."""
+    if not isinstance(trigger, dict) or trigger.get("kind") not in ("modifier", "key", "combo"):
+        return None
+    if trigger["kind"] == "combo":
+        return normalize_combo(trigger)
+    trigger = normalize_trigger(trigger)
+    if trigger["kind"] == "fn" or (dictation and trigger["keycode"] == normalize_trigger(dictation)["keycode"]):
+        return None
+    return trigger
+
+
 def has_input_monitoring():
     return bool(Quartz.CGPreflightListenEventAccess())
 
@@ -82,12 +120,17 @@ class FnMonitor:
     inside the tap, so it must only inspect state and defer any real work.
     """
 
-    def __init__(self, on_down, on_up, on_combo, on_key=None, trigger=None, on_note=None):
+    def __init__(self, on_down, on_up, on_combo, on_key=None, trigger=None, on_note=None,
+                 on_switch=None, switch_trigger=None):
         self.on_down, self.on_up, self.on_combo = on_down, on_up, on_combo
         self.on_key = on_key
         self.on_note = on_note  # ⌥M: new meeting note
         self.trigger = normalize_trigger(trigger)
         self.fn_down = False
+        # The app switcher key: on_switch("down" | "up" | "combo"). Off when switch_trigger is None.
+        self.on_switch = on_switch
+        self.switch_trigger = normalize_switch_trigger(switch_trigger, self.trigger)
+        self.switch_down = False
         self._swallowed_keys = set()  # swallow the key-up of keys whose key-down we took
         self.active = False  # True when fn presses are swallowed
         self._tap = None
@@ -102,6 +145,55 @@ class FnMonitor:
             self.fn_down = False
             AppHelper.callAfter(self.on_up)
         self.trigger = trigger
+
+    def set_switch_trigger(self, trigger):
+        """Change (or turn off, with None) the app switcher key."""
+        trigger = normalize_switch_trigger(trigger, self.trigger)
+        if trigger == self.switch_trigger:
+            return
+        if self.switch_down:
+            self.switch_down = False
+            AppHelper.callAfter(self.on_switch, "combo")  # abandon a press on the old key
+        self.switch_trigger = trigger
+
+    def _switch_edge(self, event_type, event):
+        """For the switch key: "down", "up", "repeat" (held key-repeat), or None (another key)."""
+        t = self.switch_trigger
+        if t is None or self.on_switch is None:
+            return None
+        keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+        if t["kind"] == "combo":
+            return self._combo_edge(t, event_type, event, keycode)
+        if keycode != t["keycode"]:
+            return None
+        if t["kind"] == "key" and event_type in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp):
+            if Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
+                return "repeat"
+            return "down" if event_type == Quartz.kCGEventKeyDown else "up"
+        if t["kind"] == "modifier" and event_type == Quartz.kCGEventFlagsChanged:
+            return "down" if Quartz.CGEventGetFlags(event) & MODIFIER_MASKS[t["keycode"]] else "up"
+        return None
+
+    def _combo_edge(self, t, event_type, event, keycode):
+        held = Quartz.CGEventGetFlags(event) & _ALL_COMBO_FLAGS
+        exact = held == combo_mask(t)
+        if t["keycode"] is None:  # modifiers only: down while exactly those are held
+            if event_type != Quartz.kCGEventFlagsChanged:
+                return None
+            if exact and not self.switch_down:
+                return "down"
+            if not exact and self.switch_down:
+                return "up"
+            return None
+        if keycode != t["keycode"] or event_type not in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp):
+            return None
+        if event_type == Quartz.kCGEventKeyUp:
+            return "up" if self.switch_down else None
+        if not exact:
+            return None  # the key alone (or with other modifiers) types as usual
+        if Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
+            return "repeat"
+        return "down"
 
     def start(self):
         return self._install(active=True) or self._install(active=False)
@@ -156,6 +248,20 @@ class FnMonitor:
         # system-wide until this callback returns, and starting the mic takes ~50-100 ms.
         kind, trigger_code = self.trigger["kind"], self.trigger["keycode"]
         swallow = None if self.active else event
+        edge = self._switch_edge(event_type, event)
+        if edge is not None:
+            if edge != "repeat" and (edge == "down") != self.switch_down:
+                self.switch_down = edge == "down"
+                AppHelper.callAfter(self.on_switch, edge)
+            # Modifiers still reach apps (they do nothing alone); a key press is swallowed.
+            t = self.switch_trigger
+            if t["kind"] == "modifier" or (t["kind"] == "combo" and event_type == Quartz.kCGEventFlagsChanged):
+                return event
+            return swallow
+        if self.switch_down and event_type == Quartz.kCGEventKeyDown:
+            # ⌘-style shortcut with the switch modifier held: it wasn't meant for us.
+            self.switch_down = False
+            AppHelper.callAfter(self.on_switch, "combo")
         if event_type in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp):
             keycode = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
             if keycode == GLOBE_KEYCODE and kind == "fn":

@@ -151,6 +151,8 @@ public final class Engine: ObservableObject {
             meetingEvents.send(event)
         case let .meeting(active):
             meetingActive = active
+        case .settingsChanged:
+            objectWillChange.send()  // views read settings.json fresh
         case .unknown:
             break
         }

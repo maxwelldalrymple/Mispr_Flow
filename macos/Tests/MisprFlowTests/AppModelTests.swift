@@ -13,6 +13,31 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(t.model.setting("auto_enter"))  // only the top-bar button turns it on
     }
 
+    func testSwitchKeyAndNicknames() {
+        let t = TestApp()
+        XCTAssertNil(t.model.switchKey)
+        let combo = DictationKey.combo(mods: ["control", "option"])!
+        t.model.setSwitchKey(combo)
+        XCTAssertEqual(t.model.switchKey, combo)
+        t.model.setNickname("  Scooby Snacks ", app: "Google Chrome")
+        t.model.setNickname("c", app: "Google Chrome")
+        t.model.setNickname("c", app: nil)  // removed
+        t.model.setNickname("   ", app: "Safari")  // ignored
+        XCTAssertEqual(t.model.nicknames, ["scooby snacks": "Google Chrome"])
+        t.model.setSwitchKey(nil)
+        XCTAssertNil(t.model.switchKey)
+        XCTAssertEqual(t.commands, Array(repeating: .reloadSettings, count: 5))
+    }
+
+    func testANicknameSetByVoiceRefreshesTheApp() {
+        let t = TestApp()
+        var changes = 0
+        let watch = t.model.objectWillChange.sink { changes += 1 }
+        t.event(["event": "settings_changed"])
+        XCTAssertGreaterThan(changes, 0)
+        watch.cancel()
+    }
+
     func testAutoEnterButtonTogglesTheSettingForTheEngine() {
         let t = TestApp()
         t.model.setSetting("auto_enter", true)

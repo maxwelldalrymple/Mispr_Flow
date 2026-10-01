@@ -52,7 +52,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -98,6 +98,8 @@ MIC_NOTICE_SECONDS = 3.0  # "Using Built-in mic" shows on the first dictation af
 COPIED_NOTICE_SECONDS = 4.0  # "No text box · Copied to clipboard"
 COPIED_NOTICE = "No text box · Copied to clipboard"
 INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
+SWITCH_NOTICE = "Say an app to switch to"
+SWITCH_RESULT_SECONDS = 2.5
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
@@ -269,6 +271,7 @@ class WidgetController:
         # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
+        self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
 
         self.hold_source = None  # "fn" or "mouse"
         self.fn_press_at = 0.0
@@ -545,6 +548,65 @@ class WidgetController:
             self.discard_quietly()
         else:
             self.finish()
+
+    # --- App switcher key -----------------------------------------------------
+
+    def switch_key(self, edge):
+        """The app switcher key: "down" starts listening, "up" switches to the app you said,
+        "combo" (a shortcut with it held) or a quick tap drops it."""
+        log(f"switch key {edge} (state {self.state})")
+        if edge == "down":
+            if self.state not in (IDLE, HOVER, CANCELLED):
+                return  # busy dictating, processing or in a meeting
+            self.begin_hold("switch")
+            if self.state == HOLD:
+                self.fn_press_at = time.monotonic()
+                self.show_notice(SWITCH_NOTICE, 60, (HOLD,))
+            return
+        if self.state != HOLD or self.hold_source != "switch":
+            return
+        if edge == "combo" or time.monotonic() - self.fn_press_at < FN_TAP_MAX:
+            self.discard_quietly()
+            return
+        self._stop_recording()
+        self.sounds.play(sounds.STOP)
+        self.set_state(PROCESSING)
+        # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
+        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text))
+
+    def _on_switch_heard(self, text):
+        """Act on what was said: teach a nickname, or bring an app to the front. The audio is
+        wiped and never saved (switching apps isn't dictation history)."""
+        log(f"switch heard {text!r}")
+        self._wipe("app switch")
+        self.to_idle()
+        command = apps.parse(text or "")
+        if command is None:
+            self.sounds.play(sounds.ALERT)
+            return
+        installed = apps.find_apps()
+        if command[0] == "nickname":
+            _, nick, spoken = command
+            target = apps.match(spoken, installed, self.settings.app_nicknames)
+            if target is None:
+                return self._switch_failed(f"No app called “{spoken}”")
+            self.settings = settings.save_nickname(nick, target)
+            self.on_settings_changed()
+            self.sounds.play(sounds.PASTE)
+            self.show_notice(f"“{nick}” now opens {target}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            return
+        running = apps.running_apps()
+        target = apps.match(command[1], {**installed, **running}, self.settings.app_nicknames, running)
+        path = running.get(target) or installed.get(target)
+        if path is None:
+            return self._switch_failed(f"No app called “{command[1]}”")
+        apps.bring_to_front(path)
+        self.sounds.play(sounds.PASTE)
+        self.show_notice(f"→ {target}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+
+    def _switch_failed(self, message):
+        self.sounds.play(sounds.ERROR)
+        self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
     def handle_key(self, keycode):
         """Called from inside the event tap: decide fast, act on the next run-loop pass.

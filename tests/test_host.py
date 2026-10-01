@@ -126,7 +126,7 @@ class TestConnectHost:
             begin_meeting = object()
             stop_meeting = object()
             transcriber = cleaner = None
-            on_saved = on_note_requested = on_meeting_changed = meeting_levels = None
+            on_saved = on_note_requested = on_meeting_changed = on_settings_changed = meeting_levels = None
 
         opened = object()
         widget = Widget()
@@ -147,6 +147,8 @@ class TestConnectHost:
         assert {"transcribe_chunk", "summarize", "ask"} <= set(listened["handlers"])
         widget.on_meeting_changed(True)
         assert sent[-1] == ("meeting", {"active": True})
+        widget.on_settings_changed()  # a nickname set by voice: the app re-reads settings
+        assert sent[-1] == ("settings_changed", {})
         listened["handlers"]["quit"]()
         listened["eof"]()
         assert App.terminated == 2
@@ -190,7 +192,8 @@ def test_reload_applies_a_new_dictation_key(monkeypatch):
     monkeypatch.setattr(host, "listen", lambda handlers, on_eof: listened.update(handlers))
 
     class Widget:
-        settings = type("S", (), {"hotkey": {"kind": "key", "keycode": 96, "label": "F5"}})()
+        settings = type("S", (), {"hotkey": {"kind": "key", "keycode": 96, "label": "F5"},
+                                  "switch_hotkey": {"kind": "combo", "mods": ["control", "option"]}})()
         reload_settings = lambda self: None
         begin_meeting = stop_meeting = cleaner = transcriber = meeting_levels = None
 
@@ -198,7 +201,11 @@ def test_reload_applies_a_new_dictation_key(monkeypatch):
         def set_trigger(self, trigger):
             self.trigger = trigger
 
+        def set_switch_trigger(self, trigger):
+            self.switch = trigger
+
     fn = Fn()
     app._connect_host(object(), Widget(), lambda: None, fn)
     listened["reload_settings"]()
     assert fn.trigger == {"kind": "key", "keycode": 96, "label": "F5"}
+    assert fn.switch == {"kind": "combo", "mods": ["control", "option"]}  # and the app switcher key

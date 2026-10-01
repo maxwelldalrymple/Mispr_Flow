@@ -179,6 +179,36 @@ final class AppModel: ObservableObject {
     func setting(_ key: String) -> Bool { settingsFile.bool(key) }
 
     var dictationKey: DictationKey { settingsFile.dictationKey }
+    var switchKey: DictationKey? { settingsFile.switchKey }
+    var nicknames: [String: String] { settingsFile.nicknames }
+
+    /// The app switcher key (nil turns it off).
+    func setSwitchKey(_ key: DictationKey?) {
+        do {
+            try settingsFile.setSwitchKey(key)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the shortcut: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
+
+    /// Add (or with app nil, remove) a spoken nickname. Nicknames are kept lowercase, as heard.
+    func setNickname(_ nickname: String, app: String?) {
+        let nick = nickname.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !nick.isEmpty else { return }
+        var all = nicknames
+        all[nick] = app
+        do {
+            try settingsFile.setNicknames(all)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the nickname: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
 
     func setDictationKey(_ key: DictationKey) {
         do {

@@ -169,3 +169,60 @@ final class NotesWordingTests: XCTestCase {
         XCTAssertFalse(ContactEditor.isRename("Priya", "  "))
     }
 }
+
+/// Picking the app switcher key: one key, one modifier side, a modifier combo, or modifiers + a key.
+final class ComboPickerTests: XCTestCase {
+    var picker = ComboPicker()
+    let dictation = DictationKey.fn
+
+    func flags(_ code: Int, _ f: NSEvent.ModifierFlags) -> KeyRecorder.Pick {
+        picker.feed(keyDown: false, keyCode: code, characters: nil, flags: f, dictation: dictation)
+    }
+
+    func key(_ code: Int, _ chars: String, _ f: NSEvent.ModifierFlags = []) -> KeyRecorder.Pick {
+        picker.feed(keyDown: true, keyCode: code, characters: chars, flags: f, dictation: dictation)
+    }
+
+    func testAModifierComboIsChosenWhenLetGo() {
+        XCTAssertEqual(flags(59, .control), .ignore)
+        XCTAssertEqual(flags(58, [.control, .option]), .ignore)
+        XCTAssertEqual(flags(59, .option), .ignore)  // letting go of one: still deciding
+        XCTAssertEqual(flags(58, []), .choose(DictationKey.combo(mods: ["control", "option"])!, warning: nil))
+    }
+
+    func testOneModifierSideOnItsOwn() {
+        _ = flags(61, .option)
+        XCTAssertEqual(flags(61, []), .choose(DictationKey(kind: .modifier, keycode: 61, label: "Right ⌥"), warning: nil))
+    }
+
+    func testModifiersPlusAKey() {
+        _ = flags(58, .option)
+        XCTAssertEqual(key(1, "s", .option), .choose(DictationKey.combo(mods: ["option"], key: DictationKey.key(keycode: 1, characters: "s"))!, warning: nil))
+        XCTAssertEqual(flags(58, []), .ignore)  // already chosen; letting go doesn't pick ⌥ too
+    }
+
+    func testAPlainKeyWarnsIfItTypes() {
+        XCTAssertEqual(key(96, ""), .choose(DictationKey(kind: .key, keycode: 96, label: "F5"), warning: nil))
+        if case let .choose(_, warning) = key(1, "s") { XCTAssertNotNil(warning) } else { XCTFail() }
+    }
+
+    func testEscCancelsBlockedKeysAndFnAndTheDictationKeyAreRefused() {
+        XCTAssertEqual(key(53, ""), .cancel)
+        if case .refuse = key(49, " ") {} else { XCTFail("space is for hands-free") }
+        if case .refuse = flags(63, .function) {} else { XCTFail("fn can't switch") }
+        XCTAssertEqual(flags(63, []), .ignore)
+        picker = ComboPicker()
+        _ = picker.feed(keyDown: false, keyCode: 61, characters: nil, flags: .option,
+                        dictation: DictationKey(kind: .modifier, keycode: 61, label: "Right ⌥"))
+        if case .refuse = picker.feed(keyDown: false, keyCode: 61, characters: nil, flags: [],
+                                      dictation: DictationKey(kind: .modifier, keycode: 61, label: "Right ⌥")) {} else { XCTFail() }
+    }
+
+    func testInstalledAppsAreListedByName() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("Zed.app"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("arc.app"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("notes.txt"), withIntermediateDirectories: true)
+        XCTAssertEqual(NicknameList.installedApps(in: [dir.path, "/nope"]), ["arc", "Zed"])
+    }
+}

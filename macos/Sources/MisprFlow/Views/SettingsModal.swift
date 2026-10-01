@@ -124,6 +124,15 @@ struct GeneralSettings: View {
                 KeyRecorder()
             }
             Divider()
+            SettingRow(title: "App switcher key",
+                       detail: model.switchKey.map { "Hold \($0.label), say an app like “Chrome” or a nickname, and let go: it comes to the front. Say “set nickname C to Chrome” to add one." }
+                        ?? "Off. Choose a key or combo (like ⌃⌥) to switch apps by voice: hold it, say the app, let go.") {
+                KeyRecorder(slot: .appSwitch)
+            }
+            if model.switchKey != nil {
+                NicknameList().padding(.bottom, 12)
+            }
+            Divider()
             SettingRow(title: "Microphone", detail: microphone) {
                 Button("Change…") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input")!)
@@ -304,19 +313,32 @@ struct ThemeCard: View {
 /// Click, then press the key you want to dictate with (fn, one side of a modifier, or any
 /// other key). Esc cancels. Keys hands-free needs are refused.
 struct KeyRecorder: View {
+    /// Which shortcut this picks: the dictation key, or the app switcher key (which can also
+    /// be a combo like ⌃⌥ or ⌥S, and can be off).
+    enum Slot { case dictation, appSwitch }
+
     @EnvironmentObject var model: AppModel
+    var slot: Slot = .dictation
     @State private var listening = false
     @State private var monitor: Any?
     @State private var message: String?
+    @State private var combo = ComboPicker()
+
+    private var current: String {
+        slot == .dictation ? model.dictationKey.label : model.switchKey?.label ?? "Off"
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: 8) {
-                if model.dictationKey != .fn && !listening {
+                if slot == .dictation && model.dictationKey != .fn && !listening {
                     Button("Use fn") { model.setDictationKey(.fn); message = nil }.buttonStyle(.link).font(.system(size: 12))
                 }
+                if slot == .appSwitch && model.switchKey != nil && !listening {
+                    Button("Turn off") { model.setSwitchKey(nil); message = nil }.buttonStyle(.link).font(.system(size: 12))
+                }
                 Button(action: toggle) {
-                    Text(listening ? "Press a key…" : model.dictationKey.label)
+                    Text(listening ? (slot == .appSwitch ? "Press a key or combo…" : "Press a key…") : current)
                         .font(.system(size: 13, weight: .semibold))
                         .frame(minWidth: 60)
                         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -324,7 +346,8 @@ struct KeyRecorder: View {
                         .overlay(RoundedRectangle(cornerRadius: 7).stroke(listening ? Theme.accent : Theme.cardStroke, lineWidth: listening ? 2 : 1))
                 }
                 .buttonStyle(.plain)
-                .help(listening ? "Press the key you want, or Esc to cancel" : "Click to change the dictation key")
+                .help(listening ? "Press the key you want, or Esc to cancel"
+                      : slot == .dictation ? "Click to change the dictation key" : "Click to choose the app switcher key or combo")
             }
             if let message {
                 Text(message).font(.system(size: 11)).foregroundStyle(Theme.secondary)
@@ -340,7 +363,9 @@ struct KeyRecorder: View {
 
     private func start() {
         listening = true
-        message = model.dictationKey == .fn ? "To keep fn, press Esc. fn itself can't be picked here while it's the dictation key." : nil
+        combo = ComboPicker()
+        message = slot == .appSwitch ? "Press one key, hold a combo like ⌃⌥ and let go, or press ⌥ plus a letter. Esc cancels."
+            : model.dictationKey == .fn ? "To keep fn, press Esc. fn itself can't be picked here while it's the dictation key." : nil
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event)
             return nil  // don't let the key do anything else while picking
@@ -354,8 +379,12 @@ struct KeyRecorder: View {
     }
 
     private func handle(_ event: NSEvent) {
-        switch Self.pick(keyDown: event.type == .keyDown, keyCode: Int(event.keyCode),
-                         characters: event.type == .keyDown ? event.charactersIgnoringModifiers : nil, flags: event.modifierFlags) {
+        let keyDown = event.type == .keyDown, code = Int(event.keyCode)
+        let characters = keyDown ? event.charactersIgnoringModifiers : nil
+        let pick = slot == .appSwitch
+            ? combo.feed(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags, dictation: model.dictationKey)
+            : Self.pick(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags)
+        switch pick {
         case .cancel:
             stop()
             message = nil
@@ -400,8 +429,117 @@ struct KeyRecorder: View {
     }
 
     private func choose(_ key: DictationKey) {
-        model.setDictationKey(key)
+        if slot == .dictation { model.setDictationKey(key) } else { model.setSwitchKey(key) }
         message = nil
         stop()
+    }
+}
+
+/// Picks the app switcher shortcut from key events while listening: a key on its own, one
+/// side of a modifier (pressed and released alone), a combo of modifiers (held together, then
+/// let go), or modifiers plus a key.
+struct ComboPicker {
+    private var peak: Set<String> = []  // most modifiers held at once in this press
+    private var onlySide: Int?  // the first modifier pressed (left/right matters when it's the only one)
+
+    static func names(_ flags: NSEvent.ModifierFlags) -> Set<String> {
+        var out: Set<String> = []
+        if flags.contains(.control) { out.insert("control") }
+        if flags.contains(.option) { out.insert("option") }
+        if flags.contains(.shift) { out.insert("shift") }
+        if flags.contains(.command) { out.insert("command") }
+        return out
+    }
+
+    mutating func feed(keyDown: Bool, keyCode: Int, characters: String?, flags: NSEvent.ModifierFlags,
+                       dictation: DictationKey) -> KeyRecorder.Pick {
+        let held = Self.names(flags)
+        if keyDown {
+            if keyCode == 53 && held.isEmpty { return .cancel }
+            guard let key = DictationKey.key(keycode: keyCode, characters: characters) else {
+                return .refuse("That key is needed for hands-free or by macOS. Pick another.")
+            }
+            reset()
+            if held.isEmpty { return Self.unlessDictation(key, dictation) }
+            return DictationKey.combo(mods: held, key: key).map { .choose($0, warning: nil) } ?? .ignore
+        }
+        if keyCode == 63 {
+            return flags.contains(.function) ? .refuse("fn can't be the app switcher key. Try ⌃⌥, Right ⌘ or F5.") : .ignore
+        }
+        if !held.isEmpty {  // pressing (or still holding) modifiers: decide when all are let go
+            if peak.isEmpty { onlySide = keyCode }
+            peak.formUnion(held)
+            return .ignore
+        }
+        guard !peak.isEmpty else { return .ignore }
+        defer { reset() }
+        if peak.count >= 2, let combo = DictationKey.combo(mods: peak) { return .choose(combo, warning: nil) }
+        if let side = onlySide, let key = DictationKey.modifier(keycode: side) { return Self.unlessDictation(key, dictation) }
+        return .ignore
+    }
+
+    private mutating func reset() {
+        peak = []
+        onlySide = nil
+    }
+
+    private static func unlessDictation(_ key: DictationKey, _ dictation: DictationKey) -> KeyRecorder.Pick {
+        if key.kind == dictation.kind && key.keycode == dictation.keycode {
+            return .refuse("That's your dictation key. Pick a different one.")
+        }
+        return .choose(key, warning: key.typesCharacters ? "“\(key.label)” won't type while Mispr Flow is running." : nil)
+    }
+}
+
+/// Spoken nicknames for apps (also added by voice: “set nickname C to Chrome”).
+struct NicknameList: View {
+    @EnvironmentObject var model: AppModel
+    @State private var nickname = ""
+    @State private var app = ""
+    @State private var apps: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("NICKNAMES").font(.system(size: 10.5, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.secondary)
+            ForEach(model.nicknames.sorted(by: { $0.key < $1.key }), id: \.key) { nick, target in
+                HStack(spacing: 8) {
+                    Text("“\(nick)”").font(.system(size: 13, weight: .medium))
+                    Image(systemName: "arrow.right").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                    Text(target).font(.system(size: 13))
+                    Spacer()
+                    Button { model.setNickname(nick, app: nil) } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(Theme.secondary).help("Remove this nickname")
+                }
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.content))
+            }
+            HStack(spacing: 8) {
+                TextField("Nickname, e.g. C", text: $nickname).textFieldStyle(.roundedBorder).frame(width: 150)
+                Picker("", selection: $app) {
+                    Text("Choose an app").tag("")
+                    ForEach(apps, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().frame(maxWidth: 220)
+                Button("Add") {
+                    model.setNickname(nickname, app: app)
+                    nickname = ""
+                    app = ""
+                }
+                .disabled(nickname.trimmingCharacters(in: .whitespaces).isEmpty || app.isEmpty)
+            }
+        }
+        .onAppear { if apps.isEmpty { apps = Self.installedApps() } }
+    }
+
+    /// App names in the usual folders, like the engine finds them (mispr/apps.py).
+    static func installedApps(in dirs: [String] = ["/Applications", "/Applications/Utilities", "/System/Applications",
+                                                   "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]) -> [String] {
+        var names = Set<String>()
+        for dir in dirs {
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? [] where name.hasSuffix(".app") {
+                names.insert(String(name.dropLast(4)))
+            }
+        }
+        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 }

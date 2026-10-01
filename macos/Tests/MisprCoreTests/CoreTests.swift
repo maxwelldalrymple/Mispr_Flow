@@ -1010,3 +1010,46 @@ final class NoteEditingTests: XCTestCase {
         XCTAssertEqual(ContactBook.renamed(["A": card, "B": Contact(phone: "1")], "A", to: "B"), ["B": Contact(phone: "1")])
     }
 }
+
+/// The app switcher key and nicknames in settings.json, and combo shortcuts.
+final class SwitchKeyTests: XCTestCase {
+    func testCombosNeedAKeyOrTwoModifiersAndReadInMacOrder() {
+        XCTAssertNil(DictationKey.combo(mods: ["option"]))
+        XCTAssertNil(DictationKey.combo(mods: []))
+        XCTAssertNil(DictationKey.combo(mods: ["hyper", "option"]))
+        let both = DictationKey.combo(mods: ["option", "control"])
+        XCTAssertEqual(both?.label, "⌃⌥")
+        XCTAssertEqual(both?.mods, ["control", "option"])
+        XCTAssertEqual(both?.keycode, -1)
+        let withKey = DictationKey.combo(mods: ["command", "shift"], key: DictationKey.key(keycode: 1, characters: "s"))
+        XCTAssertEqual(withKey?.label, "⇧⌘S")
+        XCTAssertEqual(withKey?.keycode, 1)
+    }
+
+    func testCombosRoundTripThroughJSONWithANullKey() throws {
+        let combo = try XCTUnwrap(DictationKey.combo(mods: ["control", "option"]))
+        XCTAssertTrue(combo.json["keycode"] is NSNull)
+        let back = try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: combo.json))
+        XCTAssertEqual(DictationKey(json: back), combo)
+        XCTAssertNil(DictationKey(json: ["kind": "combo", "mods": []]))
+        XCTAssertEqual(DictationKey(json: DictationKey.fn.json), .fn)
+    }
+
+    func testSwitchKeyAndNicknamesInTheSettingsFile() throws {
+        let file = SettingsFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).json"))
+        XCTAssertNil(file.switchKey)
+        XCTAssertEqual(file.nicknames, [:])
+        let combo = try XCTUnwrap(DictationKey.combo(mods: ["control", "option"]))
+        try file.setSwitchKey(combo)
+        try file.setNicknames(["c": "Google Chrome"])
+        XCTAssertEqual(file.switchKey, combo)
+        XCTAssertEqual(file.nicknames, ["c": "Google Chrome"])
+        try file.setSwitchKey(nil)
+        XCTAssertNil(file.switchKey)
+        XCTAssertTrue(file.read()["switch_hotkey"] is NSNull)  // the engine reads null as off
+    }
+
+    func testSettingsChangedEventParses() {
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "settings_changed"}"#), .settingsChanged)
+    }
+}

@@ -1482,6 +1482,88 @@ class TestNoteWindowHooks:
         assert controller.state == W.IDLE and seen == [] and controller.sounds.played == []
 
 
+class TestAppSwitcher:
+    """Hold the switch key, say an app, let go: it comes forward. Nicknames by voice."""
+
+    APPS = {"Google Chrome": "/A/Google Chrome.app", "Terminal": "/S/Terminal.app"}
+
+    @pytest.fixture
+    def fronted(self, controller, monkeypatch):
+        brought = []
+        monkeypatch.setattr(W.apps, "find_apps", lambda: dict(self.APPS))
+        monkeypatch.setattr(W.apps, "running_apps", lambda: {"Terminal": "/S/Terminal.app"})
+        monkeypatch.setattr(W.apps, "bring_to_front", brought.append)
+        return brought
+
+    def say(self, controller, clock, text):
+        controller.switch_key("down")
+        assert controller.state == W.HOLD and controller.hold_source == "switch"
+        assert controller.notice[0] == W.SWITCH_NOTICE
+        clock.advance(1.0)
+        controller.switch_key("up")
+        assert controller.state == W.PROCESSING
+        audio, on_done, post = controller.transcriber.calls[-1]
+        assert post is None  # raw Whisper text, no cleanup
+        on_done(text, text, None, 0.2)
+
+    def test_saying_an_app_brings_it_forward(self, controller, clock, fronted):
+        self.say(controller, clock, "Open Chrome.")
+        assert fronted == ["/A/Google Chrome.app"]
+        assert controller.state == W.IDLE and controller.notice[0] == "→ Google Chrome"
+        assert controller.sounds.played == ["start", "stop", "paste"]
+        assert controller.pasted == [] and controller.copied == []  # nothing typed anywhere
+
+    def test_running_app_path_is_used(self, controller, clock, fronted):
+        self.say(controller, clock, "terminal")
+        assert fronted == ["/S/Terminal.app"]
+
+    def test_nickname_by_voice_then_use_it(self, controller, clock, fronted):
+        changed = []
+        controller.on_settings_changed = lambda: changed.append(True)
+        self.say(controller, clock, "Set nickname Scooby Snacks to Chrome.")
+        assert W.settings.load().app_nicknames == {"scooby snacks": "Google Chrome"}
+        assert changed == [True] and controller.notice[0] == "“scooby snacks” now opens Google Chrome"
+        self.say(controller, clock, "Scooby snacks!")
+        assert fronted == ["/A/Google Chrome.app"]
+
+    def test_unknown_app_errors(self, controller, clock, fronted):
+        self.say(controller, clock, "Open Flurbo")
+        assert fronted == [] and controller.sounds.played[-1] == "error"
+        assert controller.notice[0] == "No app called “flurbo”"
+
+    def test_nickname_for_an_unknown_app_errors(self, controller, clock, fronted):
+        self.say(controller, clock, "nickname F for Flurbo")
+        assert W.settings.load().app_nicknames == {} and controller.sounds.played[-1] == "error"
+
+    def test_silence_alerts(self, controller, clock, fronted):
+        self.say(controller, clock, "")
+        assert fronted == [] and controller.sounds.played[-1] == "alert"
+
+    def test_audio_is_wiped_and_never_saved(self, controller, clock, fronted, monkeypatch):
+        saved = []
+        monkeypatch.setattr(controller, "_save", lambda *a, **kw: saved.append(a))
+        self.say(controller, clock, "Chrome")
+        assert saved == [] and controller.recorder.wiped
+
+    def test_quick_tap_or_shortcut_drops_it(self, controller, clock, fronted):
+        controller.switch_key("down")
+        clock.advance(0.05)
+        controller.switch_key("up")
+        assert controller.state == W.IDLE and controller.transcriber.calls == []
+        controller.switch_key("down")
+        clock.advance(1.0)
+        controller.switch_key("combo")
+        assert controller.state == W.IDLE and controller.transcriber.calls == []
+
+    def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
+        controller.switch_key("up")  # no press: nothing
+        controller.begin_handsfree()
+        controller.switch_key("down")
+        assert controller.state == W.HANDSFREE  # dictating: left alone
+        controller.fn_down()  # fn's up doesn't finish a switch, and vice versa
+        assert controller.hold_source != "switch"
+
+
 class TestIncognitoNeverUsesTheClipboard:
     def deliver(self, controller, monkeypatch, target):
         monkeypatch.setattr(W.context, "focused_text_target", lambda: (target, "App"))

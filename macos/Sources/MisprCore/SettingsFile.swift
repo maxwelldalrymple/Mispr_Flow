@@ -32,6 +32,20 @@ public struct SettingsFile {
         try set("hotkey", key.json)
     }
 
+    /// The app switcher key, or nil when it's off.
+    public var switchKey: DictationKey? { DictationKey(json: read()["switch_hotkey"]) }
+
+    public func setSwitchKey(_ key: DictationKey?) throws {
+        try set("switch_hotkey", key?.json ?? NSNull())
+    }
+
+    /// Spoken nicknames for apps: ["c": "Google Chrome"].
+    public var nicknames: [String: String] { read()["app_nicknames"] as? [String: String] ?? [:] }
+
+    public func setNicknames(_ nicknames: [String: String]) throws {
+        try set("app_nicknames", nicknames)
+    }
+
     public func set(_ key: String, _ value: Any) throws {
         var object = read()
         object[key] = value

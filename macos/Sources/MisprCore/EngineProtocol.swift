@@ -22,6 +22,8 @@ public enum EngineEvent: Equatable {
     case openNote(start: Bool)
     /// A meeting recording started or stopped (from the note window or the widget's pill).
     case meeting(active: Bool)
+    /// The engine changed settings.json itself (a nickname set by voice): re-read it.
+    case settingsChanged
     /// A well-formed event this version doesn't know.
     case unknown(String)
 
@@ -64,6 +66,8 @@ public enum EngineEvent: Equatable {
         case "answer":
             return .answer(meeting: object["id"] as? String ?? "", question: object["question"] as? String ?? "",
                            text: object["text"] as? String ?? "")
+        case "settings_changed":
+            return .settingsChanged
         case "meeting":
             guard let active = object["active"] as? Bool else { return nil }
             return .meeting(active: active)
