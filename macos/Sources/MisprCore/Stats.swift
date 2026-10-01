@@ -69,7 +69,7 @@ public struct Stats: Equatable {
 
     /// Only dictations whose words were delivered (pasted or copied) count; cancelled ones don't.
     public init(_ records: [Recording], now: Date = Date(), calendar: Calendar = .current) {
-        let used = records.filter { $0.status != .cancelled && $0.words > 0 }
+        let used = records.filter { $0.status.isDictation && $0.words > 0 }
         dictations = used.count
         totalWords = used.reduce(0) { $0 + $1.words }
         let minutes = used.reduce(0.0) { $0 + $1.durationS } / 60
@@ -164,7 +164,7 @@ public struct VoiceProfile: Equatable {
     public init() {}
 
     public init(_ records: [Recording], calendar: Calendar = .current, top: Int = 3) {
-        let used = records.filter { $0.status != .cancelled && $0.words > 0 }
+        let used = records.filter { $0.status.isDictation && $0.words > 0 }
         guard !used.isEmpty else { return }
         var counts: [String: Int] = [:]
         for record in used {
@@ -295,7 +295,7 @@ public struct MoreInsights: Equatable {
     public init() {}
 
     public init(_ records: [Recording], now: Date = Date(), calendar: Calendar = .current) {
-        let used = records.filter { $0.status != .cancelled && $0.words > 0 }
+        let used = records.filter { $0.status.isDictation && $0.words > 0 }
         guard !used.isEmpty else { return }
 
         let words = used.reduce(0) { $0 + $1.words }

@@ -40,6 +40,13 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(HomeView.commands.count, 6)  // short enough to fit beside Shortcuts
     }
 
+    func testHomeCommandsTab() {
+        check(HomeView(showCommands: true))  // none yet: the empty state
+        let records = [Samples.recording("a"), Samples.recording("c", text: "new tab", status: .command)]
+        XCTAssertEqual(HomeView.tab(records, commands: true).map(\.id), ["c"])
+        XCTAssertEqual(HomeView.tab(records, commands: false).map(\.id), ["a"])
+    }
+
     func testHomeEmpty() {
         let empty = TestApp()
         drainMain()

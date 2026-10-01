@@ -8,6 +8,12 @@ struct HomeView: View {
     @State private var query = ""
     @State private var searching = false
     @State private var groups: [DayGroup] = []  // grouped once per change, not on every redraw
+    /// History tab: dictation (false) or voice commands (true).
+    @State private var showCommands: Bool
+
+    init(showCommands: Bool = false) {
+        _showCommands = State(initialValue: showCommands)
+    }
 
     var body: some View {
         // Only the history scrolls (lazily); the greeting and side cards stay put.
@@ -29,6 +35,7 @@ struct HomeView: View {
         .onAppear(perform: regroup)
         .onChange(of: model.recordings) { regroup() }
         .onChange(of: query) { regroup() }
+        .onChange(of: showCommands) { regroup() }
     }
 
     private func regroup() {
@@ -49,13 +56,38 @@ struct HomeView: View {
     // MARK: - History
 
     private var filtered: [Recording] {
+        let tab = Self.tab(model.recordings, commands: showCommands)
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return model.recordings }
-        return model.recordings.filter { $0.transcript.localizedCaseInsensitiveContains(q) }
+        guard !q.isEmpty else { return tab }
+        return tab.filter { $0.transcript.localizedCaseInsensitiveContains(q) }
+    }
+
+    /// One history tab: voice commands, or everything else (dictation, including cancelled).
+    static func tab(_ records: [Recording], commands: Bool) -> [Recording] {
+        records.filter { ($0.status == .command) == commands }
+    }
+
+    private var historyTabs: some View {
+        HStack(spacing: 18) {
+            ForEach([false, true], id: \.self) { commands in
+                Button { showCommands = commands } label: {
+                    VStack(spacing: 6) {
+                        Text(commands ? "Commands" : "Dictation")
+                            .font(.system(size: 13, weight: showCommands == commands ? .semibold : .regular))
+                            .foregroundStyle(showCommands == commands ? Theme.text : Theme.secondary)
+                        Rectangle().fill(showCommands == commands ? Theme.text : .clear).frame(height: 2)
+                    }
+                    .fixedSize()
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.bottom, 12)
     }
 
     private var history: some View {
         VStack(alignment: .leading, spacing: 0) {
+            historyTabs
             HStack {
                 sectionHeader(groups.first?.title ?? (model.recordings.isEmpty ? "History" : "No matches"))
                 Spacer()
@@ -100,11 +132,14 @@ struct HomeView: View {
     private var emptyState: some View {
         Card(padding: 28) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(model.recordings.isEmpty ? "Your dictations will appear here" : "Nothing matches “\(query)”")
+                let none = Self.tab(model.recordings, commands: showCommands).isEmpty
+                Text(none ? (showCommands ? "Your voice commands will appear here" : "Your dictations will appear here")
+                     : "Nothing matches “\(query)”")
                     .font(Theme.display(20))
-                Text(model.recordings.isEmpty
-                     ? "Hold fn anywhere and speak. Incognito dictations are never saved."
-                     : "Search looks through the text of every saved dictation.")
+                Text(none
+                     ? (showCommands ? "Hold your app switcher key and say “Chrome” or “new tab”."
+                        : "Hold fn anywhere and speak. Incognito dictations are never saved.")
+                     : "Search looks through the text of every saved \(showCommands ? "command" : "dictation").")
                     .font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }
         }
@@ -224,6 +259,9 @@ struct HistoryRow: View {
                 }
                 if record.status == .copied {
                     Text("No text box · copied to clipboard").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                }
+                if record.status == .command {
+                    Label("Voice command", systemImage: "command").font(.system(size: 11)).foregroundStyle(Theme.accent)
                 }
                 if hovering, let app = record.app?.app {
                     Text(app + (record.app?.pageTitle.map { " · \($0)" } ?? ""))

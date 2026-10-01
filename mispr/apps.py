@@ -13,7 +13,7 @@ APP_DIRS = (
     "/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
     str(Path.home() / "Applications"), "/System/Library/CoreServices/Applications",
 )
-FUZZY_CUTOFF = 0.75  # how close a misheard name must be (difflib ratio)
+FUZZY_CUTOFF = 0.82  # how close a misheard name must be (difflib ratio)
 
 # "set nickname scooby snacks to chrome", "nickname C for Chrome", "set the nickname for Chrome to C".
 _NICKNAME_PATTERNS = (
@@ -403,36 +403,58 @@ def running_apps():
     return out
 
 
-def match(name, apps, nicknames=None, running=()):
-    """The app `name` refers to: a nickname, an exact name, a word of a name ("chrome" ->
-    "Google Chrome"), a prefix, or a close-sounding name. Running apps win ties. None if unsure."""
+# Words in many app names that say nothing about which app ("Logic Pro", "Visual Studio Code").
+GENERIC_WORDS = {"pro", "app", "apps", "studio", "desktop", "mac", "for", "the", "plus", "mini", "lite", "player",
+                 "helper", "one", "go", "x", "air", "max", "free", "beta", "new", "edition", "community"}
+
+
+def match_scored(name, apps, nicknames=None, running=()):
+    """(app, strong) for what was said, or (None, False). Strong: a nickname, the exact name, the
+    name without spaces ("face time"), or one distinctive word of it ("chrome"). Weak: a near-prefix, a distinctive word of the name,
+    a prefix, or a close-sounding name, used only for apps already open (see the widget).
+    Generic words ("pro") never match, and a word that fits two apps is too unsure to use."""
     said = normalize(name)
     if not said:
-        return None
+        return None, False
     for nick, app in (nicknames or {}).items():
         if normalize(nick) == said:
-            return app
+            return app, True
     by_norm = {}
     for app in sorted(apps, key=lambda a: (a not in running, len(a))):
         by_norm.setdefault(normalize(app), app)
     if said in by_norm:
-        return by_norm[said]
+        return by_norm[said], True
     squashed = said.replace(" ", "")
     for norm, app in by_norm.items():  # "face time" -> FaceTime, "vs code" -> "VS Code"
         if norm.replace(" ", "") == squashed:
-            return app
-    if len(said) >= 3:
-        for norm, app in by_norm.items():  # "photo" -> Photos (not Photo Booth)
-            if norm.startswith(said) and len(norm) - len(said) <= 2:
-                return app
-        for norm, app in by_norm.items():  # "chrome" -> Google Chrome, "code" -> Visual Studio Code
-            if said in norm.split() or (" " in said and said in norm):
-                return app
-        for norm, app in by_norm.items():  # "photo" -> Photos, "term" -> Terminal
-            if norm.startswith(said):
-                return app
-    close = difflib.get_close_matches(said, list(by_norm), n=1, cutoff=FUZZY_CUTOFF)
-    return by_norm[close[0]] if close else None
+            return app, True
+    if len(said) >= 3 and said not in GENERIC_WORDS:
+        near = [app for norm, app in by_norm.items() if norm.startswith(said) and len(norm) - len(said) <= 2]
+        if near:  # "photo" -> Photos
+            return near[0], False
+        words = {app for norm, app in by_norm.items() if said in norm.split() or (" " in said and said in norm)}
+        if words:  # "chrome" -> Google Chrome; a distinctive word (5+ letters) is as good as the name
+            share = lambda app: len(said) / len(normalize(app).replace(" ", ""))
+            ranked = sorted(words, key=lambda app: (app not in running, -share(app)))
+            if len(ranked) == 1 or share(ranked[0]) >= 1.3 * share(ranked[1]):
+                return ranked[0], len(said) >= 5  # clearly the one ("Google Chrome" over "Chrome Remote Desktop")
+            open_ = [app for app in ranked if app in running]
+            if len(open_) == 1:  # two apps share it, one is open
+                return open_[0], False
+            return None, False  # too close to call: don't guess
+        prefixed = [app for norm, app in by_norm.items() if norm.startswith(said)]
+        if len(prefixed) == 1:  # "term" -> Terminal
+            return prefixed[0], False
+    close = difflib.get_close_matches(said, list(by_norm), n=2, cutoff=FUZZY_CUTOFF)
+    if len(close) == 1 or (len(close) == 2 and difflib.SequenceMatcher(None, said, close[0]).ratio()
+                           - difflib.SequenceMatcher(None, said, close[1]).ratio() > 0.08):
+        return by_norm[close[0]], False
+    return None, False
+
+
+def match(name, apps, nicknames=None, running=()):
+    """The app `name` refers to, or None if unsure (see match_scored)."""
+    return match_scored(name, apps, nicknames, running)[0]
 
 
 def bring_to_front(path, workspace=None):

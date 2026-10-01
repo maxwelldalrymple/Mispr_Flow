@@ -26,6 +26,10 @@ public struct AppRef: Codable, Hashable {
 public struct Recording: Codable, Identifiable, Hashable {
     public enum Status: String, Codable {
         case pasted, copied, cancelled
+        case command  // a voice command (app switcher), not dictation
+
+        /// Dictation that produced text (what word counts and speed are measured on).
+        public var isDictation: Bool { self == .pasted || self == .copied }
     }
 
     public var id: String

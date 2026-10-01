@@ -238,3 +238,24 @@ class TestScroll:
 
     def test_top_and_bottom_are_cmd_arrows(self):
         assert apps.SHORTCUTS["top"] == ("up", "cmd") and apps.SHORTCUTS["bottom"] == ("down", "cmd")
+
+
+class TestConfidentMatching:
+    """Never open the wrong app: "Pro." (a clipped "Chrome") once opened Logic Pro."""
+
+    APPS = {"Google Chrome": 1, "Logic Pro": 1, "Final Cut Pro": 1, "Terminal": 1, "Photos": 1, "Photo Booth": 1,
+            "FaceTime": 1, "Visual Studio Code": 1, "Safari": 1}
+
+    @pytest.mark.parametrize("said,running,expected", [
+        ("pro", (), (None, False)),  # generic word: no match at all
+        ("Pro", ("Logic Pro",), (None, False)),  # not even when Logic Pro is open
+        ("chrome", (), ("Google Chrome", True)),  # one distinctive word: sure enough to open it
+        ("logic", (), ("Logic Pro", True)),
+        ("face time", (), ("FaceTime", True)),
+        ("code", (), ("Visual Studio Code", False)),  # short word: only if it's already open
+        ("term", (), ("Terminal", False)),
+        ("sapari", (), ("Safari", False)),  # sounds close: only if open
+        ("crome", (), (None, False)),
+    ])
+    def test_scores(self, said, running, expected):
+        assert apps.match_scored(said, self.APPS, None, running) == expected

@@ -1539,11 +1539,20 @@ class TestAppSwitcher:
         self.say(controller, clock, "")
         assert fronted == [] and controller.sounds.played[-1] == "alert"
 
-    def test_audio_is_wiped_and_never_saved(self, controller, clock, fronted, monkeypatch):
+    def test_commands_go_into_history_then_audio_is_wiped(self, controller, clock, fronted, monkeypatch):
         saved = []
         monkeypatch.setattr(controller, "_save", lambda *a, **kw: saved.append(a))
+        self.say(controller, clock, "Chrome.")
+        assert saved == [(W.storage.COMMAND, "Chrome.")] and controller.recorder.wiped
+        self.say(controller, clock, "")
+        assert len(saved) == 1  # nothing said: nothing saved
+
+    def test_incognito_commands_are_not_saved(self, controller, clock, fronted, monkeypatch):
+        written = []
+        monkeypatch.setattr(W.storage, "save_recording", lambda *a, **kw: written.append(kw))
+        controller.settings.incognito = True
         self.say(controller, clock, "Chrome")
-        assert saved == [] and controller.recorder.wiped
+        assert written == []
 
     def test_quick_tap_or_shortcut_drops_it(self, controller, clock, fronted):
         controller.switch_key("down")
@@ -1673,6 +1682,18 @@ class TestAppSwitcher:
         self.say(controller, clock, "Scroll down")
         self.say(controller, clock, "scroll to the top")
         assert scrolled == [-450] and pressed == ["top"] and controller.notice[0] == "To the top"
+
+    def test_a_guess_never_opens_an_app_that_isnt_running(self, controller, clock, fronted):
+        self.APPS["Logic Pro"] = "/A/Logic Pro.app"
+        try:
+            self.say(controller, clock, "Pro.")  # what a clipped "Chrome" sounded like
+            assert fronted == [] and controller.notice[0] == "No app called “pro”"
+            self.say(controller, clock, "Termin")  # a prefix of an app that's open: fine
+            assert fronted == ["/S/Terminal.app"]
+            self.say(controller, clock, "Logi")  # a guess at one that isn't open: asks for the name
+            assert fronted == ["/S/Terminal.app"] and controller.notice[0] == "Not sure you meant Logic Pro: say its full name"
+        finally:
+            del self.APPS["Logic Pro"]
 
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing

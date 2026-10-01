@@ -1235,3 +1235,16 @@ final class SpeakerMergeTests: XCTestCase {
         XCTAssertNil(EngineEvent.parse(EngineEvent.prefix + #"{"event": "speakers_merged", "id": "m"}"#))
     }
 }
+
+
+/// Voice commands are kept in history but aren't dictation: no word counts or speed.
+final class CommandHistoryTests: XCTestCase {
+    func testCommandsAreReadAndLeftOutOfStats() throws {
+        let json = #"{"id": "c", "status": "command", "transcript": "new tab", "started_at": "2026-10-01T12:00:00.000Z", "ended_at": "2026-10-01T12:00:01.000Z", "duration_s": 1.0, "words": 2}"#
+        let record = try RecordingStore.makeDecoder().decode(Recording.self, from: Data(json.utf8))
+        XCTAssertEqual(record.status, .command)
+        XCTAssertFalse(record.status.isDictation)
+        XCTAssertTrue(Recording.Status.pasted.isDictation && Recording.Status.copied.isDictation)
+        XCTAssertEqual(Stats([record]).totalWords, 0)
+    }
+}

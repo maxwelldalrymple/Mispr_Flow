@@ -32,6 +32,7 @@ SAMPLE_RATE = 16_000
 PASTED = "pasted"
 COPIED = "copied"  # no text box was focused: left on the clipboard instead
 CANCELLED = "cancelled"
+COMMAND = "command"  # a voice command to the app switcher ("new tab", "chrome beside vs code")
 
 
 def _stem(t):

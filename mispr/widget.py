@@ -606,6 +606,8 @@ class WidgetController:
         """Act on what was said: teach a nickname, or bring an app to the front. The audio is
         wiped and never saved (switching apps isn't dictation history)."""
         log(f"switch heard {text!r}")
+        if text and text.strip():
+            self._save(storage.COMMAND, text.strip())  # into history like dictation (never in Incognito)
         self._wipe("app switch")
         self.to_idle()
         command = apps.parse(text or "")
@@ -625,8 +627,13 @@ class WidgetController:
             return
         running = apps.running_apps()
 
+        self._unsure = None
+
         def find(name):  # (app name, path) or None
-            target = apps.match(name, {**installed, **running}, self.settings.app_nicknames, running)
+            target, strong = apps.match_scored(name, {**installed, **running}, self.settings.app_nicknames, running)
+            if target is not None and not strong and target not in running:
+                self._unsure = target  # never open an app that isn't running on a guess
+                return None
             path = running.get(target) or installed.get(target)
             return (target, path) if path else None
 
@@ -741,6 +748,9 @@ class WidgetController:
         self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
     def _switch_failed(self, message):
+        if getattr(self, "_unsure", None) and message.startswith("No app called"):
+            message = f"Not sure you meant {self._unsure}: say its full name"
+            self._unsure = None
         self.sounds.play(sounds.ERROR)
         self.show_notice(message, SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
