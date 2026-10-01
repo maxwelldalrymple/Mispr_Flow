@@ -97,10 +97,10 @@ Every function has tests, and Python line coverage is 96%. Tests never touch the
 ## Documentation
 
 - **Features:** [dictation](docs/features/dictation.md) · [voice commands](docs/features/voice-commands.md) · [meeting notes](docs/features/meeting-notes.md) · [notetaker](docs/features/notetaker.md) · [main window](docs/features/main-window.md) · [setup](docs/features/setup-and-permissions.md) · [privacy](docs/features/privacy.md)
-- **How it works:** [architecture](docs/architecture.md) · [engine ↔ app protocol](docs/engine-protocol.md) · [models](docs/models.md) · [testing](docs/testing.md) · [development](docs/development.md)
-- **Code:** [mispr/](mispr/README.md) · [macos/](macos/README.md) · [tests/](tests/README.md) · [tools/](tools/README.md) · [logs/](logs/README.md)
+- **How it works:** [architecture](docs/architecture.md) · [engine ↔ app protocol](docs/engine-protocol.md) · [models](docs/models.md) · [data formats](docs/data-formats.md) · [testing](docs/testing.md) · [every test](docs/tests/README.md) · [development](docs/development.md)
+- **Code:** [mispr/](mispr/README.md) ([assets](mispr/assets/README.md)) · [macos/](macos/README.md) ([MisprCore](macos/Sources/MisprCore/README.md), [MisprFlow](macos/Sources/MisprFlow/README.md), [Views](macos/Sources/MisprFlow/Views/README.md), [Swift tests](macos/Tests/README.md)) · [tests/](tests/README.md) ([golden](tests/golden/README.md)) · [tools/](tools/README.md) · [logs/](logs/README.md) · [docs/](docs/README.md)
 - **Help:** [getting started](docs/getting-started.md) · [troubleshooting](docs/troubleshooting.md) · [contributing](CONTRIBUTING.md) · [changelog](CHANGELOG.md) · [plan and roadmap](plan.md)
-- **Knowledge base**, to bring an AI assistant up to speed on everything: [knowledge-base/](knowledge-base/README.md)
+- **Knowledge base**, to bring an AI assistant up to speed on everything, including the full chat history: [knowledge-base/](knowledge-base/README.md) (paste [ALL-IN-ONE.md](knowledge-base/ALL-IN-ONE.md))
 
 ## Status
 

@@ -35,6 +35,9 @@ How Mispr Flow turns a press of fn into pasted text. For decisions and roadmap, 
 | `whisper-run` | Transcription + cleanup for one dictation | whisper.cpp and llama.cpp release the GIL, so the UI stays live |
 | `mic-stop` | `AVAudioEngine.stop()` | Can never freeze the UI, even if CoreAudio hangs |
 | `model-setup` | First-run downloads | Progress is stored as a float the widget draws |
+| `meeting-worker` | Final meeting text: speech detection, Whisper turbo segments, speaker fingerprints, summaries, Q&A | One queue so chunks come back in order |
+| `meeting-preview` | Live meeting previews with Whisper `base.en` | Its own thread so previews never delay final text |
+| `find-folder` | "open folder" / "open …" searches (Spotlight, then a walk) | Up to 1.5 s of disk work off the main thread |
 
 All workers use `threads.start_daemon()`, so none can keep the app from quitting. Results come back to the main thread through `AppHelper.callAfter`.
 
@@ -45,6 +48,8 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
   - the 🌐 key's own key events (keycode 179): stops the Emoji & Symbols picker;
   - hands-free shortcuts, and the matching key-ups, when `WidgetController.handle_key` claims them (space/return/enter/delete).
 - The callback only inspects state and defers work with `callAfter`. An active tap delays every keystroke system-wide until it returns, so it must stay fast.
+- The same tap watches the **app switcher key** (`switch_trigger`): a key (swallowed), one side of a modifier (passes through), or a combo of modifiers with or without a key. It reports `down` / `up` / `combo` (another key pressed while held, which cancels) to `widget.switch_key`.
+- ⌥M (new meeting note) is swallowed so it doesn't type "µ".
 - Without Accessibility it falls back to a listen-only session tap, and upgrades itself every 2 s once Accessibility is granted.
 - If macOS disables the tap for being slow, the callback re-enables it.
 
@@ -90,9 +95,10 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 
 ## First-run setup (`onboarding.py`)
 
-- `SetupFlow` is pure logic: the current step, which permissions are missing, whether Continue is allowed, and when the window should show (`needed()`). Microphone and Accessibility are required; Screen & System Audio is optional.
+- `SetupFlow` is pure logic: the current step (Welcome, Permissions, Optional features, Models, Ready), which permissions are missing, whether Continue is allowed, and when the window should show (`needed()`). Microphone and Accessibility are required (page 2); Screen & System Audio, Full Disk Access and Control Finder are optional (page 3, never blocking).
 - `allow(key)`: the first click shows the one-time system prompt; later clicks (or a microphone that was already denied) open the matching System Settings pane.
-- `SetupWindow` draws the four pages with standard AppKit controls (so it follows light/dark mode) and refreshes every 0.5 s: checkmarks, the model progress bar (from the widget's download state), and the Continue button.
+- Permission checks never prompt (the window refreshes on a timer): Finder control uses `AEDeterminePermissionToAutomateTarget` without asking, Full Disk Access reads the protected TCC database; only **Allow…** asks.
+- `SetupWindow` draws the five pages with standard AppKit controls (so it follows light/dark mode) and refreshes every 0.5 s: checkmarks, the model progress bar (from the widget's download state), and the Continue button.
 - Finishing sets `onboarded` in `settings.json`.
 
 ## Storage and settings
@@ -103,6 +109,7 @@ All workers use `threads.start_daemon()`, so none can keep the app from quitting
 
 ## Lifecycle (`app.py`)
 
+0. **Hosted mode:** when started by `Mispr Flow.app` (`MISPR_HOSTED=1`), the engine skips its own windows and menu, connects to the app (`_connect_host`), and quits when the app does.
 1. Single-instance lock (`$TMPDIR/Mispr_Flow.lock`); a second copy exits.
 2. Regular activation policy (Dock icon, like Wispr Flow); the process is renamed "Mispr Flow" (`_brand_process`) and the Dock tile uses `assets/AppIcon.icns`; an app menu (About, Setup Guide…, Hide, Quit); clicking the Dock icon opens the setup window until the main window exists; menu-bar template icon.
 3. `WidgetController.start()`: builds the panel, prepares the mic engine, then either loads the models or enters SETUP.

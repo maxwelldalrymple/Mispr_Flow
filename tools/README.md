@@ -4,6 +4,7 @@
 |---|---|
 | `build_app.sh [--open]` | Build and sign `build/Mispr Flow.app` (`--open` launches it) |
 | `make_signing_cert.sh`, `trust_signing_cert.sh` | A local code-signing certificate, so macOS permissions survive rebuilds |
+| `export_chat_history.py` | Export the Claude Code conversation into `knowledge-base/07-chat-log.md` and `08-your-messages.md` |
 | `build_knowledge_base.py` | Write `knowledge-base/ALL-IN-ONE.md` from the knowledge base and guides |
 | `test_catalog.py` | Write `logs/<time>_test-catalog.md`: every Python and Swift test with what it checks |
 | `stress_test.py` | Repeated, random-order and parallel test runs |

@@ -4,7 +4,12 @@
 
 - **Branches:** make a new branch for each change (the user once asked to keep working on the current branch; follow what they say).
 - **Tests:** run only the tests covering a change, and the full suite only when a change is cross-cutting. When the user says "don't run the tests", don't.
-- **Logs:** every change gets a `logs/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` with real results, including which tests ran and what they check.
+- **Logs:** every change gets a `logs/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` with the **actual results** (the user asked for real stress-test output, not just a summary), including which tests ran and what they check.
+- **Don't rerun all the tests** unless the change affects them ("do not rerun all tests unless they impact the changes you made").
+- **"Ask me"** before big product choices (setup screens, UI layouts). Offer options with a recommendation.
+- **The end goal** is a downloadable app (DMG) others can install on M1+ Macs. Keep that in mind for packaging choices.
+- **Speed matters** to the user ("how long is this gonna take"). Say what you're doing, and finish and restart the app promptly when asked.
+- **"Restart"** while working means wrap up what's running and relaunch the app so the user can try it.
 - **Paths:** folder names the user mentions are project-relative (`/voice-recordings` means `<project>/voice-recordings`).
 - **UI:** ask before designing UI. When asked, offer choices with a recommended option.
 - **Copying:** never copy Wispr Flow's code, audio or assets. Originals only.
