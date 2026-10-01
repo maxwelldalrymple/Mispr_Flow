@@ -57,7 +57,7 @@ from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import copy_text, paste_text, type_text
+from .paste import ENTER_DELAY, copy_text, paste_text, press_enter, type_text
 from .transcribe import Transcriber
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -450,6 +450,8 @@ class WidgetController:
             else:
                 # Incognito types the words in directly so they never pass through the clipboard.
                 (type_text if incognito else paste_text)(text)
+                if self.settings.auto_enter:
+                    AppHelper.callLater(ENTER_DELAY, press_enter)  # send it, so you can just talk
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.

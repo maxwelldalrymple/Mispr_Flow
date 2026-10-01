@@ -5,7 +5,7 @@ import Foundation
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "cleanup": true, "sounds": true, "onboarded": false]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

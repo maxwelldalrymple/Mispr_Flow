@@ -293,6 +293,18 @@ class TestTypeText:
         assert all(Quartz.CGEventGetFlags(e) & Quartz.kCGEventFlagMaskCommand == 0 for e in events)
 
 
+class TestPressEnter:
+    """Auto-Enter's keypress: one Return, down then up, with no modifiers."""
+
+    def test_one_return_with_no_modifiers(self):
+        events = []
+        paste.press_enter(post=events.append)
+        assert [Quartz.CGEventGetType(e) for e in events] == [Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp]
+        assert all(Quartz.CGEventGetIntegerValueField(e, Quartz.kCGKeyboardEventKeycode) == paste.KEY_RETURN for e in events)
+        assert all(Quartz.CGEventGetFlags(e) & (Quartz.kCGEventFlagMaskCommand | Quartz.kCGEventFlagMaskShift) == 0
+                   for e in events)
+
+
 class TestCopyText:
     def test_leaves_text_on_clipboard_without_cmd_v(self, board):
         board, posted = board

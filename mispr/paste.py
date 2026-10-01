@@ -64,6 +64,20 @@ def type_text(text, post=None):
             post(event)
 
 
+KEY_RETURN = 36
+ENTER_DELAY = 0.25  # seconds after the text goes in, so the app has taken the paste first
+
+
+def press_enter(post=None):
+    """Press Return once, with no modifiers (Auto-Enter: sends the message you just dictated)."""
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for down in (True, False):
+        event = Quartz.CGEventCreateKeyboardEvent(source, KEY_RETURN, down)
+        Quartz.CGEventSetFlags(event, 0)  # a held ⇧ or ⌘ would make it a new line or something else
+        post(event)
+
+
 def copy_text(text):
     """Leave `text` on the clipboard for the user to paste themselves (no ⌘V, no restore)."""
     pb = NSPasteboard.generalPasteboard()

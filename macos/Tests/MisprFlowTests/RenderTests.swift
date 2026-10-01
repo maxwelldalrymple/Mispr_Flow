@@ -117,6 +117,10 @@ final class RenderTests: XCTestCase {
         check(SetupCard(back: {}, turnOn: {}).frame(width: 440))
         check(KeyRecorder().padding())
         check(IncognitoSwitch().padding())
+        check(AutoEnterButton().scaleEffect(4).frame(width: 160, height: 120))  // off: just the ⏎ icon (enlarged: the blank check samples a sparse grid)
+        t.model.setSetting("auto_enter", true)
+        check(AutoEnterButton().padding())  // on: highlighted with its label
+        check(InfoCard(title: "T", lines: ["One.", "Two."]).padding(.bottom, 80))
         // A native pop-up menu button: AppKit doesn't paint it into an offscreen snapshot, so
         // this only checks it builds and lays out; its choices are tested below.
         render(SourceChip().padding(), model: t.model)

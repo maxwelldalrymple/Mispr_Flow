@@ -13,6 +13,9 @@ class Settings:
     # Incognito: recordings are wiped from memory right after use and never written to disk.
     # Off by default so history and usage stats can be tracked.
     incognito: bool = False
+    # Auto-Enter: press Return after the text lands in a text box (send chat messages hands-free).
+    # Off by default; only the button in the app's top bar turns it on.
+    auto_enter: bool = False
     # LLM cleanup of transcripts (fillers, self-corrections, punctuation); off = raw Whisper text.
     cleanup: bool = True
     # Sound cues (start, stop, paste...).

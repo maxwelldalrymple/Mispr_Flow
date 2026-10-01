@@ -832,6 +832,43 @@ class TestSoundCues:
         clock.advance(4.0)
         assert controller._notice_alpha() == 0.0
 
+    def test_auto_enter_presses_return_after_pasting(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(controller.pasted[:]))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Send this.", "send this", None, 1.0, "finished")
+        assert enters == [["Send this."]]  # Return comes after the text is in
+
+    def test_auto_enter_also_works_when_incognito_types(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        controller.settings.auto_enter = controller.settings.incognito = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.typed == ["Hi."] and enters == [True]
+
+    def test_auto_enter_never_presses_return_without_a_text_box(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.copied == ["Hi."] and enters == []
+
+    def test_no_return_unless_auto_enter_is_on(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        assert controller.settings.auto_enter is False  # off by default
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."] and enters == []
+
     def test_alert_when_nothing_was_heard(self, controller):
         controller.begin_handsfree()
         controller.finish()

@@ -10,6 +10,16 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(t.model.setting("cleanup"))
         XCTAssertTrue(t.model.setting("sounds"))
         XCTAssertFalse(t.model.setting("incognito"))
+        XCTAssertFalse(t.model.setting("auto_enter"))  // only the top-bar button turns it on
+    }
+
+    func testAutoEnterButtonTogglesTheSettingForTheEngine() {
+        let t = TestApp()
+        t.model.setSetting("auto_enter", true)
+        XCTAssertEqual(SettingsFile(url: t.settings).read()["auto_enter"] as? Bool, true)
+        t.model.setSetting("auto_enter", false)
+        XCTAssertFalse(t.model.setting("auto_enter"))
+        XCTAssertEqual(t.commands, [.reloadSettings, .reloadSettings])
     }
 
     func testChangingASettingWritesTheFileAndTellsTheEngine() {
