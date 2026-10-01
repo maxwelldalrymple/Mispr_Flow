@@ -216,3 +216,25 @@ class TestSeek:
         events.clear()
         apps.seek(-7, post=events.append)  # rounds to one press back
         assert len(events) == 2 and Quartz.CGEventGetIntegerValueField(events[0], Quartz.kCGKeyboardEventKeycode) == 123
+
+
+class TestScroll:
+    @pytest.mark.parametrize("said,expected", [
+        ("Scroll down.", ("scroll", -450)), ("scroll up", ("scroll", 450)), ("scroll down a little", ("scroll", -157)),
+        ("scroll down a lot", ("scroll", -1350)), ("scroll up more", ("scroll", 900)), ("scroll down 3 times", ("scroll", -1350)),
+        ("page down", ("scroll", -900)), ("scroll to the top", ("scroll_end", "top")),
+        ("scroll all the way to the bottom", ("scroll_end", "bottom")),
+        ("volume up", ("volume", "up")), ("up", ("switch", "up")),  # not a scroll without the word
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_scroll_events(self):
+        import Quartz
+        events = []
+        apps.scroll(-450, post=events.append)
+        assert len(events) == 3 and all(Quartz.CGEventGetType(e) == Quartz.kCGEventScrollWheel for e in events)
+        assert Quartz.CGEventGetIntegerValueField(events[0], Quartz.kCGScrollWheelEventPointDeltaAxis1) < 0
+
+    def test_top_and_bottom_are_cmd_arrows(self):
+        assert apps.SHORTCUTS["top"] == ("up", "cmd") and apps.SHORTCUTS["bottom"] == ("down", "cmd")

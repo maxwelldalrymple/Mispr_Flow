@@ -634,6 +634,12 @@ class WidgetController:
         if kind == "media":
             apps.press_media(command[1])
             return self._switch_done({"play": "Play / pause", "next": "Next", "previous": "Previous"}[command[1]])
+        if kind == "scroll":
+            apps.scroll(command[1])
+            return self._switch_done(f"Scrolled {'up' if command[1] > 0 else 'down'}")
+        if kind == "scroll_end":
+            apps.press_shortcut(command[1])
+            return self._switch_done(f"To the {command[1]}")
         if kind == "seek":  # "skip forward 30 seconds", "rewind 1 minute in chrome"
             _, seconds, name = command
             word = f"{'Forward' if seconds > 0 else 'Back'} {abs(seconds)}s"

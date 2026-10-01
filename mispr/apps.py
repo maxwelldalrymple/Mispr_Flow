@@ -84,6 +84,12 @@ _SOUND = (
      lambda m: ("seek", _seek_seconds(m), m["app"]) if (m["n"] or m["verb"] in ("skip", "jump", "fast")) else None),
     (re.compile(r"^rewind(?:\s+(?P<n>\d+)\s*(?P<unit>seconds?|secs?|minutes?|mins?)?)?(?:\s+(?:in|on)\s+(?P<app>.+))?$"),
      lambda m: ("seek", -abs(_seek_seconds(m, "back")), m["app"])),
+    (re.compile(r"^scroll\s+(?:(?:all\s+the\s+way\s+)?to\s+(?:the\s+)?)?(?P<end>top|bottom)$"),
+     lambda m: ("scroll_end", m["end"])),
+    (re.compile(r"^(?:scroll\s+)?(?P<dir>up|down)(?:\s+(?P<amt>a\s+little|a\s+bit|a\s+lot|more|a\s+page|lots))?"
+                r"(?:\s+(?P<n>\d+)(?:\s+times)?)?$"),
+     lambda m: ("scroll", _scroll_pixels(m)) if m.string.startswith("scroll") else None),
+    (re.compile(r"^page\s+(?P<dir>up|down)$"), lambda m: ("scroll", -SCROLL_PAGE if m["dir"] == "down" else SCROLL_PAGE)),
     (re.compile(r"^(?:next|skip)(?:\s+(?:track|song|one))?$"), lambda m: ("media", "next")),
     (re.compile(r"^(?:previous|last|go back a)\s+(?:track|song)$"), lambda m: ("media", "previous")),
     (re.compile(r"^(?:volume up|turn (?:it|the volume) up|louder|turn up(?: the volume)?)$"), lambda m: ("volume", "up")),
@@ -95,6 +101,25 @@ _SOUND = (
      lambda m: ("mute_tab", m["app"], not m["un"])),
     (re.compile(r"^(?P<un>un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"], not m["un"])),
 )
+
+SCROLL_STEP, SCROLL_PAGE = 450, 900  # pixels: about half a screen, about a screen
+
+
+def _scroll_pixels(m):
+    amount = {"a little": 0.35, "a bit": 0.35, "a lot": 3, "lots": 3, "more": 2, "a page": 2}.get(
+        " ".join((m["amt"] or "").split()), 1)
+    pixels = int(SCROLL_STEP * amount * (int(m["n"]) if m["n"] else 1))
+    return -pixels if m["dir"] == "down" else pixels
+
+
+def scroll(pixels, post=None):
+    """Scroll whatever is under the pointer, like a trackpad (+ up, - down)."""
+    import Quartz
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGHIDEventTap, event))
+    step = 120 if pixels > 0 else -120
+    for _ in range(max(1, abs(pixels) // 120)):  # several small steps scroll smoothly
+        post(Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitPixel, 1, step))
+
 
 SEEK_STEP = 5  # seconds per arrow-key press in YouTube, most web players, QuickTime, IINA
 SEEK_DEFAULT = 10
@@ -201,7 +226,7 @@ def mute_tab(pid, mute=True):
 
 
 # Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).
-_KEY = {"t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
+_KEY = {"up": 126, "down": 125, "t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
         "0": 29, "=": 24, "-": 27, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25}
 SHORTCUTS = {
     "new tab": ("t", "cmd"), "close tab": ("w", "cmd"), "reopen tab": ("t", "cmd shift"),
@@ -210,6 +235,7 @@ SHORTCUTS = {
     "reload": ("r", "cmd"), "back": ("[", "cmd"), "forward": ("]", "cmd"), "address bar": ("l", "cmd"),
     "find": ("f", "cmd"), "bookmark": ("d", "cmd"), "zoom in": ("=", "cmd"), "zoom out": ("-", "cmd"),
     "actual size": ("0", "cmd"), "full screen": ("f", "ctrl cmd"), "last tab": ("9", "cmd"),
+    "top": ("up", "cmd"), "bottom": ("down", "cmd"),
     **{f"tab {n}": (str(n), "cmd") for n in range(1, 9)},
 }
 SHORTCUT_ALIASES = {

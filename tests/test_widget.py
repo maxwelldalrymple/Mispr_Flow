@@ -1666,6 +1666,14 @@ class TestAppSwitcher:
         assert seeks == [30, -10] and fronted == ["/A/Google Chrome.app"]
         assert controller.notice[0] == "Back 10s · Google Chrome"
 
+    def test_scrolling(self, controller, clock, fronted, monkeypatch):
+        scrolled, pressed = [], []
+        monkeypatch.setattr(W.apps, "scroll", scrolled.append)
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.say(controller, clock, "Scroll down")
+        self.say(controller, clock, "scroll to the top")
+        assert scrolled == [-450] and pressed == ["top"] and controller.notice[0] == "To the top"
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()
