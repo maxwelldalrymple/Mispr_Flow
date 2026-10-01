@@ -1012,6 +1012,16 @@ final class NoteEditingTests: XCTestCase {
 }
 
 /// The app switcher key and nicknames in settings.json, and combo shortcuts.
+final class ChunkLinesTests: XCTestCase {
+    func testLastDefaultsToTrueAndCanBeFalse() {
+        let line = #"{"event": "chunk_text", "id": "m", "stream": "them", "speaker": 1, "offset": 2.0, "text": "Hi.", "voice": "male""#
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + line + "}"),
+                       .chunkText(meeting: "m", stream: "them", speaker: 1, offset: 2, text: "Hi.", voice: "male", last: true))
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + line + #", "last": false}"#),
+                       .chunkText(meeting: "m", stream: "them", speaker: 1, offset: 2, text: "Hi.", voice: "male", last: false))
+    }
+}
+
 final class SwitchKeyTests: XCTestCase {
     func testCombosNeedAKeyOrTwoModifiersAndReadInMacOrder() {
         XCTAssertNil(DictationKey.combo(mods: ["option"]))

@@ -181,6 +181,11 @@ class TestModelsCli:
         paths = models.cli(["cleanup"], ensure=lambda spec, progress: asked.append(spec) or "path")
         assert asked == [models.CLEANUP_MODEL] and paths == ["path"]
 
+    def test_meeting_models_by_name(self):
+        asked = []
+        models.cli(["preview", "speakers"], ensure=lambda spec, progress: asked.append(spec))
+        assert asked == [models.PREVIEW_MODEL, models.SPEAKER_MODEL]
+
     def test_defaults_to_both(self):
         asked = []
         models.cli([], ensure=lambda spec, progress: asked.append(spec))

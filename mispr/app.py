@@ -25,6 +25,8 @@ from PyObjCTools import AppHelper
 from Foundation import NSObject
 
 from . import host, hotkey, levels, meeting, onboarding, prompts, settings, setup, storage, threads
+from .models import PREVIEW_MODEL
+from .transcribe import Transcriber
 from .widget import Ticker, WidgetController
 
 APP_NAME = "Mispr Flow"  # shown to the user
@@ -150,7 +152,10 @@ def _connect_host(app, widget, open_setup, fn=None):
     widget.on_settings_changed = lambda: host.send("settings_changed")  # e.g. a nickname set by voice
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
-    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send)
+    # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
+    # loaded (downloaded the first time) when a meeting first needs them.
+    worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
+                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     def reload_settings():
         widget.reload_settings()

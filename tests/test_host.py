@@ -145,6 +145,10 @@ class TestConnectHost:
         listened["handlers"]["meeting_level"](level=0.7)
         assert widget.meeting_levels.level(0) == 0.7
         assert {"transcribe_chunk", "summarize", "ask"} <= set(listened["handlers"])
+        worker = listened["handlers"]["transcribe_chunk"].__self__
+        from mispr import models
+        assert worker.preview.spec is models.PREVIEW_MODEL and not worker.preview._loading  # loads on first meeting
+        assert worker.embedder.spec is models.SPEAKER_MODEL and worker.embedder._extractor is None
         widget.on_meeting_changed(True)
         assert sent[-1] == ("meeting", {"active": True})
         widget.on_settings_changed()  # a nickname set by voice: the app re-reads settings

@@ -121,6 +121,19 @@ class TestModelSpec:
         assert spec.size > 100_000_000
         assert spec.url.startswith("https://huggingface.co/") and spec.url.endswith(spec.filename)
 
+    @pytest.mark.parametrize("spec", [models.WHISPER_BASE_EN, models.WESPEAKER_RESNET34])
+    def test_meeting_models_are_pinned_https_downloads(self, spec):
+        assert re.fullmatch(r"[0-9a-f]{64}", spec.sha256) and spec.size > 20_000_000
+        assert spec.url.startswith("https://") and spec.url.endswith(spec.filename)
+
+    def test_full_source_url_wins(self):
+        assert spec_for(source="https://github.com/o/r/releases/download/t/test.bin").url == \
+            "https://github.com/o/r/releases/download/t/test.bin"
+
+    def test_meeting_models_are_not_required_at_first_run(self):
+        from mispr import setup
+        assert models.PREVIEW_MODEL not in setup.REQUIRED and models.SPEAKER_MODEL not in setup.REQUIRED
+
     def test_spec_is_immutable(self):
         import dataclasses
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -129,6 +142,7 @@ class TestModelSpec:
     def test_configured_models(self):
         assert models.DEFAULT_MODEL is models.WHISPER_TURBO_Q5
         assert models.CLEANUP_MODEL is models.GEMMA3_4B_Q4
+        assert models.PREVIEW_MODEL is models.WHISPER_BASE_EN and models.SPEAKER_MODEL is models.WESPEAKER_RESNET34
 
 
 class TestIsInstalled:

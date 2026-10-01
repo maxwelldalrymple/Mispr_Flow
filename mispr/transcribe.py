@@ -39,12 +39,14 @@ class Transcriber:
         self._model = None
         self._ready = threading.Event()
         self._lock = threading.Lock()  # whisper.cpp contexts are not re-entrant
+        self._loading = False
 
     @property
     def ready(self):
         return self._ready.is_set() and self._model is not None
 
     def load_async(self):
+        self._loading = True
         start_daemon(self._load, "whisper-load")
 
     def _load(self):
@@ -64,6 +66,13 @@ class Transcriber:
             print(f"mispr: speech model unavailable: {e}", file=sys.stderr)
         finally:
             self._ready.set()
+
+    def ensure_loaded(self):
+        """Load on the calling thread if nobody started loading yet (models used only for
+        meetings load on first use)."""
+        if not self._ready.is_set() and not self._loading:
+            self._loading = True
+            self._load()
 
     def transcribe_async(self, audio, on_done, post=None):
         """Transcribe on a worker thread; `on_done(text, raw, info, seconds)` runs on the main thread.
@@ -85,15 +94,22 @@ class Transcriber:
         """Transcribe on the calling thread (meeting chunks; serialized with dictation)."""
         return self._transcribe(audio)
 
+    def segments(self, audio):
+        """Like transcribe, but timed: [(start_s, end_s, text)] per Whisper segment (meeting
+        chunks are split where the speaker changes)."""
+        return [(s.t0 / 100, s.t1 / 100, text) for s in self._segments(audio) if (text := clean_text(s.text))]
+
     def _transcribe(self, audio):
+        return clean_text(" ".join(s.text for s in self._segments(audio)))
+
+    def _segments(self, audio):
         if len(audio) < MIN_SECONDS * SAMPLE_RATE:
-            return ""
+            return []
         # max/min reduce in place; np.abs() would make an unwiped copy of the audio.
         if max(float(audio.max()), -float(audio.min())) < SILENCE_PEAK:
-            return ""
+            return []
         self._ready.wait()
         if self._model is None:
-            return ""
+            return []
         with self._lock:
-            segments = self._model.transcribe(audio, language=self.language)
-        return clean_text(" ".join(s.text for s in segments))
+            return self._model.transcribe(audio, language=self.language)

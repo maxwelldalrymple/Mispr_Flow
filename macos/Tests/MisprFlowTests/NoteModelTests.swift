@@ -102,6 +102,23 @@ final class NoteModelTests: XCTestCase {
         XCTAssertEqual(note.transcript.groups.map(\.label), ["Female 1"])
     }
 
+    func testAChunkSplitBetweenTwoPeopleCountsAsOneChunk() {
+        note.start()
+        drainMain()
+        recorder.onChunk("them", 0, speech())
+        drainMain()
+        t.event(["event": "chunk_text", "id": note.meetingID, "stream": "them", "speaker": 1, "offset": 0.0,
+                 "text": "Ship it.", "voice": "male", "last": false])
+        note.stop()
+        drainMain(0.6)
+        XCTAssertEqual(note.phase, .finishing)  // still waiting for the rest of that chunk
+        t.event(["event": "chunk_text", "id": note.meetingID, "stream": "them", "speaker": 2, "offset": 1.4,
+                 "text": "Friday?", "voice": "female", "last": true])
+        drainMain(0.8)
+        XCTAssertEqual(note.phase, .done)
+        XCTAssertEqual(note.transcript.groups.map(\.label), ["Male 1", "Female 1"])
+    }
+
     func testOtherMeetingsEventsAreIgnored() {
         t.event(["event": "chunk_text", "id": "someone-else", "stream": "you", "speaker": 0, "offset": 0.0, "text": "Hi."])
         XCTAssertTrue(note.transcript.lines.isEmpty)

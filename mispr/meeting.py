@@ -2,8 +2,13 @@
 "them"), cuts it into chunks at pauses, and asks the engine to transcribe each one; at the
 end it asks for a summary. Answers questions about the meeting too. All local.
 
-Work runs on one worker thread, in order, so transcript chunks come back in sequence and
-never compete with each other for the Whisper model.
+Final text runs on one worker thread, in order, so transcript chunks come back in sequence.
+Live previews (the words still being said) run on their own thread with a small, fast
+Whisper model, so they never hold up the final text and keep up with the speaker.
+
+Who's talking: each stretch of "them" audio gets a voice fingerprint (WeSpeaker, 256
+numbers), compared by cosine similarity with the people heard so far. A chunk is split where
+Whisper's segments change speaker.
 """
 
 import json
@@ -16,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .models import PREVIEW_MODEL, SPEAKER_MODEL, ensure_model
 from .threads import start_daemon
 
 SUMMARY_PROMPT = """You write meeting notes from a transcript. "You" is the person taking notes; "Them" is everyone else on the call.
@@ -41,22 +47,67 @@ def read_wav(path):
         return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
 
 
-class VoiceClusters:
-    """Tells the other people on a call apart, roughly: each chunk gets a voice signature
-    (the average shape of its spectrum), and chunks with similar signatures are the same
-    speaker. Not a real diarization model, so similar voices can be merged; names can be
-    fixed by hand afterwards."""
+class SpeakerEmbedder:
+    """Voice fingerprints from the WeSpeaker model (via sherpa-onnx), loaded on first use.
+    `embed` returns a unit vector, or None if the model isn't available (then the meeting
+    falls back to the rougher spectral signature)."""
 
-    BANDS = 24
-    SAME_SPEAKER = 0.93  # cosine similarity above which two chunks are one voice
+    def __init__(self, spec=SPEAKER_MODEL, ensure=ensure_model):
+        self.spec, self.ensure = spec, ensure
+        self._extractor = None
+        self._failed = False
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._extractor is None and not self._failed:
+            try:
+                import sherpa_onnx
+                path = self.ensure(self.spec)
+                self._extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
+                    sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(path), num_threads=2))
+            except Exception as e:  # missing package, no download yet (offline), bad file
+                self._failed = True
+                print(f"mispr: speaker model unavailable, using the simple voice signature: {e}", file=sys.stderr)
+        return self._extractor
+
+    def embed(self, audio, rate=16_000):
+        with self._lock:
+            extractor = self._load()
+            if extractor is None:
+                return None
+            stream = extractor.create_stream()
+            stream.accept_waveform(rate, audio)
+            stream.input_finished()
+            vector = np.array(extractor.compute(stream), dtype=np.float32)
+        norm = np.linalg.norm(vector)
+        return vector / norm if norm else None
+
+
+class VoiceClusters:
+    """Tells the other people on a call apart. Each stretch of speech gets a voice
+    fingerprint; it's the same person as the closest one heard so far when their cosine
+    similarity is high enough, otherwise a new person. Names can be fixed by hand afterwards.
+
+    With the WeSpeaker model (`embedder`), tested on a real 4-person meeting (AMI EN2002b):
+    the same voice scores ~0.75 and different voices ~0.48, so 0.60 splits them and found
+    exactly 4 people. Without it, a spectral signature with a much higher bar is used.
+    """
+
+    SAME_SPEAKER = 0.60  # cosine similarity for one voice (WeSpeaker fingerprints)
+    SAME_SPEAKER_SIGNATURE = 0.93  # for the fallback spectral signature
+    MIN_SECONDS = 1.0  # shorter speech is too little to fingerprint: it joins its neighbour
+    NEW_SPEAKER_SECONDS = 1.5  # only this much clear speech can start a new person or teach a voice
     MAX_SPEAKERS = 8
+    BANDS = 24
 
     # Typical speaking pitch: men ~85-155 Hz, women ~165-255 Hz. In between, or no clear
     # pitch (music, noise, a dog), the voice is just "person".
     MALE_MAX, FEMALE_MIN = 155.0, 168.0
 
-    def __init__(self):
+    def __init__(self, embedder=None):
+        self.embedder = embedder
         self.centroids, self.counts, self.pitches = [], [], []
+        self.last = 0  # the most recent speaker, for stretches too short to tell
 
     @staticmethod
     def pitch(audio, rate=16_000):
@@ -111,30 +162,69 @@ class VoiceClusters:
         norm = np.linalg.norm(sig)
         return sig / norm if norm else None
 
-    def assign(self, audio):
-        """1-based speaker number for this chunk (1 when the voice can't be measured)."""
-        speaker = self._assign(audio)
+    def fingerprint(self, audio):
+        """(vector, threshold) for this audio, or (None, None) if it can't be measured."""
+        if self.embedder is not None:
+            vector = self.embedder.embed(audio)
+            if vector is not None:
+                return vector, self.SAME_SPEAKER
+        sig = self.signature(audio)
+        return (sig, self.SAME_SPEAKER_SIGNATURE) if sig is not None else (None, None)
+
+    def assign(self, audio, rate=16_000):
+        """1-based speaker number for this stretch of speech."""
+        speaker = self._assign(audio, rate)
         f0 = self.pitch(audio)
         while len(self.pitches) < speaker:
             self.pitches.append([])
         if f0 is not None:
             self.pitches[speaker - 1].append(f0)
+        self.last = speaker
         return speaker
 
-    def _assign(self, audio):
-        sig = self.signature(audio)
-        if sig is None:
-            return 1 if not self.centroids else int(np.argmax(self.counts)) + 1
+    def _assign(self, audio, rate):
+        fallback = self.last or (int(np.argmax(self.counts)) + 1 if self.counts else 1)
+        if len(audio) < self.MIN_SECONDS * rate:
+            return fallback
+        vector, threshold = self.fingerprint(audio)
+        if vector is None:
+            return fallback
+        clear = len(audio) >= self.NEW_SPEAKER_SECONDS * rate
         if self.centroids:
-            sims = [float(sig @ c / np.linalg.norm(c)) for c in self.centroids]
+            sims = [float(vector @ c / np.linalg.norm(c)) for c in self.centroids]
             best = int(np.argmax(sims))
-            if sims[best] >= self.SAME_SPEAKER or len(self.centroids) >= self.MAX_SPEAKERS:
-                self.centroids[best] = self.centroids[best] + sig
+            if sims[best] >= threshold or not clear or len(self.centroids) >= self.MAX_SPEAKERS:
+                if clear:  # only clear speech refines what a voice sounds like
+                    self.centroids[best] = self.centroids[best] + vector
                 self.counts[best] += 1
                 return best + 1
-        self.centroids.append(sig.copy())
+        self.centroids.append(vector.copy())
         self.counts.append(1)
         return len(self.centroids)
+
+    def split(self, audio, segments, rate=16_000):
+        """Whisper's timed segments -> [(start_s, end_s, text, speaker)], with neighbouring
+        segments by the same person joined. Short segments ("yeah") join the speaker around them."""
+        pieces = []
+        for start, end, text in segments:
+            clip = audio[int(start * rate):int(end * rate)]
+            long_enough = len(clip) >= self.MIN_SECONDS * rate
+            speaker = self.assign(clip, rate) if long_enough else None
+            pieces.append([start, end, text, speaker])
+        known = [p[3] for p in pieces if p[3] is not None]
+        if not known:  # all short: the chunk as a whole decides
+            whole = self.assign(audio, rate)
+            known = [whole]
+        prev = known[0]
+        for p in pieces:
+            prev = p[3] = p[3] if p[3] is not None else prev
+        merged = []
+        for start, end, text, speaker in pieces:
+            if merged and merged[-1][3] == speaker:
+                merged[-1][1], merged[-1][2] = end, f"{merged[-1][2]} {text}"
+            else:
+                merged.append([start, end, text, speaker])
+        return [tuple(p) for p in merged]
 
 
 def transcript_text(lines):
@@ -166,17 +256,26 @@ def parse_summary(text):
 
 
 class MeetingWorker:
-    def __init__(self, transcriber, cleaner, send, start=start_daemon):
+    """`preview` is the fast Whisper model for live text (its own thread); without one,
+    previews share the final-text queue. `embedder` fingerprints voices."""
+
+    def __init__(self, transcriber, cleaner, send, start=start_daemon, preview=None, embedder=None):
         self.transcriber, self.cleaner, self.send = transcriber, cleaner, send
+        self.preview = preview
+        self.embedder = embedder
         self._jobs = queue.Queue()
+        self._preview_jobs = queue.Queue() if preview is not None else self._jobs
         self._voices = {}  # meeting id -> VoiceClusters for "them"
         self._partials = {}  # (meeting id, stream) -> newest live-preview request
         self._partials_lock = threading.Lock()
-        start(self._run, "meeting-worker")
+        start(lambda: self._run(self._jobs), "meeting-worker")
+        if preview is not None:
+            start(lambda: self._run(self._preview_jobs), "meeting-preview")
 
-    def _run(self):
+    def _run(self, jobs=None):
+        jobs = jobs or self._jobs
         while True:
-            job = self._jobs.get()
+            job = jobs.get()
             try:
                 job()
             except Exception as e:  # one bad chunk must never stop the meeting
@@ -189,18 +288,27 @@ class MeetingWorker:
             return self._preview(id, path, stream, offset, delete)
 
         def job():
-            text, speaker, voice = "", 0, "person"
+            # [(offset, text, speaker)]: one line per speaker in this chunk. The last event for
+            # a chunk carries last=True so the app knows the chunk is done.
+            lines = []
             try:
                 audio = read_wav(path)
-                text = self.transcriber.transcribe(audio)
-                if text and stream == "them":
-                    voices = self._voices.setdefault(id, VoiceClusters())
-                    speaker = voices.assign(audio)
-                    voice = voices.voice(speaker)
+                if stream == "them":
+                    segments = self.transcriber.segments(audio)
+                    if segments:
+                        voices = self._voices.setdefault(id, VoiceClusters(self.embedder))
+                        lines = [(offset + start, text, speaker) for start, _, text, speaker in voices.split(audio, segments)]
+                else:
+                    text = self.transcriber.transcribe(audio)
+                    lines = [(offset, text, 0)] if text else []
             finally:
                 if delete:
                     Path(path).unlink(missing_ok=True)
-                self.send("chunk_text", id=id, stream=stream, offset=offset, text=text, speaker=speaker, voice=voice)
+                voices = self._voices.get(id)
+                for i, (at, text, speaker) in enumerate(lines or [(offset, "", 0)]):
+                    voice = voices.voice(speaker) if (voices and speaker) else "person"
+                    self.send("chunk_text", id=id, stream=stream, offset=at, text=text, speaker=speaker, voice=voice,
+                              last=i == max(len(lines), 1) - 1)
         self._jobs.put(job)
 
     def _preview(self, id, path, stream, offset, delete):
@@ -220,12 +328,14 @@ class MeetingWorker:
                 path_, offset_, delete_ = self._partials.pop(key)
             text = ""
             try:
-                text = self.transcriber.transcribe(read_wav(path_))
+                if self.preview is not None:
+                    self.preview.ensure_loaded()  # first meeting: fetch/load the small model here, off the final queue
+                text = (self.preview or self.transcriber).transcribe(read_wav(path_))
             finally:
                 if delete_:
                     Path(path_).unlink(missing_ok=True)
                 self.send("chunk_text", id=id, stream=stream, offset=offset_, text=text, speaker=0, voice="", partial=True)
-        self._jobs.put(job)
+        self._preview_jobs.put(job)
 
     def summarize(self, id="", lines=()):
         def job():

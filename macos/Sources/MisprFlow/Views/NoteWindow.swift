@@ -382,10 +382,10 @@ final class NoteModel: ObservableObject {
 
     func handle(_ event: EngineEvent) {
         switch event {
-        case let .chunkText(id, stream, _, offset, text, _, true) where id == meetingID:
+        case let .chunkText(id, stream, _, offset, text, _, true, _) where id == meetingID:
             transcript.setPartial(stream: stream, offset: offset, text: text)
-        case let .chunkText(id, stream, speaker, offset, text, voice, false) where id == meetingID:
-            pendingChunks = max(0, pendingChunks - 1)
+        case let .chunkText(id, stream, speaker, offset, text, voice, false, last) where id == meetingID:
+            if last { pendingChunks = max(0, pendingChunks - 1) }  // one chunk can be several speakers' lines
             transcript.add(stream: stream, speaker: speaker, offset: offset, text: text, voice: voice)
         case let .summary(id, summary, suggested) where id == meetingID:
             summarizing = false

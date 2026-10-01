@@ -7,3 +7,4 @@ soxr
 numpy
 pywhispercpp
 llama-cpp-python
+sherpa-onnx
