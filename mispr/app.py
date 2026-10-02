@@ -166,13 +166,15 @@ def _connect_host(app, widget, open_setup, fn=None):
     # loaded (downloaded the first time) when a meeting first needs them.
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
                                    preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
-                                   speech=meeting.SpeechDetector())
+                                   speech=getattr(widget, "speech", None) or meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
+    widget.on_busy = lambda busy: host.send("busy", busy=busy)
     def reload_settings():
         widget.reload_settings()
         if fn is not None:
             fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
             fn.set_switch_trigger(widget.settings.switch_hotkey)
+            fn.set_toggle_trigger(widget.settings.auto_enter_hotkey)
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
@@ -267,9 +269,11 @@ def main():
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     storage.lock_down()  # data folders owner-only (security audit)
     widget = WidgetController()
+    widget.speech = meeting.SpeechDetector()  # dictation, commands and meetings: clicks and silence aren't speech
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
                           trigger=widget.settings.hotkey, on_note=widget.request_note,
-                          on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey)
+                          on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey,
+                          on_toggle=widget.toggle_auto_enter, toggle_trigger=widget.settings.auto_enter_hotkey)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)

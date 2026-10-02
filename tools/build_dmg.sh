@@ -8,8 +8,11 @@
 # settings or models. On first run the app creates its folders in ~/Library and setup
 # downloads the models. The build fails if any personal data or path of this Mac is found in it.
 #
-# Signed ad-hoc (no Apple Developer ID): first open needs right-click > Open, see the README.
-# Writes the DMG and its SHA-256 next to it in dist/.
+# Signed with the local "Mispr Flow Local Signing" certificate (tools/make_signing_cert.sh), the
+# same one every release, so macOS keeps Mispr Flow's permissions when it updates itself. It isn't
+# an Apple Developer ID: the first open still needs right-click > Open (see the README).
+# Writes the DMG, its SHA-256, and its update signature (.sig: Ed25519 over the SHA-256, with the
+# key in ~/.config/mispr-flow/update-signing-key.pem; the app's updater checks it) to dist/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,6 +23,15 @@ STAGE="$ROOT/build/dmg-stage"
 APP="$STAGE/Mispr Flow.app"
 DMG="$ROOT/dist/Mispr-Flow-$VERSION.dmg"
 export MACOSX_DEPLOYMENT_TARGET=14.0
+SIGN_ID="Mispr Flow Local Signing"
+UPDATE_KEY="${MISPR_UPDATE_KEY:-$HOME/.config/mispr-flow/update-signing-key.pem}"
+OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
+security find-certificate -c "$SIGN_ID" >/dev/null 2>&1 || { echo "missing the \"$SIGN_ID\" certificate: run tools/make_signing_cert.sh" >&2; exit 1; }
+[ -f "$UPDATE_KEY" ] || { echo "missing the update signing key $UPDATE_KEY" >&2; exit 1; }
+# The key must match the public key built into the app, or no one could install the update.
+APP_KEY="$(sed -n 's/.*publicKey = "\(.*\)"/\1/p' "$ROOT/macos/Sources/MisprCore/Update.swift")"
+[ "$("$OPENSSL" pkey -in "$UPDATE_KEY" -pubout -outform DER | tail -c 32 | base64)" = "$APP_KEY" ] \
+    || { echo "the update key doesn't match Update.publicKey" >&2; exit 1; }
 
 [ -x "$STANDALONE/bin/python3" ] || { echo "missing standalone Python at $STANDALONE (set MISPR_STANDALONE_PYTHON)" >&2; exit 1; }
 
@@ -82,15 +94,22 @@ while IFS= read -r f; do
     [ -z "$minos" ] || [ "${minos%%.*}" -le 14 ] || fail "$f needs macOS $minos (want 14)"
 done < <(find "$APP/Contents/Resources" -type f \( -name '*.so' -o -name '*.dylib' -o -perm +111 \) -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
 
-# 4. Sign (ad-hoc: inside out, then the app), and package with an Applications shortcut.
+# 4. Sign (inside out, then the app), and package with an Applications shortcut.
 find "$APP/Contents/Resources" -type f \( -name '*.so' -o -name '*.dylib' -o -perm +111 \) \
-    -exec sh -c 'file -b "$1" | grep -q Mach-O && codesign --force --sign - "$1"' _ {} \;
-codesign --force --sign - --identifier "io.github.maxwelldalrymple.MisprFlow" "$APP"
+    -exec sh -c 'file -b "$1" | grep -q Mach-O && codesign --force --sign "$0" "$1"' "$SIGN_ID" {} \;
+codesign --force --sign "$SIGN_ID" --identifier "io.github.maxwelldalrymple.MisprFlow" "$APP"
 codesign --verify --deep --strict "$APP"
 ln -s /Applications "$STAGE/Applications"
 mkdir -p "$ROOT/dist" && rm -f "$DMG"
 hdiutil create -quiet -volname "Mispr Flow" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG"
 (cd "$ROOT/dist" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+# The update signature: Ed25519 over the DMG's SHA-256, base64.
+DIGEST="$(mktemp)"
+shasum -a 256 "$DMG" | cut -d' ' -f1 | xxd -r -p > "$DIGEST"
+"$OPENSSL" pkeyutl -sign -inkey "$UPDATE_KEY" -rawin -in "$DIGEST" | base64 > "$DMG.sig"
+"$OPENSSL" pkeyutl -verify -pubin -inkey <("$OPENSSL" pkey -in "$UPDATE_KEY" -pubout) -rawin -in "$DIGEST" \
+    -sigfile <(base64 -d < "$DMG.sig") >/dev/null || { echo "update signature failed to verify" >&2; exit 1; }
+rm -f "$DIGEST"
 # Don't leave extra copies of the app around: macOS would treat them as the same app (one ID)
 # and could launch one of them, or apply a permission to it, instead of the installed copy.
 rm -rf "$STAGE" "$ROOT/build/Mispr Flow.app"

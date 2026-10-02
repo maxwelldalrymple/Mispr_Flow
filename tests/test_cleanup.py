@@ -351,3 +351,30 @@ class TestConfigurablePrompt:
         c.configure(cleanup.SYSTEM_PROMPT, cleanup.EXAMPLES, guard=False)
         c.clean("one two three")
         assert c._llm.calls[-1]["max_tokens"] > on
+
+
+class TestStripFillers:
+    """Hesitation sounds are always removed, however Whisper spells them."""
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("Uhh... YouTube?", "YouTube?"),
+        ("I, um, think so.", "I think so."),
+        ("Um, so I said hello.", "So I said hello."),
+        ("So, uh, the build passed. Uh, ship it.", "So the build passed. Ship it."),
+        ("The error is in uhh the parser", "The error is in the parser"),
+        ("Yeah, uh.", "Yeah."),
+        ("Erm, ok", "Ok"),
+        ("Hmm.", ""),
+    ])
+    def test_cases(self, raw, expected):
+        from mispr.cleanup import strip_fillers
+        assert strip_fillers(raw) == expected
+
+    @pytest.mark.parametrize("text", ["The hummus is great.", "Umbrella stand.", "Ahead of time.", "Erik said hi.", "I like it."])
+    def test_real_words_kept(self, text):
+        from mispr.cleanup import strip_fillers
+        assert strip_fillers(text) == text
+
+    def test_guard_counts_long_fillers_as_fillers(self):
+        from mispr.cleanup import check
+        assert check("Uhh... YouTube?", "YouTube?") is None  # used to be "dropped too much"

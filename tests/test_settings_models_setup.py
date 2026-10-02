@@ -39,11 +39,11 @@ class TestSettings:
 
     def test_saved_file_is_human_readable(self):
         settings.save(settings.Settings())
-        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "auto_enter": false,\n  "cleanup": true,\n  "sounds": true,\n  "hotkey": {\n    "kind": "fn",\n    "keycode": 63,\n    "label": "fn"\n  },\n  "switch_hotkey": null,\n  "app_nicknames": {},\n  "onboarded": false,\n  "setup_step": 0\n}'
+        assert settings.SETTINGS_PATH.read_text() == '{\n  "incognito": false,\n  "auto_enter": false,\n  "cleanup": true,\n  "sounds": true,\n  "auto_update": true,\n  "hotkey": {\n    "kind": "fn",\n    "keycode": 63,\n    "label": "fn"\n  },\n  "switch_hotkey": null,\n  "auto_enter_hotkey": {\n    "kind": "combo",\n    "mods": [\n      "control",\n      "option"\n    ],\n    "keycode": 36,\n    "label": "\\u2303\\u2325\\u21a9"\n  },\n  "app_nicknames": {},\n  "onboarded": false,\n  "setup_step": 0\n}'
 
     def test_saved_file_is_readable_json(self):
         settings.save(settings.Settings(incognito=True))
-        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "auto_enter": False, "cleanup": True, "sounds": True, "hotkey": {"kind": "fn", "keycode": 63, "label": "fn"}, "switch_hotkey": None, "app_nicknames": {}, "onboarded": False, "setup_step": 0}
+        assert json.loads(settings.SETTINGS_PATH.read_text()) == {"incognito": True, "auto_enter": False, "cleanup": True, "sounds": True, "auto_update": True, "hotkey": {"kind": "fn", "keycode": 63, "label": "fn"}, "switch_hotkey": None, "auto_enter_hotkey": {"kind": "combo", "mods": ["control", "option"], "keycode": 36, "label": "⌃⌥↩"}, "app_nicknames": {}, "onboarded": False, "setup_step": 0}
 
     def test_save_nickname_keeps_other_settings(self):
         settings.save(settings.Settings(incognito=True, app_nicknames={"c": "Google Chrome"}))

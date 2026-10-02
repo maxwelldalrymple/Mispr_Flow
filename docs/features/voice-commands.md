@@ -51,7 +51,37 @@ The widget confirms what happened ("→ Google Chrome", "Volume 55%"). The comma
 | address bar / find / bookmark | ⌘L / ⌘F / ⌘D |
 | zoom in / zoom out / reset zoom / full screen | ⌘= / ⌘- / ⌘0 / ⌃⌘F |
 
-Add "in Chrome" (or say "Chrome new tab") to bring that app forward first.
+Add "in Chrome" (or say "Chrome new tab") to bring that app forward first. "close tab" also works when Whisper hears "Closed tab." or "Tab, close."
+
+### A tab by its site
+
+| Say | Does |
+|---|---|
+| "GitHub tab" / "go to the YouTube tab" | Selects the first tab on that site, in the browser in front (else the first running browser that has one) |
+| "YouTube tab 2" | The second YouTube tab (windows front to back, tabs left to right) |
+| "Chrome tab 3" | A browser's name: its tab 3 (⌘3) |
+| A site with no tab open ("Reddit tab") | Opens it in a new tab |
+
+- **Misheard names are assumed:** "chat gbt tab", "get up tab", "net flicks tab" and "you two tab" find ChatGPT, GitHub, Netflix and YouTube. Names are matched against the open tabs' addresses and titles, then against the 1,000 most visited sites (`mispr/assets/sites.txt`), by sound and spelling. Ordinary words don't match a site.
+- **Browsers:** Chrome, Safari, Arc, Brave, Edge, Vivaldi, Opera. The first time, macOS asks to let Mispr Flow control the browser (it lists the tabs). Firefox can't be scripted.
+
+## Your Mac
+
+| Say | Does |
+|---|---|
+| "screenshot" / "take a screenshot" | ⌘⇧3: the whole screen, saved where your screenshots go |
+| "screenshot area" / "screenshot of the window" | ⌘⇧4: drag an area, or click a window |
+| "screen recording" / "record my screen" | Starts recording the screen (needs Screen Recording permission; otherwise the capture toolbar opens) |
+| "stop recording" | Saves the movie next to your screenshots |
+| "sleep" / "go to sleep" | Puts the Mac to sleep |
+| "lock screen" | Locks it (⌃⌘Q) |
+| "log out" / "restart" / "shut down" | Asks macOS, which shows its usual confirmation first: a misheard word can never turn your Mac off |
+
+## Menus of the app in front
+
+Any menu item, by name: "save", "undo", "show sidebar", "new folder", "click export", or with its menu, "file new window". A word that isn't an app is tried as a menu item before "No app called …". The app's name can be left out ("new window" for "New Finder Window").
+
+Items that delete for good (Empty Trash, Erase, Delete Immediately, Force Quit, Clear History) are never pressed by voice. "move to trash" works, since it can be undone.
 
 | Say | Does |
 |---|---|

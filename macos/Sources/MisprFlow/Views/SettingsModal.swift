@@ -133,6 +133,12 @@ struct GeneralSettings: View {
                 NicknameList().padding(.bottom, 12)
             }
             Divider()
+            SettingRow(title: "Auto-Enter key",
+                       detail: model.autoEnterKey.map { "Press \($0.label) to turn Auto-Enter on or off." }
+                        ?? "Off. Choose modifiers plus a key (like ⌃⌥↩) to turn Auto-Enter on or off.") {
+                KeyRecorder(slot: .autoEnter)
+            }
+            Divider()
             SettingRow(title: "Microphone", detail: microphone) {
                 Button("Change…") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input")!)
@@ -170,6 +176,17 @@ struct SystemSettings: View {
         SettingsGroup {
             SettingRow(title: "Dictation and notification sounds", detail: "Start, stop, paste, and alert cues.") {
                 Toggle("", isOn: model.binding("sounds")).toggleStyle(.switch).labelsHidden()
+            }
+        }
+        SettingsGroup {
+            SettingRow(title: "Automatic updates",
+                       detail: "About 5 times a day, ask GitHub for a new version and install it when you're not dictating. Signed by the developer; nothing about you is sent.") {
+                Toggle("", isOn: model.binding("auto_update")).toggleStyle(.switch).labelsHidden()
+            }
+            Divider()
+            SettingRow(title: "Version \(model.updater.current)", detail: UpdateStatusText.describe(model.updater.status, blocker: model.updater.blocker)) {
+                Button("Check now") { Task { await model.updater.check(manual: true) } }
+                    .disabled({ if case .checking = model.updater.status { return true }; if case .downloading = model.updater.status { return true }; return false }())
             }
         }
         SettingsGroup {
@@ -319,7 +336,7 @@ struct ThemeCard: View {
 struct KeyRecorder: View {
     /// Which shortcut this picks: the dictation key, or the app switcher key (which can also
     /// be a combo like ⌃⌥ or ⌥S, and can be off).
-    enum Slot { case dictation, appSwitch }
+    enum Slot { case dictation, appSwitch, autoEnter }
 
     @EnvironmentObject var model: AppModel
     var slot: Slot = .dictation
@@ -329,7 +346,11 @@ struct KeyRecorder: View {
     @State private var combo = ComboPicker()
 
     private var current: String {
-        slot == .dictation ? model.dictationKey.label : model.switchKey?.label ?? "Off"
+        switch slot {
+        case .dictation: model.dictationKey.label
+        case .appSwitch: model.switchKey?.label ?? "Off"
+        case .autoEnter: model.autoEnterKey?.label ?? "Off"
+        }
     }
 
     var body: some View {
@@ -341,8 +362,11 @@ struct KeyRecorder: View {
                 if slot == .appSwitch && model.switchKey != nil && !listening {
                     Button("Turn off") { model.setSwitchKey(nil); message = nil }.buttonStyle(.link).font(.system(size: 12))
                 }
+                if slot == .autoEnter && model.autoEnterKey != nil && !listening {
+                    Button("Turn off") { model.setAutoEnterKey(nil); message = nil }.buttonStyle(.link).font(.system(size: 12))
+                }
                 Button(action: toggle) {
-                    Text(listening ? (slot == .appSwitch ? "Press a key or combo…" : "Press a key…") : current)
+                    Text(listening ? (slot == .dictation ? "Press a key…" : "Press a key or combo…") : current)
                         .font(.system(size: 13, weight: .semibold))
                         .frame(minWidth: 60)
                         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -351,7 +375,8 @@ struct KeyRecorder: View {
                 }
                 .buttonStyle(.plain)
                 .help(listening ? "Press the key you want, or Esc to cancel"
-                      : slot == .dictation ? "Click to change the dictation key" : "Click to choose the app switcher key or combo")
+                      : slot == .dictation ? "Click to change the dictation key"
+                      : slot == .appSwitch ? "Click to choose the app switcher key or combo" : "Click to choose the Auto-Enter key")
             }
             if let message {
                 Text(message).font(.system(size: 11)).foregroundStyle(Theme.secondary)
@@ -368,7 +393,8 @@ struct KeyRecorder: View {
     private func start() {
         listening = true
         combo = ComboPicker()
-        message = slot == .appSwitch ? "Press one key, hold a combo like ⌃⌥ and let go, or press ⌥ plus a letter. Esc cancels."
+        message = slot == .autoEnter ? "Hold modifiers and press a key, like ⌃⌥↩. Esc cancels."
+            : slot == .appSwitch ? "Press one key, hold a combo like ⌃⌥ and let go, or press ⌥ plus a letter. Esc cancels."
             : model.dictationKey == .fn ? "To keep fn, press Esc. fn itself can't be picked here while it's the dictation key." : nil
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event)
@@ -385,7 +411,9 @@ struct KeyRecorder: View {
     private func handle(_ event: NSEvent) {
         let keyDown = event.type == .keyDown, code = Int(event.keyCode)
         let characters = keyDown ? event.charactersIgnoringModifiers : nil
-        let pick = slot == .appSwitch
+        let pick = slot == .autoEnter
+            ? Self.pickAutoEnter(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags)
+            : slot == .appSwitch
             ? combo.feed(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags, dictation: model.dictationKey)
             : Self.pick(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags)
         switch pick {
@@ -406,6 +434,18 @@ struct KeyRecorder: View {
         case cancel, ignore
         case refuse(String)
         case choose(DictationKey, warning: String?)
+    }
+
+    /// The Auto-Enter key: modifiers plus a key (Return allowed, since a modifier is held).
+    static func pickAutoEnter(keyDown: Bool, keyCode: Int, characters: String?, flags: NSEvent.ModifierFlags) -> Pick {
+        guard keyDown else { return .ignore }
+        let held = ComboPicker.names(flags)
+        if keyCode == 53 && held.isEmpty { return .cancel }
+        guard !held.isEmpty else { return .refuse("Hold ⌃, ⌥ or ⌘ too, like ⌃⌥↩.") }
+        let key = keyCode == 36 ? DictationKey(kind: .key, keycode: 36, label: "↩")
+            : DictationKey.key(keycode: keyCode, characters: characters)
+        guard let key, let combo = DictationKey.combo(mods: held, key: key) else { return .refuse("Pick another key.") }
+        return .choose(combo, warning: nil)
     }
 
     /// What a key event means while picking: Esc cancels, blocked keys are refused, a modifier
@@ -433,7 +473,11 @@ struct KeyRecorder: View {
     }
 
     private func choose(_ key: DictationKey) {
-        if slot == .dictation { model.setDictationKey(key) } else { model.setSwitchKey(key) }
+        switch slot {
+        case .dictation: model.setDictationKey(key)
+        case .appSwitch: model.setSwitchKey(key)
+        case .autoEnter: model.setAutoEnterKey(key)
+        }
         message = nil
         stop()
     }
@@ -545,5 +589,20 @@ struct NicknameList: View {
             }
         }
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+}
+
+/// The updater's status in a few words.
+enum UpdateStatusText {
+    static func describe(_ status: Updater.Status, blocker: String?) -> String {
+        switch status {
+        case .idle: blocker ?? "Checks automatically."
+        case .checking: "Checking…"
+        case let .upToDate(version): "Up to date (\(version))."
+        case let .downloading(version): "Downloading \(version)…"
+        case let .waiting(version): "\(version) is ready. It installs when you're not dictating."
+        case let .installing(version): "Installing \(version)…"
+        case let .failed(message): message
+        }
     }
 }

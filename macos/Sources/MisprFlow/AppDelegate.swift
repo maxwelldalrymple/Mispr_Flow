@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.showMain = { [weak self] in self?.showMainWindow() }
         model.profile.apply()
         model.start()
+        model.updater.start()
         showMainWindow()
     }
 

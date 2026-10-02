@@ -19,7 +19,10 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 ## What happens to your words
 
 1. **Transcription:** whisper.cpp, `large-v3-turbo` quantized, on the GPU. About 1.1 s for a 5–6 s clip.
-2. **Cleanup:** Gemma-3-4B removes "um/uh/like", repeats and retracted phrases ("Tuesday, no wait, Wednesday" → "Wednesday"), and fixes punctuation. A code-level guard rejects any output with a word you didn't say; then the raw transcript is pasted instead. Edit the cleanup instructions on the **Prompts** page.
+   - **Nothing said, nothing typed.** Before transcribing, the Silero speech detector checks the recording (at an even volume, so a quiet mic still counts). Clicks, breathing and silence measure 0 s of speech and are dropped, so a button click never turns into "Thank you." or ".". Whisper's stock phrases for noise ("Captions by …", ". . .") and sound labels ("*Drums*", "[Music]") are removed too.
+   - **Site names spelled right.** Whisper is primed with names like ChatGPT, GitHub, YouTube and LinkedIn, and common slips are fixed ("chat GBT" → ChatGPT, "git hub" → GitHub). Spoken web addresses are matched against the 1,000 most visited sites: "chat gbt dot com" → `chatgpt.com`. Unknown names ("bob dot com") are left as said.
+   - **Long dictations appear as they're processed.** Past 20 s, the recording is cut at pauses into ~12 s pieces, and each piece is typed in as soon as it's ready, so the text grows while the rest is still being worked on. Auto-Enter presses Return once, after the last piece.
+2. **Cleanup:** Gemma-3-4B removes "um/uh/like", repeats and retracted phrases ("Tuesday, no wait, Wednesday" → "Wednesday"), and fixes punctuation. A code-level guard rejects any output with a word you didn't say; then the raw transcript is pasted instead. Edit the cleanup instructions on the **Prompts** page. Hesitation sounds the model leaves in ("Uhh…", "um,", "erm") are always removed afterwards, however Whisper spells them.
 3. **Where it goes:**
    - **A text box is focused:** it pastes, then restores your clipboard (the dictated text is marked private so clipboard managers skip it).
    - **No text box** (Finder, the desktop, a page with nothing focused): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
@@ -41,6 +44,8 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - It never presses Return if the text was copied rather than pasted.
 - **In terminals it runs the command too**; turn it off to check commands first.
 - **Cues:** a blue ⏎ badge on the widget's corner while it's on, and a chime with an "Auto-Enter on/off" notice when it changes.
+- **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
+- **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
 
 ## Terminal mode
 

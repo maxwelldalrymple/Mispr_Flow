@@ -5,7 +5,7 @@ import Foundation
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -37,6 +37,18 @@ public struct SettingsFile {
 
     public func setSwitchKey(_ key: DictationKey?) throws {
         try set("switch_hotkey", key?.json ?? NSNull())
+    }
+
+    /// The Auto-Enter key (press to turn Auto-Enter on or off): ⌃⌥↩ until changed, nil when off.
+    public static let defaultAutoEnterKey = DictationKey(kind: .combo, keycode: 36, label: "⌃⌥↩", mods: ["control", "option"])
+
+    public var autoEnterKey: DictationKey? {
+        guard let value = read()["auto_enter_hotkey"] else { return Self.defaultAutoEnterKey }
+        return DictationKey(json: value)
+    }
+
+    public func setAutoEnterKey(_ key: DictationKey?) throws {
+        try set("auto_enter_hotkey", key?.json ?? NSNull())
     }
 
     /// Spoken nicknames for apps: ["c": "Google Chrome"].

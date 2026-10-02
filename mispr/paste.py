@@ -4,6 +4,7 @@ The dictated text is marked transient/concealed (nspasteboard.org conventions) s
 clipboard managers and Universal Clipboard skip it. Posting ⌘V needs Accessibility.
 """
 
+import re
 from AppKit import NSData, NSPasteboard, NSPasteboardItem, NSPasteboardTypeString
 from PyObjCTools import AppHelper
 import Quartz
@@ -68,13 +69,26 @@ KEY_RETURN = 36
 ENTER_DELAY = 0.25  # seconds after the text goes in, so the app has taken the paste first
 
 
-def press_enter(post=None):
-    """Press Return once, with no modifiers (Auto-Enter: sends the message you just dictated)."""
+# Sites where Return only starts a new line and ⌘Return sends (LinkedIn messages, Gmail, Outlook).
+COMMAND_RETURN_SITES = ("linkedin.com", "mail.google.com", "outlook.live.com", "outlook.office.com", "outlook.office365.com")
+
+
+def send_with_command(url):
+    """True when Auto-Enter must press ⌘Return to send on this page (by its web address)."""
+    m = re.match(r"^[a-z]+://(?:www\.)?([^/:?#]+)", url or "", re.I)
+    host = m[1].lower() if m else ""
+    return any(host == site or host.endswith("." + site) for site in COMMAND_RETURN_SITES)
+
+
+def press_enter(command=False, post=None):
+    """Press Return once (Auto-Enter: sends the message you just dictated). `command` makes it
+    ⌘Return, for sites where plain Return is a new line."""
     post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
     source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
     for down in (True, False):
         event = Quartz.CGEventCreateKeyboardEvent(source, KEY_RETURN, down)
-        Quartz.CGEventSetFlags(event, 0)  # a held ⇧ or ⌘ would make it a new line or something else
+        # Only what we mean: a held ⇧ or ⌘ would make it a new line or something else.
+        Quartz.CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand if command else 0)
         post(event)
 
 

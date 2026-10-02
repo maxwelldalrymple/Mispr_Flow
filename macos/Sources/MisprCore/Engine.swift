@@ -56,6 +56,8 @@ public final class Engine: ObservableObject {
     public let meetingEvents = PassthroughSubject<EngineEvent, Never>()
     /// A meeting is being recorded (the widget shows its meeting pill).
     @Published public private(set) var meetingActive = false
+    /// The engine is recording or processing a dictation.
+    @Published public private(set) var dictating = false
     /// The engine exited cleanly by itself (e.g. Quit from its menu-bar icon): quit the app too.
     public var onCleanExit: () -> Void = {}
 
@@ -159,6 +161,8 @@ public final class Engine: ObservableObject {
             meetingEvents.send(event)
         case let .meeting(active):
             meetingActive = active
+        case let .busy(busy):
+            dictating = busy
         case .settingsChanged:
             objectWillChange.send()  // views read settings.json fresh
         case .setupFinished:

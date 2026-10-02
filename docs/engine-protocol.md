@@ -33,6 +33,7 @@ The SwiftUI app (`macos/`) starts the Python engine (`python -m mispr` with `MIS
 | `summary` | `id, summary` | Summary JSON: title, overview, decisions, action_items, open_questions |
 | `answer` | `id, question, text` | The answer to `ask` |
 | `tried` | `output, applied, rejected, ms` | The Prompts page's Try-it result |
-| `settings_changed` | | The engine changed settings.json itself (a nickname set by voice) |
+| `settings_changed` | | The engine changed settings.json itself (a nickname set by voice, or the Auto-Enter key) |
+| `busy` | `busy` | Dictation started (`true`) or finished (`false`): recording or working on the words. The app holds updates until it's `false` |
 
 Unknown events are ignored (`EngineEvent.unknown`), so older apps keep working with newer engines.

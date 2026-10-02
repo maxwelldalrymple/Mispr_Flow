@@ -20,10 +20,14 @@ class Settings:
     cleanup: bool = True
     # Sound cues (start, stop, paste...).
     sounds: bool = True
+    auto_update: bool = True  # the app checks GitHub for a new version about 5 times a day
     # The dictation key; see hotkey.normalize_trigger. Default: fn.
     hotkey: dict = field(default_factory=lambda: {"kind": "fn", "keycode": 63, "label": "fn"})
     # The app switcher key (hold it, say an app, let go): same format as `hotkey`; None = off.
     switch_hotkey: dict = None
+    # The Auto-Enter key (press to turn Auto-Enter on/off): a combo like `switch_hotkey`; None = off.
+    auto_enter_hotkey: dict = field(default_factory=lambda: {"kind": "combo", "mods": ["control", "option"],
+                                                             "keycode": 36, "label": "⌃⌥↩"})
     # Spoken nicknames for apps: {"c": "Google Chrome", "scooby snacks": "Google Chrome"}.
     app_nicknames: dict = field(default_factory=dict)
     # Set once the user finishes the first-run setup window.

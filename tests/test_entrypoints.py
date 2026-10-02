@@ -35,14 +35,14 @@ def wired(monkeypatch):
     fake_app = FakeNSApp()
 
     class Widget:
-        settings = type("S", (), {"hotkey": {"kind": "fn"}, "switch_hotkey": {"kind": "key", "keycode": 96}})()
+        settings = type("S", (), {"hotkey": {"kind": "fn"}, "switch_hotkey": {"kind": "key", "keycode": 96}, "auto_enter_hotkey": None})()
         sounds = type("Snd", (), {"play": lambda self, name: None})()
         started = 0
 
         def start(self):
             Widget.started += 1
 
-        fn_down = fn_up = fn_combo = handle_key = request_note = switch_key = lambda self, *a: None
+        fn_down = fn_up = fn_combo = handle_key = request_note = switch_key = toggle_auto_enter = lambda self, *a: None
 
     class Fn:
         def __init__(self, *args, trigger=None, on_note=None, **kw):
