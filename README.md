@@ -61,7 +61,7 @@ shasum -a 256 ~/Downloads/Mispr-Flow-1.1.1.dmg
 | | | Guide |
 |---|---|---|
 | **Dictation** | Hold or double-tap fn (or any key you pick). Local Whisper plus a cleanup model that never invents words. Pastes into the focused text box, or copies if there isn't one. Incognito saves nothing. **Auto-Enter** sends what you said (⌃⌥↩ toggles it). Clicks and silence never become text; long dictations appear as they're processed. **Terminal mode** turns "ls flag a" into `ls -a` | [dictation](docs/features/dictation.md) |
-| **Voice commands** | Hold a switch key (a key or a combo like ⌃⌥) and say:<br>• switch, close, minimize, expand, quit<br>• "Chrome beside VS Code", "Chrome 80%"<br>• new tab, reload, zoom, "GitHub tab", "YouTube tab 2"<br>• screenshot, screen recording, sleep, lock, shut down (confirmed)<br>• any menu item: "save", "show sidebar"<br>• pause, skip 30 seconds, volume, mute mic/tab<br>• scroll<br>• "open folder Projects"<br>• nicknames<br>It never opens an app on a guess, and keeps a Commands history | [voice commands](docs/features/voice-commands.md) |
+| **Voice commands** | Hold a switch key (a key or a combo like ⌃⌥) and say:<br>• switch, close, minimize, expand, quit<br>• "Chrome beside VS Code", "Chrome 80%"<br>• "click Sign in", "show numbers", "show grid", drag, double/right click: anything on screen, any app<br>• "press command shift t", "type …", "scratch that", "left half", "next desktop"<br>• "dark mode on", "use AirPods", "google …", "run shortcut …", "again", your own commands<br>• new tab, reload, zoom, "GitHub tab", "YouTube tab 2"<br>• screenshot, screen recording, sleep, lock, shut down (confirmed)<br>• any menu item: "save", "show sidebar"<br>• pause, skip 30 seconds, volume, mute mic/tab<br>• scroll<br>• "open folder Projects"<br>• nicknames<br>It never opens an app on a guess, and keeps a Commands history | [voice commands](docs/features/voice-commands.md) |
 | **Meeting notes** | ⌥M records you and the call at once:<br>• live text, speakers told apart (TitaNet), male/female labels<br>• speaker echo and clicks filtered out<br>• local summary and Q&A<br>• save only when you choose | [meeting notes](docs/features/meeting-notes.md) |
 | **Notetaker and People** | Past notes with search, insights and deleting (one or many); people with rename, merge and contact cards | [notetaker](docs/features/notetaker.md) |
 | **Main window** | Home (history: Dictation and Commands), Insights, Notetaker, Prompts, Settings (profile, 6 themes, keys, sounds) | [main window](docs/features/main-window.md) |
@@ -103,7 +103,9 @@ In the app (Settings), or `~/Library/Application Support/Mispr_Flow/settings.jso
 | `incognito` | `false` | Save nothing; type instead of paste |
 | `auto_enter` | `false` | Press Return after dictated text is pasted (also in terminals; ⌘Return on LinkedIn, Gmail, Outlook) |
 | `auto_enter_hotkey` | ⌃⌥↩ | The key that turns Auto-Enter on/off; `null` = off |
-| `auto_update` | `true` | Check GitHub for a new version ~5×/day and install it when idle (DMG app) |
+| `auto_update` | `true` | Check GitHub for a new version ~5×/day and install stable ones when idle (betas are only offered) |
+| `live_long_dictations` | `false` | Type long dictations in piece by piece while processing |
+| `custom_commands` | `[]` | Your own voice commands: `[{"say": "sign off", "type": "Best, Alex", "keys": "enter"}]` |
 | `cleanup` | `true` | `false` pastes raw Whisper text |
 | `sounds` | `true` | Sound cues |
 | `hotkey` | fn | The dictation key: `{"kind": "fn" \| "modifier" \| "key", "keycode", "label"}` |

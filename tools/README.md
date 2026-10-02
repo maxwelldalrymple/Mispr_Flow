@@ -4,6 +4,7 @@
 |---|---|
 | `build_app.sh [--open]` | Build and sign `build/Mispr Flow.app` (`--open` launches it) |
 | `build_dmg.sh` | Build `dist/Mispr-Flow-<version>.dmg` and its `.sha256`: bundled Python 3.13 with the pinned requirements (llama.cpp built for macOS 14+, no curl/OpenSSL), the engine (git-tracked files only), ad-hoc signed. Fails if any recording, note, setting, model, or this Mac's paths or name end up inside |
+| `release.sh <version> [--beta]` | Set the version, build and sign the DMG, and publish the GitHub release (stable: installed automatically; `--beta`: a pre-release, only offered) |
 | `build_site_list.py` | Rebuild `mispr/assets/sites.txt` (the top ~1,000 sites) from the Majestic Million CSV |
 | `screenshots.sh` | Render every window and state (all themes, light and dark) into `docs/screenshots/` with made-up sample data; see its README for the naming |
 | `make_signing_cert.sh`, `trust_signing_cert.sh` | A local code-signing certificate, so macOS permissions survive rebuilds |
