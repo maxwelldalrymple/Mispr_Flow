@@ -101,10 +101,13 @@ def clean_text(text):
 
 
 def echoes(text, prompt):
-    """True when Whisper just repeated its prompt back (it can, on near-silence)."""
+    """True when Whisper just repeated its prompt back (it can, on near-silence): at least half
+    of the prompt, word for word. A short command that's also in the prompt ("close tab",
+    "YouTube tab") is what was said, not an echo."""
     said = re.findall(r"[a-z0-9]+", text.lower())
-    heard = " ".join(re.findall(r"[a-z0-9]+", prompt.lower()))
-    return len(said) >= 2 and f" {' '.join(said)} " in f" {heard} "  # whole words: "One." isn't "iPhone"
+    words = re.findall(r"[a-z0-9]+", prompt.lower())
+    return (len(said) >= max(3, len(words) // 2)
+            and f" {' '.join(said)} " in f" {' '.join(words)} ")  # whole words: "One." isn't "iPhone"
 
 
 class Transcriber:

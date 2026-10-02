@@ -21,6 +21,10 @@ class Settings:
     # Sound cues (start, stop, paste...).
     sounds: bool = True
     auto_update: bool = True  # the app checks GitHub for a new version about 5 times a day
+    # Long dictations typed in piece by piece while they're processed (off: all at once at the end).
+    live_long_dictations: bool = False
+    # Your own voice commands: [{"say": "sign off", "type": "Best, Alex"}, {"say": "next song", "keys": "cmd right"}].
+    custom_commands: list = field(default_factory=list)
     # The dictation key; see hotkey.normalize_trigger. Default: fn.
     hotkey: dict = field(default_factory=lambda: {"kind": "fn", "keycode": 63, "label": "fn"})
     # The app switcher key (hold it, say an app, let go): same format as `hotkey`; None = off.

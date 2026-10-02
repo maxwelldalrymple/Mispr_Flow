@@ -1904,9 +1904,11 @@ def test_incognito_outline_matches_golden_image(controller, clock, golden_image)
 
 
 class TestLongDictationInPieces:
-    """Long dictations are typed in piece by piece while processing; Auto-Enter waits for the end."""
+    """Long dictations are typed in piece by piece while processing (when that's switched on);
+    Auto-Enter waits for the end."""
 
     def start(self, controller, seconds=30):
+        controller.settings.live_long_dictations = True
         controller.recorder.audio_data = np.full(16000 * seconds, 0.1, np.float32)
         controller.begin_handsfree()
         controller.finish()
@@ -2117,3 +2119,71 @@ class TestAutoEnterKeyAndSendKey:
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
         assert enters == [False]
+
+
+class TestControlCommands(TestAppSwitcher):
+    """Keys, modes, editing "that", repeat, the grid and your own commands, carried out."""
+
+    def test_keys(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.control, "press", lambda key, mods="", times=1: pressed.append((key, mods, times)))
+        self.say(controller, clock, "Press command shift t.")
+        assert pressed == [("t", "cmd shift", 1)]
+
+    def test_again_repeats_the_last_command(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.control, "press", lambda key, mods="", times=1: pressed.append(key))
+        self.say(controller, clock, "Press enter.")
+        self.say(controller, clock, "Do that 3 times.")
+        assert pressed == ["return"] * 4
+
+    def test_mode_by_voice(self, controller, clock, fronted, monkeypatch):
+        current = W.settings.Settings()
+        monkeypatch.setattr(W.settings, "load", lambda: current)
+        monkeypatch.setattr(W.settings, "save", lambda s: None)
+        self.say(controller, clock, "Incognito mode on.")
+        assert current.incognito is True and controller.settings.incognito is True
+        self.say(controller, clock, "Auto enter mode.")  # no state: flip
+        assert current.auto_enter is True
+
+    def test_scratch_that_deletes_the_last_dictation(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.control, "press", lambda key, mods="", times=1: pressed.append((key, mods, times)))
+        controller._last_typed = "Hello there."
+        self.say(controller, clock, "Scratch that.")
+        assert pressed == [("left", "shift", 12), ("delete", "", 1)]
+
+    def test_grid_zooms_then_clicks(self, controller, clock, fronted, monkeypatch):
+        clicks = []
+        monkeypatch.setattr(W.pointer, "click_at", lambda point, *a, **k: clicks.append(point))
+        class Overlay:
+            targets, showing = [], False
+            def show(self, targets, outlines=False):
+                self.targets, self.showing = targets, True
+            def hide(self):
+                self.targets, self.showing = [], False
+            def pick(self, n):
+                return self.targets[n - 1] if 1 <= n <= len(self.targets) else None
+        controller.overlay = Overlay()
+        monkeypatch.setattr(W.AppHelper, "callLater", lambda *a, **k: None)  # the 12 s auto-hide doesn't fire here
+        controller._show_grid((0, 0, 900, 900))
+        self.say(controller, clock, "Five.")  # zoom into the middle square
+        assert controller._grid == (300, 300, 300, 300)
+        self.say(controller, clock, "Click.")
+        assert clicks == [(450, 450)] and not controller.overlay.showing
+
+    def test_your_own_command(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.control, "press", lambda key, mods="", times=1: pressed.append((key, mods)))
+        controller.settings.custom_commands = [{"say": "sign off", "type": "Best, Alex", "keys": "enter"}]
+        self.say(controller, clock, "Sign off.")
+        assert controller.pasted == ["Best, Alex"] and pressed == [("return", "")]
+
+
+class TestLongDictationSwitch:
+    def test_off_by_default_all_at_once(self, controller):
+        assert controller.settings.live_long_dictations is False
+        controller.recorder.audio_data = np.full(16000 * 30, 0.1, np.float32)
+        controller.begin_handsfree()
+        controller.finish()
+        assert not getattr(controller.transcriber, "chunk_calls", None) and controller.transcriber.calls

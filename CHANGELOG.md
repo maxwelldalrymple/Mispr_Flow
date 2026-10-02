@@ -2,6 +2,20 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Oct 2: v1.2.0: control your whole Mac by voice
+
+- **Click anything**, in any app: "click Sign in", double / right click, hover, "click" where the mouse is. Read from the app (Accessibility), no OCR. The closest name wins; several matches get **numbers** ("show numbers", then "7"). Plus a **grid** for unnamed spots, **drag**, and scrolling a named area.
+- **Keyboard:** "press enter", "press command shift t", "down 3", "type …" (exact text), and select all / copy / paste / undo / redo / save.
+- **Editing:** "scratch that", "select that", "capitalize that", "new line", "delete last word", line and word moves.
+- **Windows and desktops:** halves, thirds, corners, center, other screen; Mission Control, show desktop, app windows; next / previous desktop.
+- **Switches:** dark mode, brightness, Wi-Fi, sound output ("use AirPods"), Control Center, Notification Center, Launchpad, Spotlight; Mispr Flow's modes ("auto enter on", "incognito mode", "sounds off").
+- **The web:** Google, YouTube, Amazon and other searches; "go to apple.com"; find on page.
+- **Power tools:** "run shortcut …", "again" / "do that 3 times", your own commands (Settings → General).
+- **Voice Commands page:** every command, searchable, checked against the parser by a test.
+- **Updates: stable and beta.** Stable releases install themselves; betas are offered in Settings only. `tools/release.sh` publishes either.
+- **Long dictations as they're processed** is now a switch, off by default.
+- **Fixed:** "YouTube tab", "close tab", "new tab" and other commands in Whisper's hint were dropped as prompt echoes (1.1.0–1.1.1).
+
 ## Oct 2: v1.1.1
 
 - The first release delivered by automatic update: proves 1.1.0 finds, verifies and installs a new version by itself. No other changes.

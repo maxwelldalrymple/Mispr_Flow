@@ -73,4 +73,45 @@ final class UpdateTests: XCTestCase {
         XCTAssertNil(file.autoEnterKey)
         XCTAssertTrue(file.bool("auto_update"))  // on by default
     }
+
+    func list(_ entries: [(String, Bool)]) -> Data {
+        let objects: [[String: Any]] = entries.map { tag, pre in
+            let v = String(tag.dropFirst())
+            return ["tag_name": tag, "prerelease": pre, "draft": false,
+                    "assets": [["name": "Mispr-Flow-\(v).dmg", "browser_download_url": "https://github.com/x/releases/download/\(tag)/Mispr-Flow-\(v).dmg"],
+                               ["name": "Mispr-Flow-\(v).dmg.sig", "browser_download_url": "https://github.com/x/releases/download/\(tag)/Mispr-Flow-\(v).dmg.sig"]]]
+        }
+        return try! JSONSerialization.data(withJSONObject: objects)
+    }
+
+    func testBetaVersionsOrder() {
+        XCTAssertTrue(Update.isNewer("1.3.0-beta.1", than: "1.2.0"))
+        XCTAssertTrue(Update.isNewer("1.3.0", than: "1.3.0-beta.2"))  // the release beats its betas
+        XCTAssertTrue(Update.isNewer("1.3.0-beta.2", than: "1.3.0-beta.1"))
+        XCTAssertFalse(Update.isNewer("1.3.0-beta.9", than: "1.3.0"))
+    }
+
+    func testStableInstallsBetaIsOnlyOffered() {
+        let found = Update.choose(list([("v1.2.0", false), ("v1.3.0-beta.1", true), ("v1.1.1", false)]), current: "1.1.1")
+        XCTAssertEqual(found.stable?.version, "1.2.0")
+        XCTAssertEqual(found.beta?.version, "1.3.0-beta.1")
+        XCTAssertEqual(found.beta?.beta, true)
+    }
+
+    func testABetaOlderThanTheNewestStableIsNeverShown() {
+        let found = Update.choose(list([("v1.3.0", false), ("v1.3.0-beta.2", true)]), current: "1.2.0")
+        XCTAssertEqual(found.stable?.version, "1.3.0")
+        XCTAssertNil(found.beta)
+    }
+
+    func testOnTheNewestStableOnlyANewerBetaIsOffered() {
+        let found = Update.choose(list([("v1.2.0", false), ("v1.3.0-beta.1", true)]), current: "1.2.0")
+        XCTAssertNil(found.stable)
+        XCTAssertEqual(found.beta?.version, "1.3.0-beta.1")
+        XCTAssertNil(Update.choose(list([("v1.2.0", false)]), current: "1.3.0-beta.1").beta)  // already past it
+    }
+
+    func testLatestEndpointParseSkipsBetas() {
+        XCTAssertNil(Update.parse(release("v1.3.0-beta.1")))
+    }
 }

@@ -5,6 +5,7 @@ import ServiceManagement
 
 enum Page: String, CaseIterable, Identifiable {
     case home = "Home"
+    case commands = "Voice Commands"
     case notetaker = "Notetaker"
     case insights = "Insights"
     case prompts = "Prompts"
@@ -14,6 +15,7 @@ enum Page: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .home: "mic"
+        case .commands: "waveform.and.mic"
         case .notetaker: "record.circle"
         case .insights: "chart.bar"
         case .prompts: "text.bubble"
@@ -235,6 +237,18 @@ final class AppModel: ObservableObject {
 
     /// The app switcher key (nil turns it off).
     var autoEnterKey: DictationKey? { settingsFile.autoEnterKey }
+    var customCommands: [CustomCommand] { settingsFile.customCommands }
+
+    func setCustomCommands(_ commands: [CustomCommand]) {
+        do {
+            try settingsFile.setCustomCommands(commands)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save your commands: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
 
     func setAutoEnterKey(_ key: DictationKey?) {
         do {

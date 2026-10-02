@@ -8,6 +8,10 @@ Runs dictation, the widget, voice commands and all the models. Start it alone wi
 | `widget.py` | The floating pill: state machine (idle, hold, hands-free, processing, meeting…), drawing, mouse and keys, sounds and notices; dictation's paste/copy/Auto-Enter; the **app switcher** (`switch_key`, `_do_switch_command`) |
 | `hotkey.py` | Quartz event tap: the dictation key (fn, a modifier side, or a key), the **switch key** (key, modifier side or combo), ⌥M, hands-free keys |
 | `apps.py` | Voice commands: parsing, confident app matching, window layout, shortcuts, media/volume/mic, tab muting, seek, scroll, folder/file search (Spotlight, walk, Soundex), Finder control, permission checks |
+| `control.py` | More of the Mac by voice: keys and shortcuts, typing, editing "that", window halves and desktops, system switches (dark mode, Wi-Fi, brightness, sound output), web searches, Shortcuts, "again", your own commands, the grid |
+| `pointer.py` | Clicking by voice: what's on screen from the Accessibility API, closest-name matching, mouse clicks, drags, menu-bar extras |
+| `overlay.py` | The numbers and grid overlay (a click-through window with numbered badges) |
+| `sites.py` | The ~1,000 most visited sites (`assets/sites.txt`) for misheard site names and spoken web addresses |
 | `terminal.py` | Terminal dictation: spoken syntax → shell, with a no-added-words check |
 | `audio.py` | Mic capture into a locked (`mlock`), wipeable buffer |
 | `transcribe.py` | whisper.cpp wrapper: text or timed segments; lazy loading |

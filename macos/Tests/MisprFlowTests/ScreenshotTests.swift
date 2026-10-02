@@ -75,7 +75,7 @@ final class ScreenshotTests: XCTestCase {
 
     func testMainWindow() throws {
         try bothModes {
-            let names: [Page: String] = [.home: "home_dictation-history", .notetaker: "notetaker_notes-list",
+            let names: [Page: String] = [.home: "home_dictation-history", .commands: "voice-commands_overview", .notetaker: "notetaker_notes-list",
                                          .insights: "insights_overview", .prompts: "prompts_cleanup-prompt"]
             for page in Page.allCases {
                 t.model.page = page

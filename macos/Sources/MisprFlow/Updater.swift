@@ -20,6 +20,8 @@ final class Updater: ObservableObject {
     }
 
     @Published private(set) var status: Status = .idle
+    /// A beta newer than this version and every stable release: Settings offers it.
+    @Published private(set) var beta: Release?
     /// Is "Automatic updates" on (settings.json auto_update)?
     var enabled: () -> Bool = { true }
     /// Dictating or recording a meeting: an update waits.
@@ -79,11 +81,13 @@ final class Updater: ObservableObject {
         defer { working = false }
         status = .checking
         do {
-            var request = URLRequest(url: Update.latestURL)
+            var request = URLRequest(url: Update.releasesURL)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue("Mispr-Flow/\(current)", forHTTPHeaderField: "User-Agent")
             let (data, _) = try await URLSession.shared.data(for: request)
-            guard let release = Update.parse(data), Update.isNewer(release.version, than: current) else {
+            let found = Update.choose(data, current: current)
+            beta = found.beta  // offered in Settings; never installed by itself
+            guard let release = found.stable else {
                 status = .upToDate(current)
                 return
             }
@@ -94,6 +98,21 @@ final class Updater: ObservableObject {
             installWhenIdle()
         } catch {
             status = .failed("Update check failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Settings › Install beta: download, check, and install the offered beta now (you asked).
+    @MainActor
+    func installBeta() async {
+        guard let beta, !working, blocker == nil else { return }
+        working = true
+        defer { working = false }
+        status = .downloading(beta.version)
+        do {
+            let app = try await download(beta)
+            install(app, version: beta.version)
+        } catch {
+            status = .failed("Couldn't install the beta: \(error.localizedDescription)")
         }
     }
 

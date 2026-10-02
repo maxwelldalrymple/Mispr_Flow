@@ -16,6 +16,94 @@ The widget confirms what happened ("→ Google Chrome", "Volume 55%"). The comma
 - With no app named, a command acts on **the app you're in**.
 - Words like "please", "go", "open" in front are ignored.
 - Numbers can be spoken ("eighty percent").
+- Every phrase is also listed on the app's **Voice Commands** page, which can be searched.
+
+## Click anything
+
+Buttons, links, fields, tabs, menu items and labeled pictures in **any app**, by the words on them. They're read from the app itself (the macOS Accessibility API), not from a screenshot. Chrome and Electron apps are asked to report their web pages. A full Chrome page scans in about 0.15 s.
+
+| Say | Does |
+|---|---|
+| "click Sign in" / "click the search box" / "press Pricing" | Moves the mouse there and clicks |
+| "double click Budget" / "right click the logo" | Double-click / right-click it |
+| "click" | Clicks where the mouse is |
+| "move the mouse to Pricing" / "hover over Pricing" | Points without clicking |
+| "show numbers", then "7" (or "click seven") | A blue number on everything clickable; say one |
+| "never mind" | Hides the numbers |
+| "show grid", then "5", "5", "click" | A 3×3 grid: each number zooms in, "click" clicks its middle (for spots with no name) |
+| "drag Budget to the Trash" | Drags one thing onto another |
+| "scroll the sidebar down" | Scrolls a named part of the window |
+
+- **The closest name wins** when nothing matches exactly: "opus" finds "Opus 4.6", "pref" finds "Preferences", "fable five" finds "Fable 5.1", "thru setup" finds "Walk through setup". It compares word by word (exact, prefix, spelling, sound), and numbers must match.
+- **Several matches** (or a close tie) get numbers instead of a guess. Text inside a link counts as the link.
+- Not on screen? "click Export" tries the app's menus next.
+
+## Keyboard and typing
+
+| Say | Does |
+|---|---|
+| "press enter" / "press escape" / "press tab" / "press delete" / "press space" | That key |
+| "press command shift t" / "press option left" | Any shortcut: command, shift, option, control + a key |
+| "press tab 3 times" / "down 3" / "left five" | Repeated keys and arrows |
+| "type hello@example.com" | Types exactly what you said (no cleanup; Whisper's closing period dropped) |
+| "select all" / "copy" / "cut" / "paste" / "undo" / "redo" / "save" / "print" | ⌘A ⌘C ⌘X ⌘V ⌘Z ⇧⌘Z ⌘S ⌘P, in any app |
+
+## Editing text
+
+"That" is your last dictation.
+
+| Say | Does |
+|---|---|
+| "scratch that" / "delete that" | Deletes it |
+| "select that" | Selects it |
+| "capitalize that" / "uppercase that" / "lowercase that" | Retypes it |
+| "new line" / "new paragraph" | ⇧Return once / twice (doesn't send in chat apps) |
+| "delete last word" / "delete line" | ⌥⌫ / ⌘⌫ |
+| "select last word" / "select next word" / "select line" | |
+| "go to end of line" / "start of line" / "end of document" / "next word" | |
+
+## Window layout and desktops
+
+| Say | Does |
+|---|---|
+| "left half" / "right half" / "top half" / "bottom half" | Snaps the window in front |
+| "left third" / "right two thirds" / "middle third" | Thirds |
+| "top left corner" / "move to bottom right" | Quarters ("corner" or "move to" is needed: plain "top left" means "tab left") |
+| "center" | Centered at 70% |
+| "move to the other screen" | To your next display |
+| "mission control" / "show desktop" / "app windows" | Mission Control views |
+| "next desktop" / "previous desktop" | ⌃→ / ⌃← |
+| "desktop 2" | ⌃2: turn on "Switch to Desktop 2" in Keyboard Shortcuts › Mission Control |
+
+## Switches
+
+| Say | Does |
+|---|---|
+| "dark mode on" / "light mode" / "dark mode" | Appearance (asks once to control System Events) |
+| "brightness up" / "dimmer" | The display brightness keys |
+| "wifi off" / "turn on wi-fi" / "wifi" | Wi-Fi (`networksetup`) |
+| "use AirPods" / "play through the speakers" | Sound output, by closest name. Not an output? It switches to that app |
+| "control center" / "notification center" / "launchpad" / "spotlight budget" | Opens them |
+| "auto enter on" / "incognito mode" / "sounds off" | Mispr Flow's own modes (no on/off: flip) |
+
+Bluetooth and Do Not Disturb have no built-in switch an app can use: make a Shortcut and say "run shortcut …".
+
+## The web
+
+| Say | Does |
+|---|---|
+| "google best pizza near me" | A Google search in the browser in front |
+| "search youtube for lofi beats" | Also Amazon, Wikipedia, GitHub, Reddit, Maps, Images, Bing, DuckDuckGo |
+| "go to apple.com" / "go to news dot ycombinator dot com" | Opens the site ("dot" needed for .app, .tv, .co…) |
+| "find pricing on the page" | ⌘F and types it |
+
+## Power tools
+
+| Say | Does |
+|---|---|
+| "run shortcut Morning" / "run my Morning shortcut" | Runs a shortcut from the Shortcuts app (closest name) |
+| "again" / "do that 3 times" | Repeats the last command |
+| Your own phrases | **Settings → General → Your own commands**: a phrase that types text and then presses keys ("sign off" → "Best, Alex"; "send it" → cmd enter) |
 
 ## Apps and windows
 

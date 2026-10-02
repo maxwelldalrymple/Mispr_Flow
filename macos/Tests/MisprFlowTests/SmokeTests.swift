@@ -3,6 +3,6 @@ import XCTest
 
 final class SmokeTests: XCTestCase {
     func testTheAppTargetLoads() {
-        XCTAssertEqual(Page.allCases.map(\.rawValue), ["Home", "Notetaker", "Insights", "Prompts"])
+        XCTAssertEqual(Page.allCases.map(\.rawValue), ["Home", "Voice Commands", "Notetaker", "Insights", "Prompts"])
     }
 }

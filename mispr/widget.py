@@ -55,7 +55,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import apps, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, control, pointer, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -110,6 +110,17 @@ SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing i
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
+# Commands handled by control.py (keys, windows, switches, the web…).
+CONTROL_KINDS = {"mode", "keys", "type", "custom", "that", "snap", "other_screen", "desktop", "mission", "dark_mode", "wifi",
+                 "brightness", "output", "search", "go_to", "find", "spotlight", "run_shortcut", "grid", "drag", "scroll_in"}
+AGAIN_GAP = 0.35  # seconds between repeats of "do that 3 times"
+FIND_DELAY = 0.25  # ⌘F opens the find bar, then the words are typed
+SPOTLIGHT_DELAY = 0.4
+EDIT_DELAY = 0.1
+CUSTOM_KEY_DELAY = 0.6  # after a paste lands (RESTORE_AFTER is 0.5 s), then the keys
+SCROLL_IN_PIXELS = 450
+GRID_MIN_CELL = 60  # zooming stops when a cell is this small: the next number clicks
+OVERLAY_SECONDS = 12  # numbered badges stay this long unless a number is said
 RECORDING_CHECK_SECONDS = 1.0  # screencapture refuses within this when it isn't allowed
 PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next paste
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
@@ -459,7 +470,8 @@ class WidgetController:
     def _process(self, reason):
         self.set_state(PROCESSING)
         audio = self.recorder.audio()
-        if len(audio) >= CHUNK_FROM_SECONDS * storage.SAMPLE_RATE and not terminal.is_terminal(self.rec_recorded_in):
+        if (self.settings.live_long_dictations and len(audio) >= CHUNK_FROM_SECONDS * storage.SAMPLE_RATE
+                and not terminal.is_terminal(self.rec_recorded_in)):
             return self._process_in_chunks(audio, reason)
         self.transcriber.transcribe_async(
             self.recorder.audio(),
@@ -548,6 +560,7 @@ class WidgetController:
                 AppHelper.callLater(max(0.0, run["free_at"] - time.monotonic() - RESTORE_AFTER - PIECE_GAP) + ENTER_DELAY,
                                     press_enter, send_with_command((run["target"] or {}).get("url")))
             self.sounds.play(sounds.PASTE)
+            self._last_typed = text
             self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
         self._wipe(run["reason"])
         self.to_idle()
@@ -584,6 +597,8 @@ class WidgetController:
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
+            if status == storage.PASTED:
+                self._last_typed = text  # "select that", "scratch that", "capitalize that"
             self._save(status, text, pasted_into=target, raw=raw, cleanup=info)
         else:
             self.sounds.play(sounds.ALERT)  # recorded, but no words came out: nothing to paste
@@ -750,6 +765,253 @@ class WidgetController:
         self._switch_done(f"{hit[0].title()} › {hit[1].capitalize()}")
         return True
 
+    def _control(self, command):
+        """Keys, typing, editing, windows, desktops, switches, the web, Shortcuts, modes (control.py)."""
+        kind, args = command[0], command[1:]
+        if kind == "mode":
+            return self.set_mode(*args)
+        if kind == "keys":
+            keys, times = args
+            for key, mods in keys:
+                control.press(key, mods, times)
+            label = " ".join(f"{mods}+{key}" if mods else key for key, mods in keys)
+            return self._switch_done(f"Pressed {label}" + (f" ×{times}" if times > 1 else ""))
+        if kind == "type":
+            (type_text if self.settings.incognito else paste_text)(args[0])
+            return self._switch_done("Typed")
+        if kind == "custom":  # your own command (Settings): its text, then its keys ("hello", then Enter)
+            phrase, keys, text = args
+            if text:
+                (type_text if self.settings.incognito else paste_text)(text)
+            for i, (key, mods) in enumerate(keys):
+                AppHelper.callLater((CUSTOM_KEY_DELAY if text else 0) + i * 0.05, control.press, key, mods)
+            return self._switch_done(f"“{phrase}”")
+        if kind == "that":
+            return self._edit_that(args[0])
+        if kind == "snap":
+            pid = apps.frontmost_pid()
+            screen = next((s for s in control.screens() if pointer._inside(pointer.mouse_position(), s)), control.screens()[0])
+            ok = pid and apps.window_action(pid, "frame", control.snap_frame(screen, args[0]))
+            return self._switch_done(args[0].replace("left", "Left").replace("right", "Right").capitalize()) if ok \
+                else self._switch_failed("No window to move")
+        if kind == "other_screen":
+            return self._to_other_screen()
+        if kind == "desktop":
+            target = args[0]
+            if isinstance(target, int):
+                control.press(str(target), "ctrl")
+                return self._switch_done(f"Desktop {target}")
+            control.press("right" if target == "next" else "left", "ctrl")
+            return self._switch_done(f"{target.capitalize()} desktop")
+        if kind == "mission":
+            return self._mission(args[0])
+        if kind == "dark_mode":
+            control.dark_mode(args[0])
+            return self._switch_done("Dark mode" + ("" if args[0] is None else " on" if args[0] else " off"))
+        if kind == "wifi":
+            return self._in_background(lambda: control.wifi(args[0]), lambda on: self._switch_done(f"Wi-Fi {'on' if on else 'off'}"))
+        if kind == "brightness":
+            control.brightness(args[0])
+            return self._switch_done(f"Brightness {args[0]}")
+        if kind == "output":  # "use AirPods"; "use Slack" isn't a sound output, so it switches to Slack
+            return self._in_background(lambda: control.use_output(args[0]),
+                                       lambda name: self._switch_done(f"Sound: {name}") if name
+                                       else self._run_command(("switch", args[0])))
+        if kind in ("search", "go_to"):
+            url = control.search_url(*args) if kind == "search" else f"https://{args[0]}"
+            front = context.frontmost(include_page=False)
+            browser = apps.scriptable_browser(front.get("bundle_id")) if front else None
+            control.open_url(url, browser[1] if browser else None)
+            return self._switch_done(f"Searching {args[0].capitalize()}" if kind == "search" else f"Opening {args[0]}")
+        if kind == "find":
+            control.press("f", "cmd")
+            AppHelper.callLater(FIND_DELAY, type_text, args[0])
+            return self._switch_done(f"Finding “{args[0]}”")
+        if kind == "spotlight":
+            control.press("space", "cmd")
+            if args[0]:
+                AppHelper.callLater(SPOTLIGHT_DELAY, type_text, args[0])
+            return self._switch_done("Spotlight")
+        if kind == "run_shortcut":
+            return self._in_background(lambda: control.run_shortcut(args[0]),
+                                       lambda name: self._switch_done(f"Running “{name}”") if name
+                                       else self._switch_failed(f"No shortcut called “{args[0]}” (Shortcuts app)"))
+        if kind == "grid":
+            return self._show_grid(control.screens()[0])
+        if kind == "drag":
+            pid = apps.frontmost_pid()
+            return self._in_background(lambda: self._scan_two(pid, *args), lambda pair: self._drag(pair, *args))
+        if kind == "scroll_in":
+            pid = apps.frontmost_pid()
+            what, direction = args
+            return self._in_background(lambda: self._scan(pid, what), lambda found: self._scroll_in(found, what, direction))
+        return self._switch_failed("Not sure how to do that yet")
+
+    def set_mode(self, name, on=None):
+        """Auto-Enter, Incognito or sounds by voice: on, off, or (None) flip. Saved like the switches."""
+        current = settings.load()
+        value = (not getattr(current, name)) if on is None else on
+        setattr(current, name, value)
+        settings.save(current)
+        self.reload_settings()
+        self.on_settings_changed()
+        label = {"auto_enter": "Auto-Enter", "incognito": "Incognito", "sounds": "Sounds"}[name]
+        if name != "auto_enter":  # Auto-Enter already says so (badge, chime, notice)
+            self._switch_done(f"{label} {'on' if value else 'off'}")
+
+    def _edit_that(self, how):
+        """The last dictation: select it, delete it, or retype it capitalized/uppercase/lowercase."""
+        text = getattr(self, "_last_typed", None)
+        if not text:
+            return self._switch_failed("Nothing dictated yet")
+        control.select_back(len(text))
+        if how == "select":
+            return self._switch_done("Selected")
+        if how == "delete":
+            control.press("delete")
+            self._last_typed = None
+            return self._switch_done("Deleted")
+        new = control.transform(text, how)
+        AppHelper.callLater(EDIT_DELAY, type_text if self.settings.incognito else paste_text, new)
+        self._last_typed = new
+        return self._switch_done(how.capitalize() + "d")
+
+    def _to_other_screen(self):
+        pid = apps.frontmost_pid()
+        win = apps._window(pid) if pid else None
+        frame = pointer._frame(win) if win is not None else None
+        displays = control.screens()
+        if frame is None or len(displays) < 2:
+            return self._switch_failed("Only one screen" if len(displays) < 2 else "No window to move")
+        here = next((i for i, d in enumerate(displays) if pointer._inside((frame[0] + 20, frame[1] + 20), d)), 0)
+        there = displays[(here + 1) % len(displays)]
+        apps.window_action(pid, "frame", control.snap_frame(there, "center"))
+        return self._switch_done("Moved to the other screen")
+
+    def _mission(self, view):
+        if view in ("all", "desktop", "app"):
+            control.mission_control(view)
+            return self._switch_done({"all": "Mission Control", "desktop": "Desktop", "app": "App windows"}[view])
+        if view == "launchpad":
+            control.open_app("Launchpad")
+            return self._switch_done("Launchpad")
+        ok = pointer.press_menu_extra("Clock" if view == "notifications" else "Control Center")
+        return self._switch_done("Notification Center" if view == "notifications" else "Control Center") if ok \
+            else self._switch_failed("Couldn't open it")
+
+    def _show_grid(self, region):
+        """Numbers 1–9 over `region`: say one to zoom in, "click" to click its middle."""
+        self._grid = region
+        cells = [pointer.Target(str(i), "grid", frame) for i, frame in enumerate(control.grid_cells(region), 1)]
+        overlay = self._overlay()
+        overlay.show(cells, outlines=True)
+        AppHelper.callLater(OVERLAY_SECONDS, self._expire_numbers, overlay.targets)
+        return self._switch_done("Say a number to zoom, or “click”")
+
+    def _scan_two(self, pid, a, b):
+        self._scan(pid, None)  # web content on
+        found = pointer.targets(pid)
+        return pointer.match(a, found), pointer.match(b, found)
+
+    def _drag(self, pair, a, b):
+        start, end = pair
+        if not start or not end:
+            return self._switch_failed(f"Couldn't find “{a if not start else b}” on screen")
+        pointer.drag(start[0].center, end[0].center)
+        return self._switch_done(f"Dragged {start[0].name or a} to {end[0].name or b}")
+
+    def _scroll_in(self, found, what, direction):
+        if not found:
+            return self._switch_failed(f"Couldn't find “{what}” on screen")
+        pointer.click_at(found[0].center, move_only=True)
+        apps.scroll(SCROLL_IN_PIXELS if direction == "up" else -SCROLL_IN_PIXELS)
+        return self._switch_done(f"Scrolled {found[0].name or what} {direction}")
+
+    def _pointer_command(self, command):
+        kind = command[0]
+        overlay = self._overlay()
+        if kind == "hide_numbers":
+            overlay.hide()
+            self._grid = None
+            return self._switch_done("Numbers hidden")
+        grid = getattr(self, "_grid", None)
+        if grid is not None and overlay.showing and kind == "number":  # zoom into a square, or click a small one
+            cell = overlay.pick(command[1])
+            if cell is None:
+                return self._switch_failed(f"No square {command[1]}")
+            if cell.frame[2] < GRID_MIN_CELL * 3:
+                overlay.hide()
+                self._grid = None
+                pointer.click_at(cell.center)
+                return self._switch_done(f"Clicked square {command[1]}")
+            return self._show_grid(cell.frame)
+        if grid is not None and overlay.showing and kind == "click" and command[1] is None:
+            overlay.hide()
+            self._grid = None
+            x, y, w, h = grid
+            pointer.click_at((x + w / 2, y + h / 2), command[2], command[3])
+            return self._switch_done("Clicked")
+        if kind == "number":
+            target = overlay.pick(command[1]) if overlay.showing else None
+            if target is None:
+                return self._switch_failed("Say “show numbers” first" if not overlay.showing else f"No number {command[1]}")
+            button, count, hover = self._pending_click
+            overlay.hide()
+            return self._click(target, button, count, hover)
+        if kind == "click" and command[1] is None:  # "click": right where the mouse is
+            pointer.click_at(pointer.mouse_position(), command[2], command[3])
+            return self._switch_done({1: "Clicked", 2: "Double-clicked"}[command[3]] if command[2] == "left" else "Right-clicked")
+        pid = apps.frontmost_pid()
+        if not pid:
+            return self._switch_failed("No app in front")
+        what = command[1] if kind in ("click", "hover") else None
+        self._pending_click = (command[2], command[3], False) if kind == "click" else ("left", 1, kind == "hover")
+        return self._in_background(lambda: self._scan(pid, what), lambda found: self._on_scanned(kind, what, found))
+
+    def _overlay(self):
+        if getattr(self, "overlay", None) is None:
+            from .overlay import NumberOverlay
+            self.overlay = NumberOverlay()
+        return self.overlay
+
+    @staticmethod
+    def _scan(pid, what):
+        """What's on screen in the app in front; for `what`, the targets it names."""
+        pointer.enable_web_accessibility(pid)
+        found = pointer.targets(pid)
+        return pointer.match(what, found) if what else pointer.numberable(found)
+
+    def _on_scanned(self, kind, what, found):
+        overlay = self._overlay()
+        self._grid = None  # these numbers are things on screen, not grid squares
+        if kind == "show_numbers":
+            if not found:
+                return self._switch_failed("Nothing clickable found here")
+            overlay.show(found)
+            AppHelper.callLater(OVERLAY_SECONDS, self._expire_numbers, overlay.targets)
+            return self._switch_done(f"{len(found)} numbered · say a number")
+        if not found:
+            if kind == "click" and self._press_menu(what):  # not on screen: a menu item ("click export")
+                return
+            return self._switch_failed(f"Couldn't find “{what}” on screen")
+        if len(found) == 1:
+            button, count, hover = self._pending_click
+            return self._click(found[0], button, count, hover)
+        overlay.show(found)
+        AppHelper.callLater(OVERLAY_SECONDS, self._expire_numbers, overlay.targets)
+        return self._switch_done(f"{len(found)} “{what}” · say a number")
+
+    def _expire_numbers(self, shown):
+        overlay = self._overlay()
+        if overlay.targets is shown:  # still the same numbers: nobody picked one
+            overlay.hide()
+
+    def _click(self, target, button, count, hover):
+        pointer.click_at(target.center, button, count, move_only=hover)
+        label = target.name or target.role.replace("AX", "").lower()
+        verb = "Pointing at" if hover else {("left", 1): "Clicked", ("left", 2): "Double-clicked"}.get((button, count), "Right-clicked")
+        return self._switch_done(f"{verb} {label}")
+
     def _find_site_tab(self, site, number, running):
         """Select the `number`th tab of `site` in the browser in front, else the first running
         browser that has one. Returns (message, found)."""
@@ -785,10 +1047,25 @@ class WidgetController:
             self._command_record = self._save(storage.COMMAND, text.strip())
         self._wipe("app switch")
         self.to_idle()
-        command = apps.parse(text or "")
+        self._said = text or ""
+        command = control.custom(text or "", self.settings.custom_commands) or apps.parse(text or "")
         if command is None:
             self.sounds.play(sounds.ALERT)
             return
+        if command[0] == "again":  # repeat the last command (n times)
+            last = getattr(self, "_last_command", None)
+            if not last:
+                return self._switch_failed("Nothing to repeat yet")
+            for i in range(command[1]):
+                AppHelper.callLater(i * AGAIN_GAP, self._run_command, last)
+            return
+        self._last_command = command
+        return self._run_command(command)
+
+    def _run_command(self, command):
+        """Carry out a parsed voice command (apps.parse)."""
+        if command[0] in CONTROL_KINDS:
+            return self._control(command)
         installed = apps.find_apps()
         if command[0] == "nickname":
             _, nick, spoken = command
@@ -912,7 +1189,9 @@ class WidgetController:
             return self._switch_failed("No tab to split here")
         if kind == "system":  # screenshots, screen recording, sleep, lock, log out / restart / shut down
             return self._system_command(command[1])
-        if kind == "menu":  # "click save", "press show sidebar"
+        if kind in ("click", "hover", "number", "show_numbers", "hide_numbers"):  # clicking by voice (pointer.py)
+            return self._pointer_command(command)
+        if kind == "menu":  # "file new window"
             return self._press_menu(command[1]) or self._switch_failed(f"No “{command[1]}” in this app's menus")
         if kind == "site_tab":  # "github tab", "youtube tab 2"
             _, site, number = command
@@ -959,7 +1238,7 @@ class WidgetController:
             if hit is None:
                 # "save", "show sidebar": a menu item of the app in front (the whole phrase first:
                 # "show" was dropped from `name` as in "show Chrome")
-                if kind == "switch" and (self._press_menu(apps.normalize(text)) or self._press_menu(name)):
+                if kind == "switch" and (self._press_menu(apps.normalize(self._said)) or self._press_menu(name)):
                     return
                 return self._switch_failed(f"No app called “{name}”")
             found.append(hit)

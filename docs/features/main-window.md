@@ -22,6 +22,10 @@ Finishing or skipping marks it done. Replay it from **Help → Show Tutorial**, 
 - **Auto-Enter (⏎)** and **Incognito** switches, each with a hover explanation.
 - Your **profile photo**, which opens Settings → Profile.
 
+## Voice Commands page
+
+The second page: every voice command, searchable ("tab", "click", "volume"), by category chips, with your keys and what can never happen by voice. A test parses every phrase on it with the real engine, so it always matches what the app does.
+
 ## Pages
 
 - **Home:**
@@ -48,7 +52,8 @@ Sample-data tools (`tools/make_sample_dictations.py`, `make_sample_meetings.py`)
 
 From v1.1.0, the DMG app keeps itself up to date (**Settings → System**):
 
-- **Automatic updates** (on by default): about 5 times a day, and a minute after launch, it asks GitHub for the latest release.
+- **Automatic updates** (on by default): about 5 times a day, and a minute after launch, it asks GitHub for its releases.
+- **Stable and beta:** stable releases install themselves. Betas (GitHub pre-releases, like `1.3.0-beta.1`) are only offered: **Settings → System** shows "Beta … available" with **Install beta**. A beta is only shown while it's newer than your version and every stable release, and the next stable release replaces it automatically.
 - A newer version is downloaded and its **signature checked**: every release DMG is signed (Ed25519, over its SHA-256) with a key that stays on the maintainer's Mac. A file that doesn't match is deleted, never installed.
 - It installs only after **a minute without dictating or a meeting**: the app quits, the new copy takes its place, and it opens again with an "Updated to 1.x · What's new" note.
 - Releases are signed with the same certificate each time, so **permissions carry over**.

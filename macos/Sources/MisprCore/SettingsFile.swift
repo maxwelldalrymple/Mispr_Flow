@@ -2,10 +2,23 @@ import Foundation
 
 /// settings.json, shared with the engine (mispr/settings.py). The app changes a key, writes
 /// the file (keeping keys it doesn't know), then tells the engine to reload.
+public struct CustomCommand: Equatable, Identifiable {
+    public var say: String
+    public var type: String
+    public var keys: String
+    public var id: String { say }
+
+    public init(say: String, type: String = "", keys: String = "") {
+        self.say = say
+        self.type = type
+        self.keys = keys
+    }
+}
+
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true, "live_long_dictations": false]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -53,6 +66,18 @@ public struct SettingsFile {
 
     /// Spoken nicknames for apps: ["c": "Google Chrome"].
     public var nicknames: [String: String] { read()["app_nicknames"] as? [String: String] ?? [:] }
+
+    /// Your own voice commands: a phrase that types text and/or presses keys ("cmd shift t").
+    public var customCommands: [CustomCommand] {
+        (read()["custom_commands"] as? [[String: Any]] ?? []).compactMap { entry in
+            guard let say = entry["say"] as? String, !say.isEmpty else { return nil }
+            return CustomCommand(say: say, type: entry["type"] as? String ?? "", keys: entry["keys"] as? String ?? "")
+        }
+    }
+
+    public func setCustomCommands(_ commands: [CustomCommand]) throws {
+        try set("custom_commands", commands.map { ["say": $0.say, "type": $0.type, "keys": $0.keys] })
+    }
 
     public func setNicknames(_ nicknames: [String: String]) throws {
         try set("app_nicknames", nicknames)

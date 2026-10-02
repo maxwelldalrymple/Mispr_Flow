@@ -150,6 +150,21 @@ struct GeneralSettings: View {
             }
         }
         SettingsGroup {
+            SettingRow(title: "Show long dictations as they're processed",
+                       detail: "Past 20 seconds, text is typed in piece by piece while the rest is still being worked on. Off: it all appears at once when it's done.") {
+                Toggle("", isOn: model.binding("live_long_dictations")).toggleStyle(.switch).labelsHidden()
+            }
+        }
+        SettingsGroup {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Your own commands").font(.system(size: 13, weight: .semibold))
+                Text("Hold your switch key and say the phrase: it types your text and/or presses keys (like “cmd shift t”, “enter”).")
+                    .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            }
+            .padding(.vertical, 10)
+            CustomCommandList().padding(.bottom, 12)
+        }
+        SettingsGroup {
             SettingRow(title: "Clean up dictation",
                        detail: "Removes um/uh, repeats, and retracted phrases, and fixes punctuation. Never adds words you didn't say. Off pastes exactly what Whisper heard.") {
                 Toggle("", isOn: model.binding("cleanup")).toggleStyle(.switch).labelsHidden()
@@ -187,7 +202,17 @@ struct SystemSettings: View {
             SettingRow(title: "Version \(model.updater.current)", detail: UpdateStatusText.describe(model.updater.status, blocker: model.updater.blocker)) {
                 Button("Check now") { Task { await model.updater.check(manual: true) } }
                     .disabled({ if case .checking = model.updater.status { return true }; if case .downloading = model.updater.status { return true }; return false }())
+                if let beta = model.updater.beta {
+                Divider()
+                SettingRow(title: "Beta \(beta.version) available",
+                           detail: "A test version with the newest changes. It's never installed by itself; the next stable release replaces it automatically.") {
+                    HStack(spacing: 8) {
+                        if let page = beta.page { Link("What's new", destination: page).font(.system(size: 12)) }
+                        Button("Install beta") { Task { await model.updater.installBeta() } }
+                    }
+                }
             }
+        }
         }
         SettingsGroup {
             SettingRow(title: "Setup guide", detail: "Permissions, model downloads, and the fn walkthrough.") {
@@ -604,5 +629,46 @@ enum UpdateStatusText {
         case let .installing(version): "Installing \(version)…"
         case let .failed(message): message
         }
+    }
+}
+
+/// Settings › General: your own voice commands.
+struct CustomCommandList: View {
+    @EnvironmentObject var model: AppModel
+    @State private var say = ""
+    @State private var type = ""
+    @State private var keys = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(model.customCommands) { command in
+                HStack(spacing: 10) {
+                    SpeechBubble(text: command.say, tint: Theme.accent)
+                    Text(Self.describe(command)).font(.system(size: 12)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    Spacer()
+                    Button { model.setCustomCommands(model.customCommands.filter { $0.say != command.say }) } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.secondary).help("Remove")
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Say…", text: $say).frame(width: 140)
+                TextField("Type this", text: $type)
+                TextField("and press (cmd shift t)", text: $keys).frame(width: 170)
+                Button("Add") {
+                    let new = CustomCommand(say: say.trimmingCharacters(in: .whitespaces), type: type, keys: keys)
+                    model.setCustomCommands(model.customCommands.filter { $0.say.lowercased() != new.say.lowercased() } + [new])
+                    say = ""; type = ""; keys = ""
+                }
+                .disabled(say.trimmingCharacters(in: .whitespaces).isEmpty || (type.isEmpty && keys.isEmpty))
+            }
+            .textFieldStyle(.roundedBorder).font(.system(size: 12))
+        }
+    }
+
+    static func describe(_ command: CustomCommand) -> String {
+        [command.type.isEmpty ? nil : "types “\(command.type)”", command.keys.isEmpty ? nil : "presses \(command.keys)"]
+            .compactMap { $0 }.joined(separator: ", then ")
     }
 }
