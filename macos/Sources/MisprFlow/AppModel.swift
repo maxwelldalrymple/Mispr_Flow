@@ -5,6 +5,7 @@ import ServiceManagement
 
 enum Page: String, CaseIterable, Identifiable {
     case home = "Home"
+    case commands = "Voice Commands"
     case notetaker = "Notetaker"
     case insights = "Insights"
     case prompts = "Prompts"
@@ -14,6 +15,7 @@ enum Page: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .home: "mic"
+        case .commands: "waveform.and.mic"
         case .notetaker: "record.circle"
         case .insights: "chart.bar"
         case .prompts: "text.bubble"

@@ -22,7 +22,8 @@ CLICKABLE = {"AXButton", "AXLink", "AXMenuItem", "AXMenuBarItem", "AXCheckBox", 
 # Plain text is clickable when it's what you read on a link or a list row.
 NAME_ATTRS = ("AXTitle", "AXDescription", "AXValue", "AXPlaceholderValue", "AXHelp")
 MAX_NAME = 80  # a longer value is a paragraph, not a label
-MATCH_MIN = 0.8  # spelling closeness for a misheard name ("sign inn")
+CLOSE_MIN = 0.6  # the closest name must be at least this close (pointer.closeness) to be clicked
+CLOSE_TIE = 0.05  # names this close to the best are shown as numbers to pick from
 SCAN_LIMIT, SCAN_SECONDS = 6000, 2.0  # big pages: stop after this many elements, or this long
 FIELD_ROLES = {"AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"}
 FIELD_WORDS = {"search", "search box", "search bar", "text box", "text field", "box", "field", "input", "address bar"}
@@ -143,9 +144,50 @@ def match(spoken, found):
         fields = [t for t in found if t.role in FIELD_ROLES]
         if fields:
             return _dedupe(fields)
-    scored = [(max(difflib.SequenceMatcher(None, p, n).ratio() for p in phrases), t) for t, n in named if n]
+    # Nothing named exactly: the closest name wins ("opus" -> "Opus 4.6", "pref five" -> "Preferences 5").
+    scored = [(max(closeness(p, n) for p in phrases), t) for t, n in named if n]
     best = max((s for s, _ in scored), default=0)
-    return _dedupe([t for s, t in scored if s == best]) if best >= MATCH_MIN else []
+    if best < CLOSE_MIN:
+        return []
+    return _dedupe([t for s, t in scored if s >= best - CLOSE_TIE])
+
+
+_NUMBERS = {w: str(i) for i, w in enumerate("zero one two three four five six seven eight nine ten".split())}
+
+
+def _words(text):
+    return [_NUMBERS.get(w, w) for w in text.split()]
+
+
+def closeness(said, name):
+    """0-1: how well `said` names `name`, allowing mishearing. Each spoken word is matched to
+    its best word in the name (same word, a digit for a number word, a prefix like "pref" for
+    "preferences", a close spelling, or the same sound); the average, a bit lower for names
+    with many extra words."""
+    from .apps import sounds_like
+    spoken, words = _words(said), _words(name)
+    if not spoken or not words:
+        return 0.0
+    total = 0.0
+    for w in spoken:
+        best = 0.0
+        for n in words:
+            if w == n:
+                score = 1.0
+            elif len(w) >= 3 and n.startswith(w):
+                score = 0.85  # "pref" for "preferences"
+            elif w.isdigit() or n.isdigit():
+                score = 0.0  # numbers must match exactly
+            else:
+                score = difflib.SequenceMatcher(None, w, n).ratio()
+                if len(w) >= 4 and sounds_like(w) and sounds_like(w) == sounds_like(n):
+                    score = max(score, 0.8)  # "thru" / "through"
+            best = max(best, score)
+        total += best
+    extra = max(0, len(words) - len(spoken))
+    by_word = total / len(spoken) * (1 - 0.04 * min(extra, 5))
+    joined = difflib.SequenceMatcher(None, "".join(spoken), "".join(words)).ratio()  # "walkthrough" / "Walk through setup"
+    return max(by_word, joined)
 
 
 PASSIVE = {"AXStaticText", "AXHeading", "AXImage", "AXCell", "AXRow"}
