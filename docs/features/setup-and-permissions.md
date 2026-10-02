@@ -8,7 +8,7 @@ A setup window appears on first launch, and again whenever something required is
    - **Screen & System Audio:** meeting notes hear the other people on a call.
    - **Full Disk Access:** "open folder" can search Documents, Desktop and Downloads. macOS has no prompt for this one, so Allow… opens the System Settings list; switch Mispr Flow on there.
    - **Control Finder:** "open …" in Finder opens folders in the same window. This is macOS's Automation prompt.
-4. **Models:** downloads Whisper turbo (0.57 GB) and Gemma (2.5 GB) with SHA-256 checks.
+4. **Models:** downloads Whisper turbo (0.57 GB) and Gemma (2.5 GB) with SHA-256 checks. The page says that downloading Gemma means accepting Google's Gemma Terms of Use, with a link to them.
 5. **Ready**
 
 Meeting-only models (`base.en`, TitaNet, Silero) download the first time you take meeting notes.
