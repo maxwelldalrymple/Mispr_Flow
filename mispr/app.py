@@ -166,7 +166,7 @@ def _connect_host(app, widget, open_setup, fn=None):
     # loaded (downloaded the first time) when a meeting first needs them.
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
                                    preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
-                                   speech=meeting.SpeechDetector())
+                                   speech=getattr(widget, "speech", None) or meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     def reload_settings():
         widget.reload_settings()
@@ -267,6 +267,7 @@ def main():
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
     storage.lock_down()  # data folders owner-only (security audit)
     widget = WidgetController()
+    widget.speech = meeting.SpeechDetector()  # dictation, commands and meetings: clicks and silence aren't speech
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
                           trigger=widget.settings.hotkey, on_note=widget.request_note,
                           on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey)

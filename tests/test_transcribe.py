@@ -243,3 +243,78 @@ def test_a_command_hint_never_sticks_to_the_next_dictation(speech):
     t._transcribe(speech, "Voice commands: tab left.")
     t._transcribe(speech)
     assert model.prompts == ["Voice commands: tab left.", ""]  # cleared, since pywhispercpp keeps parameters
+
+
+class TestPhantoms:
+    """Whisper's made-up text for clicks and silence never reaches the user."""
+
+    @pytest.mark.parametrize("text", [".", ". . . . .", "…", "Captions by GetTranscribed.com", "Subtitles by the Amara.org community"])
+    def test_always_phantoms(self, text):
+        from mispr.transcribe import phantom
+        assert phantom(text, None, 5.0) and phantom(text, 2.0, 5.0)
+
+    def test_no_speech_means_nothing_was_said(self):
+        from mispr.transcribe import phantom
+        assert phantom("Thank you.", 0.0, 1.2)
+        assert not phantom("Thank you.", 0.6, 1.2)  # really said
+
+    def test_stock_phrase_without_a_speech_check_only_when_very_short(self):
+        from mispr.transcribe import phantom
+        assert phantom("Thank you.", None, 1.2)
+        assert not phantom("Thank you.", None, 3.0)
+        assert not phantom("chatgpt.com", None, 1.6)  # a real web address stays
+
+    def test_speech_gate_skips_whisper(self, speech):
+        model = FakeModel()
+        t = ready_transcriber(model, clock=Clock(0, 0))
+        results = []
+        t.transcribe_async(speech, lambda *a: results.append(a), speech=lambda audio: 0.0)
+        assert results[0][0] == "" and model.seen == []
+
+    def test_phantom_output_is_dropped(self, speech):
+        t = ready_transcriber(FakeModel(texts=("Thank you.",)), clock=Clock(0, 0))
+        results = []
+        t.transcribe_async(speech, lambda *a: results.append(a), speech=lambda audio: 0.05)
+        assert results[0][0] == ""
+
+
+class TestSplitPoints:
+    def test_cuts_land_in_pauses(self):
+        from mispr.transcribe import split_points
+        sr = 16000
+        a = np.random.default_rng(0).normal(0, 0.1, sr * 40).astype(np.float32)
+        a[int(13.5 * sr):int(14 * sr)] = 0
+        a[int(27 * sr):int(27.4 * sr)] = 0
+        bounds = split_points(a)
+        assert len(bounds) == 3 and bounds[0][0] == 0 and bounds[-1][1] == len(a)
+        assert 13.5 <= bounds[0][1] / sr <= 14 and 27 <= bounds[1][1] / sr <= 27.4
+        assert all(b[1] == n[0] for b, n in zip(bounds, bounds[1:]))  # no gaps, no overlaps
+
+    def test_short_audio_is_one_piece(self):
+        from mispr.transcribe import split_points
+        a = np.zeros(16000 * 15, np.float32)
+        assert split_points(a) == [(0, len(a))]
+
+
+class TestTranscribeChunks:
+    def test_each_piece_reported_in_order_with_the_previous_as_prompt(self, speech):
+        class OneAtATime(FakeModel):
+            def transcribe(self, audio, language, initial_prompt=""):
+                super().transcribe(audio, language, initial_prompt)
+                return [Segment(("One.", "Two.")[len(self.seen) - 1])]
+        model = OneAtATime()
+        t = ready_transcriber(model, clock=Clock(0, 3.0))
+        audio = np.concatenate([speech, speech])
+        pieces, done = [], []
+        t.transcribe_chunks_async(audio, [(0, 16000), (16000, 32000)], lambda *a: pieces.append(a), done.append,
+                                  post=lambda raw: (raw.upper(), {"applied": True}))
+        assert [p[:3] for p in pieces] == [(0, "ONE.", "One."), (1, "TWO.", "Two.")]
+        assert done == [pytest.approx(3.0)]
+        assert model.prompts[1].endswith("One.")
+
+    def test_silent_piece_is_skipped(self, speech):
+        model = FakeModel(texts=("Hi.",))
+        t = ready_transcriber(model, clock=Clock(0, 0))
+        pieces = []
+        t.transcribe_chunks_async(speech, [(0, 16000)], lambda *a: pieces.append(a), lambda s: None, speech=lambda a: 0.0)
+        assert pieces[0][1] == "" and model.seen == []

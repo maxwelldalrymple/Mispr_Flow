@@ -27,6 +27,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
+
 import objc
 from AppKit import (
     NSBackingStoreBuffered,
@@ -58,9 +60,9 @@ from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import ENTER_DELAY, copy_text, paste_text, press_enter, type_text
+from .paste import ENTER_DELAY, RESTORE_AFTER, copy_text, paste_text, press_enter, type_text
 from .threads import start_daemon
-from .transcribe import Transcriber
+from .transcribe import Transcriber, split_points
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -107,6 +109,11 @@ SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing i
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
+RECORDING_CHECK_SECONDS = 1.0  # screencapture refuses within this when it isn't allowed
+PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next paste
+CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
+SPEECH_FLOOR = 0.003  # peak below this: the mic heard nothing
+SPEECH_LEVEL = 0.5  # the speech check listens at this peak level
 TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
@@ -439,11 +446,34 @@ class WidgetController:
 
     def _process(self, reason):
         self.set_state(PROCESSING)
+        audio = self.recorder.audio()
+        if len(audio) >= CHUNK_FROM_SECONDS * storage.SAMPLE_RATE and not terminal.is_terminal(self.rec_recorded_in):
+            return self._process_in_chunks(audio, reason)
         self.transcriber.transcribe_async(
             self.recorder.audio(),
             lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
             post=self._post_processor(),
+            speech=self._speech_seconds,
         )
+
+    def _speech_seconds(self, audio):
+        """Seconds of real speech in `audio` (the speech detector, if the app gave one), else None."""
+        detector = getattr(self, "speech", None)
+        if detector is None or len(audio) == 0:
+            return None
+        peak = max(float(audio.max()), -float(audio.min()))
+        if peak < SPEECH_FLOOR:
+            return 0.0  # the mic heard nothing at all
+        # A quiet mic scores real words as no speech: check a copy at an even level (measured on
+        # real recordings: every word >= 0.2 s, clicks and silence 0.00 s), then wipe the copy.
+        level = audio * np.float32(SPEECH_LEVEL / peak)
+        try:
+            return detector.speech_seconds(level)
+        except Exception as e:  # never lose a dictation to the detector
+            log(f"speech check failed: {e}")
+            return None
+        finally:
+            level.fill(0)
 
     def _post_processor(self):
         """How the transcript is finished: shell syntax in a terminal ("ls flag a" -> "ls -a"),
@@ -452,6 +482,62 @@ class WidgetController:
             cleaner = self.cleaner if self.settings.cleanup else None
             return lambda raw: terminal.clean(raw, cleaner)
         return self.cleaner.clean if self.settings.cleanup else None
+
+    def _process_in_chunks(self, audio, reason):
+        """A long dictation: transcribe it in pieces cut at pauses and type each one in as soon
+        as it's ready, so the text grows while the rest is still processing. Auto-Enter presses
+        Return once, after the last piece."""
+        self._chunks = {"texts": [], "raws": [], "infos": [], "where": None, "target": None, "reason": reason,
+                        "free_at": 0.0}
+        bounds = split_points(audio)
+        log(f"long dictation: {len(audio) / storage.SAMPLE_RATE:.1f}s in {len(bounds)} pieces")
+        self.transcriber.transcribe_chunks_async(audio, bounds, self._on_chunk, self._on_chunks_done,
+                                                 post=self._post_processor(), speech=self._speech_seconds)
+
+    def _on_chunk(self, i, text, raw, info):
+        run = self._chunks
+        run["raws"].append(raw)
+        run["infos"].append(info)
+        if not text:
+            return
+        if run["where"] is None:  # the first words: decide once where they all go
+            run["target"] = context.frontmost()
+            run["where"], why = context.focused_text_target()
+            log(f"text box: {run['where']} ({why})")
+        piece = (" " if run["texts"] else "") + text
+        run["texts"].append(text)
+        if run["where"] != context.NO:
+            # Each paste lends the clipboard for RESTORE_AFTER: never start one before the last is done.
+            now = time.monotonic()
+            wait = max(0.0, run["free_at"] - now)
+            run["free_at"] = now + wait + RESTORE_AFTER + PIECE_GAP
+            write = type_text if self.settings.incognito else paste_text
+            AppHelper.callLater(wait, write, piece) if wait else write(piece)
+
+    def _on_chunks_done(self, secs):
+        run, self._chunks = self._chunks, None
+        text, raw = " ".join(run["texts"]), " ".join(r for r in run["raws"] if r)
+        infos = [i for i in run["infos"] if i]
+        info = {"applied": bool(infos) and all(i.get("applied") for i in infos), "ms": sum(i.get("ms", 0) for i in infos),
+                "rejected": next((i.get("rejected") for i in infos if i.get("rejected")), None),
+                "pieces": len(run["raws"])} if infos else None
+        log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars in {len(run['raws'])} pieces")
+        if not text:
+            self.sounds.play(sounds.ALERT)
+        elif run["where"] == context.NO:
+            if not self.settings.incognito:
+                copy_text(text)
+            self.sounds.play(sounds.ERROR)
+            self.show_notice(INCOGNITO_NOTICE if self.settings.incognito else COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+            self._save(storage.COPIED, text, pasted_into=run["target"], raw=raw, cleanup=info)
+        else:
+            if self.settings.auto_enter:  # once, after the last piece is in
+                AppHelper.callLater(max(0.0, run["free_at"] - time.monotonic() - RESTORE_AFTER - PIECE_GAP) + ENTER_DELAY,
+                                    press_enter)
+            self.sounds.play(sounds.PASTE)
+            self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
+        self._wipe(run["reason"])
+        self.to_idle()
 
     def _on_transcribed(self, text, raw, info, secs, reason):
         cleanup_note = ""
@@ -603,6 +689,7 @@ class WidgetController:
         # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
         hint = apps.command_prompt(self.settings.app_nicknames, sorted(apps.running_apps()))
         self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text),
+                                          speech=self._speech_seconds,
                                           prompt=hint)
 
     def _remute(self):
@@ -614,6 +701,62 @@ class WidgetController:
             self._do_switch_command(text)
         finally:
             self._remute()
+
+    def _system_command(self, action):
+        if action == "record_start":
+            recorder = self._screen_recorder()
+            if not recorder.start():
+                return self._switch_done("Already recording · say “stop recording”")
+            AppHelper.callLater(RECORDING_CHECK_SECONDS, self._check_recording)
+            return self._switch_done(apps.SYSTEM_DONE[action])
+        if action == "record_stop":
+            path = self._screen_recorder().stop()
+            return self._switch_done(f"Saved {path.name}") if path else self._switch_failed("Not recording the screen")
+        apps.system_action(action)
+        return self._switch_done(apps.SYSTEM_DONE[action])
+
+    def _screen_recorder(self):
+        if getattr(self, "screen_recorder", None) is None:
+            self.screen_recorder = apps.ScreenRecorder()
+        return self.screen_recorder
+
+    def _check_recording(self):
+        """screencapture quits at once without Screen Recording permission: open macOS's
+        capture toolbar instead, so a click still records."""
+        if not self._screen_recorder().recording:
+            apps.press_shortcut("screen capture tools")
+            self.show_notice("Allow Screen Recording for Mispr Flow, or click Record", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+
+    def _press_menu(self, phrase):
+        """Press the menu item of the app in front whose name was said. True if pressed."""
+        pid = apps.frontmost_pid()
+        hit = apps.find_menu_item(phrase, apps.menu_items(pid)) if pid else None
+        if hit is None or not apps.press_menu_item(hit[2]):
+            return False
+        self._switch_done(f"{hit[0].title()} › {hit[1].capitalize()}")
+        return True
+
+    def _find_site_tab(self, site, number, running):
+        """Select the `number`th tab of `site` in the browser in front, else the first running
+        browser that has one. Returns (message, found)."""
+        front = context.frontmost()
+        browsers = [front.get("bundle_id")] if front and apps.scriptable_browser(front.get("bundle_id")) else []
+        browsers += [b for b in apps.running_bundle_ids() if apps.scriptable_browser(b) and b not in browsers]
+        if not browsers:
+            return ("Open a browser first (Chrome, Safari, Arc, Brave or Edge)", False)
+        total = 0
+        for bundle in browsers:
+            family, app = apps.scriptable_browser(bundle)
+            matches = apps.site_tabs(site, apps.list_tabs(family, app))
+            if len(matches) >= number:
+                window, tab, url, _ = matches[number - 1]
+                apps.select_tab(family, app, window, tab)
+                where = apps._host(url) or site
+                return (f"{where} tab" + (f" {number}" if number > 1 else ""), True)
+            total += len(matches)
+        if total:
+            return (f"Only {total} {site} tab{'' if total == 1 else 's'} open", False)
+        return (f"No {site} tab open", False)
 
     def _do_switch_command(self, text):
         """Act on what was said: teach a nickname, or bring an app to the front. The audio is
@@ -749,6 +892,20 @@ class WidgetController:
                 AppHelper.callLater(TILE_DELAY, apps.tile_front_two, pid, apps.screen_frame())
                 return self._switch_done("Tabs side by side (two windows)")
             return self._switch_failed("No tab to split here")
+        if kind == "system":  # screenshots, screen recording, sleep, lock, log out / restart / shut down
+            return self._system_command(command[1])
+        if kind == "menu":  # "click save", "press show sidebar"
+            return self._press_menu(command[1]) or self._switch_failed(f"No “{command[1]}” in this app's menus")
+        if kind == "site_tab":  # "github tab", "youtube tab 2"
+            _, site, number = command
+            hit = find(site)
+            if hit is not None and apps.bundle_id(hit[1]) in context.BROWSERS:  # "chrome tab 3": that browser's tab 3
+                apps.bring_to_front(hit[1])
+                AppHelper.callLater(SHORTCUT_DELAY, apps.press_shortcut, "last tab" if number >= 9 else f"tab {number}")
+                return self._switch_done(f"Tab {number} · {hit[0]}")
+            self._unsure = None
+            return self._in_background(lambda: self._find_site_tab(site, number, running),
+                                       lambda found: self._switch_done(found[0]) if found[1] else self._switch_failed(found[0]))
         if kind == "shortcut":  # "new tab", "close tab in chrome"
             _, shortcut, name = command
             if name is None:
@@ -782,6 +939,10 @@ class WidgetController:
                 continue
             hit = find(name)
             if hit is None:
+                # "save", "show sidebar": a menu item of the app in front (the whole phrase first:
+                # "show" was dropped from `name` as in "show Chrome")
+                if kind == "switch" and (self._press_menu(apps.normalize(text)) or self._press_menu(name)):
+                    return
                 return self._switch_failed(f"No app called “{name}”")
             found.append(hit)
         if kind == "switch":

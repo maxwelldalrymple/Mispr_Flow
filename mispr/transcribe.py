@@ -26,6 +26,55 @@ _ANNOTATION = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 _SPACES = re.compile(r"\s+")
 
 
+# What Whisper writes for clicks, breathing or silence (it learned from subtitled videos).
+_CREDITS = re.compile(r"\b(?:captions?|subtitles?|subtitled|transcri(?:bed|ption)s?)\s+(?:by|from)\b|amara\.org|"
+                      r"gettranscribed|please subscribe|subscribe to (?:my|the|our)", re.I)
+_STOCK = {"thank you", "thanks", "thank you very much", "thank you for watching", "thanks for watching", "you", "bye",
+          "bye bye", "okay", "ok", "so", "the end", "sorry", "i m sorry", "hmm", "uh", "um"}
+SPEECH_MIN_SECONDS = 0.1  # less real speech than this is nothing said (measured: clicks and silence 0.00 s, "Claude." 0.20 s)
+STOCK_MAX_SECONDS = 2.0  # a stock phrase from a clip this short, with no speech check, is a guess
+
+
+def phantom(text, speech_s=None, seconds=0.0):
+    """True when `text` is something Whisper made up from noise, not what was said: only
+    punctuation (". . ."), subtitle credits ("Captions by …"), or, when the speech detector found
+    (almost) no speech, anything at all. Without a speech check, a lone stock phrase ("Thank
+    you.") from a very short clip is dropped too."""
+    if not re.search(r"[A-Za-z0-9]", text or ""):
+        return True
+    if _CREDITS.search(text):
+        return True
+    if speech_s is not None:
+        return speech_s < SPEECH_MIN_SECONDS
+    said = " ".join(re.findall(r"[a-z]+", text.lower()))
+    return said in _STOCK and seconds < STOCK_MAX_SECONDS
+
+
+CHUNK_PROMPT_CHARS = 200  # how much of the previous piece primes the next
+
+
+def split_points(audio, rate=SAMPLE_RATE, every=12.0, search=4.0, frame=0.1):
+    """Where to cut a long recording into pieces of about `every` seconds: at the quietest
+    `frame` within `search` seconds of each target, so a cut falls in a pause, not a word.
+    Returns [(start, end)] sample ranges covering the whole recording. Energy is measured
+    frame by frame (np.dot on views), so no copy of the audio is made."""
+    total, step = len(audio), int(frame * rate)
+    bounds, start = [], 0
+    while total - start > (every + search) * rate:
+        target = start + int(every * rate)
+        lo, hi = target - int(search * rate), min(total - step, target + int(search * rate))
+        best, best_energy = target, None
+        for at in range(lo, hi, step):
+            piece = audio[at:at + step]
+            energy = float(np.dot(piece, piece))
+            if best_energy is None or energy < best_energy:
+                best, best_energy = at + step // 2, energy
+        bounds.append((start, best))
+        start = best
+    bounds.append((start, total))
+    return bounds
+
+
 def clean_text(text):
     return _SPACES.sub(" ", _ANNOTATION.sub("", text)).strip()
 
@@ -74,21 +123,48 @@ class Transcriber:
             self._loading = True
             self._load()
 
-    def transcribe_async(self, audio, on_done, post=None, prompt=""):
+    def transcribe_async(self, audio, on_done, post=None, prompt="", speech=None):
         """Transcribe on a worker thread; `on_done(text, raw, info, seconds)` runs on the main thread.
 
         `post(raw) -> (text, info)` optionally refines the transcript on the same worker
         (LLM cleanup). `audio` must stay untouched until on_done fires (it is a view of the
-        live buffer). `prompt` primes Whisper with expected words (voice commands).
+        live buffer). `prompt` primes Whisper with expected words (voice commands). `speech(audio)`
+        returns seconds of real speech (or None if it can't tell): with too little, nothing is
+        transcribed, so a button click never becomes "Thank you." or ".".
         """
 
         def work():
             started = self.clock()
-            raw = self._transcribe(audio, prompt)
+            speech_s = speech(audio) if speech else None
+            raw = "" if speech_s is not None and speech_s < SPEECH_MIN_SECONDS else self._transcribe(audio, prompt)
+            if raw and phantom(raw, speech_s, len(audio) / SAMPLE_RATE):
+                raw = ""
             text, info = post(raw) if (post and raw) else (raw, None)
             AppHelper.callAfter(on_done, text, raw, info, self.clock() - started)
 
         start_daemon(work, "whisper-run")
+
+    def transcribe_chunks_async(self, audio, bounds, on_chunk, on_done, post=None, speech=None):
+        """Transcribe a long recording piece by piece, so text can appear while the rest is still
+        being worked on. `bounds` are (start, end) sample ranges (split_points). For each piece,
+        `on_chunk(i, text, raw, info)` runs on the main thread, then `on_done(seconds)` once.
+        Each piece is primed with the end of the one before, so sentences carry over."""
+
+        def work():
+            started, before = self.clock(), ""
+            for i, (a, b) in enumerate(bounds):
+                piece = audio[a:b]
+                speech_s = speech(piece) if speech else None
+                raw = ("" if speech_s is not None and speech_s < SPEECH_MIN_SECONDS
+                       else self._transcribe(piece, before[-CHUNK_PROMPT_CHARS:]))
+                if raw and phantom(raw, speech_s, (b - a) / SAMPLE_RATE):
+                    raw = ""
+                text, info = post(raw) if (post and raw) else (raw, None)
+                before = raw or before
+                AppHelper.callAfter(on_chunk, i, text, raw, info)
+            AppHelper.callAfter(on_done, self.clock() - started)
+
+        start_daemon(work, "whisper-chunks")
 
     def transcribe(self, audio):
         """Transcribe on the calling thread (meeting chunks; serialized with dictation)."""

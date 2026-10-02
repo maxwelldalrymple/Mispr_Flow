@@ -1901,3 +1901,183 @@ def test_incognito_outline_matches_golden_image(controller, clock, golden_image)
     _prepare_render(controller, W.HOLD)
     pixels, rep = render(controller.draw, W.VIEW_W, W.VIEW_H)
     golden_image("widget_hold_incognito", pixels, rep)
+
+
+class TestLongDictationInPieces:
+    """Long dictations are typed in piece by piece while processing; Auto-Enter waits for the end."""
+
+    def start(self, controller, seconds=30):
+        controller.recorder.audio_data = np.full(16000 * seconds, 0.1, np.float32)
+        controller.begin_handsfree()
+        controller.finish()
+        return controller.transcriber.chunk_calls[-1]
+
+    def test_short_dictation_is_one_piece(self, controller):
+        controller.recorder.audio_data = np.full(16000 * 5, 0.1, np.float32)
+        controller.begin_handsfree()
+        controller.finish()
+        assert not getattr(controller.transcriber, "chunk_calls", None) and controller.transcriber.calls
+
+    def test_pieces_are_pasted_as_they_arrive_then_saved_once(self, controller, monkeypatch):
+        saved = []
+        monkeypatch.setattr(controller, "_save", lambda status, text, **kw: saved.append((status, text)))
+        _, bounds, on_chunk, on_done, _ = self.start(controller)
+        assert len(bounds) >= 2 and controller.state == W.PROCESSING
+        on_chunk(0, "First part.", "first part", {"applied": True, "ms": 5})
+        assert controller.pasted == ["First part."]
+        on_chunk(1, "", "", None)  # a silent piece adds nothing
+        on_chunk(2, "Second part.", "second part", {"applied": True, "ms": 7})
+        assert controller.pasted == ["First part.", " Second part."]
+        on_done(2.0)
+        assert saved == [("pasted", "First part. Second part.")] and controller.state == W.IDLE
+        assert controller.recorder.wiped
+
+    def test_auto_enter_only_after_the_last_piece(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda: enters.append(controller.pasted[:]))
+        controller.settings.auto_enter = True
+        _, _, on_chunk, on_done, _ = self.start(controller)
+        on_chunk(0, "One.", "one", None)
+        on_chunk(1, "Two.", "two", None)
+        assert enters == []
+        on_done(1.0)
+        assert enters == [["One.", " Two."]]
+
+    def test_no_text_box_copies_everything_at_the_end(self, controller, monkeypatch):
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
+        _, _, on_chunk, on_done, _ = self.start(controller)
+        on_chunk(0, "One.", "one", None)
+        on_chunk(1, "Two.", "two", None)
+        assert controller.pasted == [] and controller.copied == []
+        on_done(1.0)
+        assert controller.copied == ["One. Two."]
+
+    def test_incognito_types_the_pieces(self, controller):
+        controller.settings.incognito = True
+        _, _, on_chunk, on_done, _ = self.start(controller)
+        on_chunk(0, "One.", "one", None)
+        on_done(1.0)
+        assert controller.typed == ["One."] and controller.pasted == []
+
+    def test_nothing_said_plays_the_alert(self, controller):
+        _, _, on_chunk, on_done, _ = self.start(controller)
+        on_chunk(0, "", "", None)
+        on_done(1.0)
+        assert controller.sounds.played[-1] == "alert" and controller.pasted == []
+
+
+class TestSpeechCheck:
+    """Clicks and silence never become text: the speech detector hears a quiet mic at an even level."""
+
+    class Detector:
+        def __init__(self, result=0.5):
+            self.result, self.peaks = result, []
+
+        def speech_seconds(self, audio):
+            self.peaks.append(float(np.abs(audio).max()))
+            return self.result
+
+    def test_no_detector_means_unknown(self, controller):
+        assert controller._speech_seconds(np.ones(100, np.float32)) is None
+
+    def test_quiet_audio_is_checked_at_an_even_level_and_the_copy_wiped(self, controller):
+        controller.speech = self.Detector()
+        audio = np.full(1600, 0.02, np.float32)
+        assert controller._speech_seconds(audio) == 0.5
+        assert controller.speech.peaks == [pytest.approx(W.SPEECH_LEVEL)]
+        assert float(audio.max()) == pytest.approx(0.02)  # the recording itself is untouched
+
+    def test_dead_silence_is_no_speech(self, controller):
+        controller.speech = self.Detector()
+        assert controller._speech_seconds(np.zeros(1600, np.float32)) == 0.0 and controller.speech.peaks == []
+
+    def test_a_failing_detector_never_loses_the_dictation(self, controller):
+        class Broken:
+            def speech_seconds(self, audio):
+                raise RuntimeError("model missing")
+        controller.speech = Broken()
+        assert controller._speech_seconds(np.full(100, 0.1, np.float32)) is None
+
+    def test_dictation_and_commands_pass_the_check(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        assert controller.transcriber.speech == controller._speech_seconds
+
+
+class TestSiteTabCommand:
+    def test_selects_the_numbered_match_in_the_front_browser(self, controller, monkeypatch):
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"bundle_id": "com.google.Chrome"})
+        monkeypatch.setattr(W.apps, "running_bundle_ids", lambda: ["com.google.Chrome"])
+        tabs = [(1, 1, "https://youtube.com/a", "A"), (1, 2, "https://github.com", "G"), (2, 4, "https://www.youtube.com/b", "B")]
+        monkeypatch.setattr(W.apps, "list_tabs", lambda family, app: tabs)
+        picked = []
+        monkeypatch.setattr(W.apps, "select_tab", lambda *a: picked.append(a))
+        assert controller._find_site_tab("youtube", 2, {}) == ("youtube.com tab 2", True)
+        assert picked == [("chromium", "Google Chrome", 2, 4)]
+
+    def test_says_how_many_there_are(self, controller, monkeypatch):
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"bundle_id": "com.apple.Safari"})
+        monkeypatch.setattr(W.apps, "running_bundle_ids", lambda: [])
+        monkeypatch.setattr(W.apps, "list_tabs", lambda family, app: [(1, 1, "https://youtube.com", "Y")])
+        assert controller._find_site_tab("youtube", 3, {}) == ("Only 1 youtube tab open", False)
+        assert controller._find_site_tab("github", 1, {}) == ("No github tab open", False)
+
+    def test_needs_a_browser(self, controller, monkeypatch):
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"bundle_id": "com.apple.finder"})
+        monkeypatch.setattr(W.apps, "running_bundle_ids", lambda: ["com.apple.finder"])
+        message, found = controller._find_site_tab("github", 1, {})
+        assert not found and message.startswith("Open a browser")
+
+
+class TestSystemAndMenuCommands(TestAppSwitcher):
+    """Screenshots, screen recording, sleep/lock/power, and menu items by voice."""
+
+    def test_screenshot(self, controller, clock, fronted, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "system_action", done.append)
+        self.say(controller, clock, "Take a screenshot.")
+        assert done == ["screenshot"] and controller.notice[0] == "Screenshot saved"
+
+    def test_shut_down_goes_through_macos_confirmation(self, controller, clock, fronted, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "system_action", done.append)
+        self.say(controller, clock, "Shut down.")
+        assert done == ["shut_down"] and controller.notice[0] == "Shut down?"
+
+    def test_screen_recording_start_and_stop(self, controller, clock, fronted, monkeypatch):
+        class Rec:
+            recording = False
+            def start(self):
+                self.recording = True
+                return True
+            def stop(self):
+                self.recording = False
+                return W.Path("/D/Screen Recording 1.mov")
+        controller.screen_recorder = Rec()
+        self.say(controller, clock, "Screen recording.")
+        assert controller.notice[0].startswith("Recording the screen")
+        self.say(controller, clock, "Stop recording.")
+        assert controller.notice[0] == "Saved Screen Recording 1.mov"
+
+    def test_recording_refused_opens_the_capture_toolbar(self, controller, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        class Refused:
+            recording = False
+        controller.screen_recorder = Refused()
+        controller._check_recording()
+        assert pressed == ["screen capture tools"] and "Allow Screen Recording" in controller.notice[0]
+
+    def test_unknown_word_presses_a_menu_item(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 42)
+        monkeypatch.setattr(W.apps, "menu_items", lambda pid: [("view", "show sidebar", "el")])
+        monkeypatch.setattr(W.apps, "press_menu_item", lambda el: pressed.append(el) or True)
+        self.say(controller, clock, "Show sidebar.")
+        assert pressed == ["el"] and controller.notice[0] == "View › Show sidebar"
+
+    def test_no_app_and_no_menu_item(self, controller, clock, fronted, monkeypatch):
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 42)
+        monkeypatch.setattr(W.apps, "menu_items", lambda pid: [])
+        self.say(controller, clock, "Zebra.")
+        assert controller.notice[0].startswith("No app called")

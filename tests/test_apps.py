@@ -411,3 +411,158 @@ class TestMisheardCommands:
     def test_command_hint_lists_commands_and_nicknames(self):
         hint = apps.command_prompt({"c": "Google Chrome"}, ["Google Chrome", "Slack"])
         assert "tab left" in hint and hint.endswith("c, Google Chrome, Slack.")
+
+
+class TestCloseTabMishearings:
+    @pytest.mark.parametrize("said", ["Closed tab.", "Tab, close.", "close tab", "Clothes tab"])
+    def test_close_tab(self, said):
+        assert apps.parse(said) == ("shortcut", "close tab", None)
+
+    def test_reopen_closed_tab_is_still_reopen(self):
+        assert apps.parse("reopen closed tab")[1] == "reopen tab"
+
+
+class TestSiteTabs:
+    @pytest.mark.parametrize("said, expected", [
+        ("GitHub tab", ("site_tab", "github", 1)),
+        ("YouTube tab 1", ("site_tab", "youtube", 1)),
+        ("you tube tab two", ("site_tab", "you tube", 2)),
+        ("go to the youtube tab 2", ("site_tab", "youtube", 2)),
+        ("chrome tab 3", ("site_tab", "chrome", 3)),  # the executor sees Chrome is a browser: its tab 3
+    ])
+    def test_parse(self, said, expected):
+        assert apps.parse(said) == expected
+
+    @pytest.mark.parametrize("said", ["new tab", "next tab", "Chrome new tab", "tab 3", "close tab in chrome", "move tab left"])
+    def test_tab_commands_are_not_sites(self, said):
+        assert apps.parse(said)[0] == "shortcut"
+
+    TABS = [(1, 1, "https://www.youtube.com/watch?v=1", "Song - YouTube"), (1, 2, "https://github.com/x", "x · GitHub"),
+            (2, 1, "https://m.youtube.com/", "YouTube"), (1, 3, "https://docs.google.com/d", "Doc"),
+            (1, 4, "https://mail.google.com/", "Inbox (3)")]
+
+    def test_matches_by_address_in_order(self):
+        assert [t[:2] for t in apps.site_tabs("youtube", self.TABS)] == [(1, 1), (2, 1)]
+        assert [t[:2] for t in apps.site_tabs("you tube", self.TABS)] == [(1, 1), (2, 1)]
+        assert [t[:2] for t in apps.site_tabs("github", self.TABS)] == [(1, 2)]
+
+    def test_multi_word_sites_and_aliases(self):
+        assert [t[:2] for t in apps.site_tabs("google docs", self.TABS)] == [(1, 3)]
+        assert [t[:2] for t in apps.site_tabs("gmail", self.TABS)] == [(1, 4)]
+
+    def test_title_when_no_address_matches(self):
+        assert [t[:2] for t in apps.site_tabs("inbox", self.TABS)] == [(1, 4)]
+        assert apps.site_tabs("netflix", self.TABS) == []
+
+    def test_list_tabs_parses_the_script_output(self):
+        out = "1\t1\thttps://a.com/\tA\n1\t2\thttps://b.com/\tB · x\tstill title\nbad line\n"
+        assert apps.list_tabs("chromium", "Google Chrome", run=lambda cmd: out) == [
+            (1, 1, "https://a.com/", "A"), (1, 2, "https://b.com/", "B · x\tstill title")]
+
+    def test_select_tab_script(self):
+        scripts = []
+        apps.select_tab("chromium", "Google Chrome", 2, 5, run=lambda cmd: scripts.append(cmd[-1]))
+        assert "set active tab index of window 2 to 5" in scripts[0] and "activate" in scripts[0]
+        apps.select_tab("safari", "Safari", 1, 3, run=lambda cmd: scripts.append(cmd[-1]))
+        assert "set current tab of window 1 to tab 3 of window 1" in scripts[1]
+
+    def test_scriptable_browsers(self):
+        assert apps.scriptable_browser("com.google.Chrome") == ("chromium", "Google Chrome")
+        assert apps.scriptable_browser("com.apple.Safari") == ("safari", "Safari")
+        assert apps.scriptable_browser("org.mozilla.firefox") is None  # Firefox has no tab scripting
+
+
+class TestSystemCommands:
+    @pytest.mark.parametrize("said, action", [
+        ("screenshot", "screenshot"), ("Take a screenshot.", "screenshot"), ("screenshot area", "screenshot_area"),
+        ("screenshot of the window", "screenshot_window"), ("screen recording", "record_start"),
+        ("record my screen", "record_start"), ("stop recording", "record_stop"), ("sleep", "sleep"),
+        ("go to sleep", "sleep"), ("lock screen", "lock"), ("log out", "log_out"), ("sign out", "log_out"),
+        ("restart", "restart"), ("shut down", "shut_down"), ("turn off the computer", "shut_down"),
+    ])
+    def test_parse(self, said, action):
+        assert apps.parse(said) == ("system", action)
+
+    def test_turn_off_alone_is_not_shut_down(self):
+        assert apps.parse("turn off") != ("system", "shut_down")
+
+    def test_power_commands_ask_macos_which_confirms_first(self):
+        ran = []
+        for action, code in (("log_out", "aevtlogo"), ("restart", "aevtrrst"), ("shut_down", "aevtrsdn")):
+            assert apps.system_action(action, run=ran.append, press=lambda name: None)
+            assert ran[-1] == ["osascript", "-e", f'tell application "loginwindow" to «event {code}»']
+
+    def test_screenshots_use_the_macos_shortcuts(self):
+        pressed = []
+        apps.system_action("screenshot", run=lambda c: None, press=pressed.append)
+        apps.system_action("screenshot_area", run=lambda c: None, press=pressed.append)
+        assert pressed == ["screenshot", "screenshot area"]
+        assert apps.SHORTCUTS["screenshot"] == ("3", "cmd shift") and apps.SHORTCUTS["lock screen"] == ("q", "ctrl cmd")
+
+    def test_sleep(self):
+        ran = []
+        apps.system_action("sleep", run=ran.append, press=lambda n: None)
+        assert ran == [["pmset", "sleepnow"]]
+
+    def test_unknown_action(self):
+        assert apps.system_action("explode", run=lambda c: None, press=lambda n: None) is False
+
+
+class TestScreenRecorder:
+    class Proc:
+        def __init__(self, cmd):
+            self.cmd, self.signals, self.code = cmd, [], None
+
+        def poll(self):
+            return self.code
+
+        def send_signal(self, sig):
+            self.signals.append(sig)
+            self.code = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    def test_start_then_stop_saves_a_movie(self, tmp_path):
+        import signal
+        procs = []
+        rec = apps.ScreenRecorder(popen=lambda cmd: procs.append(self.Proc(cmd)) or procs[-1],
+                                  folder=lambda: tmp_path, clock=lambda: 0)
+        assert rec.start() and rec.recording
+        assert procs[0].cmd[:3] == ["screencapture", "-v", "-k"] and procs[0].cmd[3].endswith(".mov")
+        assert not rec.start()  # one at a time
+        path = rec.stop()
+        assert path.parent == tmp_path and path.name.startswith("Screen Recording ")
+        assert procs[0].signals == [signal.SIGINT] and not rec.recording
+        assert rec.stop() is None
+
+    def test_screenshot_folder(self, tmp_path):
+        assert apps.screenshot_folder(run=lambda cmd: str(tmp_path)) == tmp_path
+        assert apps.screenshot_folder(run=lambda cmd: "") == apps.Path.home() / "Desktop"
+
+
+class TestMenuCommands:
+    ITEMS = [("finder", "empty trash", 1), ("file", "new finder window", 2), ("file", "new folder", 3),
+             ("edit", "undo", 4), ("file", "move to trash", 5), ("view", "show sidebar", 6)]
+
+    @pytest.mark.parametrize("said, expected", [
+        ("click save", ("menu", "save")), ("press show sidebar", ("menu", "show sidebar")),
+        ("file new window", ("menu", "file new window")), ("edit find", ("menu", "edit find")),
+    ])
+    def test_parse(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_window_and_go_are_not_menus(self):
+        assert apps.parse("window 2")[0] == "window"
+
+    @pytest.mark.parametrize("said, item", [("undo", 4), ("show sidebar", 6), ("new folder", 3), ("new window", 2),
+                                            ("file new window", 2), ("move to trash", 5)])
+    def test_find(self, said, item):
+        assert apps.find_menu_item(said, self.ITEMS)[2] == item
+
+    @pytest.mark.parametrize("said", ["empty trash", "finder empty trash", "erase disk", "force quit"])
+    def test_never_deletes_for_good(self, said):
+        assert apps.find_menu_item(said, self.ITEMS) is None
+
+    def test_titles_are_normalized(self):
+        assert apps._menu_title("Save As…") == "save as" and apps._menu_title("Show Tab Bar") == "show tab bar"

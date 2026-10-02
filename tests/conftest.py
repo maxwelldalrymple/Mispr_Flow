@@ -142,9 +142,12 @@ class FakeTranscriber:
     def load_async(self):
         self.loaded += 1
 
-    def transcribe_async(self, audio, on_done, post=None, prompt=""):
+    def transcribe_async(self, audio, on_done, post=None, prompt="", speech=None):
         self.calls.append((audio, on_done, post))
-        self.prompt = prompt
+        self.prompt, self.speech = prompt, speech
+
+    def transcribe_chunks_async(self, audio, bounds, on_chunk, on_done, post=None, speech=None):
+        self.chunk_calls = getattr(self, "chunk_calls", []) + [(audio, bounds, on_chunk, on_done, post)]
 
 
 class FakeCleaner:

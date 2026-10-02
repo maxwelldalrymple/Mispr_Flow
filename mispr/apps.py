@@ -8,6 +8,7 @@ import difflib
 import os
 import sys
 import re
+import time
 from pathlib import Path
 
 APP_DIRS = (
@@ -47,12 +48,18 @@ def parse(text):
         m = pattern.match(said)
         if m and make(m) is not None:
             return make(m)
+    m = _MENU.match(said) or _MENU_NAMED.match(said)
+    if m:  # "click save", "press show sidebar", "file new window"
+        return ("menu", m["item"])
     m = _WINDOW_N.match(said)
     if m:  # "window 2", "go to window one in chrome"
         return ("window", int(m["n"]), m["app"])
     m = _SPLIT_TAB.match(said)
     if m:  # "tabs side by side", "split tab"
         return ("split_tab", m["app"])
+    m = _SITE_TAB.match(said)
+    if m and not _SITE_TAB_RESERVED.match(m["site"]) and not _SITE_TAB_RESERVED_END.search(m["site"]):  # "github tab", "youtube tab 2"
+        return ("site_tab", m["site"].strip(), int(m["n"]) if m["n"] else 1)
     m = _SHORTCUT.match(said)
     if m:  # "new tab", "close tab in chrome", "chrome reload", "tab 3"
         lead = r"^(?:(?:please|go|to|open|switch|then|and|a|the)\b\s*)+"
@@ -88,6 +95,15 @@ def parse(text):
     name = _FILLER.sub("", said).strip()
     return ("switch", name) if name else None
 
+
+# "github tab", "go to the youtube tab 2": a browser tab by its site. Words that already mean a
+# tab command ("new tab", "close tab", "next tab", "tab 3") are never a site.
+_SITE_TAB = re.compile(r"^(?:(?:go|switch|jump)\s+to\s+|open\s+|show\s+)?(?:the\s+|my\s+)?(?P<site>[a-z0-9][a-z0-9 .]*?)\s+tab(?:\s+(?:number\s+)?(?P<n>\d))?$")
+_SITE_TAB_RESERVED = re.compile(r"^(?:new|close|closed|next|previous|prev|last|first|reopen|move|split|mute|unmute|this|that|a|the|"
+                                r"open|go|switch|move|duplicate|pin|other|another|same|left|right|\d+)(?:\s|$)")
+
+_SITE_TAB_RESERVED_END = re.compile(r"(?:^|\s)(?:new|close|closed|next|previous|prev|last|first|reopen|move|split|mute|"
+                                    r"unmute|this|that|duplicate|pin|other|another|same)$")  # "chrome new tab"
 
 _OPEN_FOLDER = re.compile(r"^(?:please\s+)?(?:open|show|go\s+to)\s+(?:the\s+|my\s+)?(?:folder\s+(?P<a>.+)|(?P<b>.+?)\s+folder)$")
 _OPEN = re.compile(r"^(?:please\s+)?open\s+(?:the\s+|up\s+)?(?P<name>.+?)(?:\s+please)?$")
@@ -292,7 +308,22 @@ _SOUND = (
     (re.compile(r"^(?P<un>un)?mute\s+(?:this\s+|the\s+)?(?:tab|site)(?:\s+(?:in|on)\s+(?P<app>.+))?$"),
      lambda m: ("mute_tab", m["app"], not m["un"])),
     (re.compile(r"^(?P<un>un)?mute\s+(?:the\s+)?(?:app\s+)?(?P<app>.+?)(?:\s+app)?$"), lambda m: ("mute_app", m["app"], not m["un"])),
-)
+) + tuple((re.compile(pattern), (lambda action: lambda m: ("system", action))(action)) for pattern, action in (
+    (r"^(?:take\s+(?:a\s+)?)?screen\s*shot(?:\s+(?:of\s+)?(?:the\s+)?(?:whole\s+|entire\s+|full\s+)?screen)?$", "screenshot"),
+    (r"^(?:take\s+(?:a\s+)?)?screen\s*shot\s+(?:of\s+)?(?:an?\s+|the\s+)?(?:area|selection|part|portion|region)$", "screenshot_area"),
+    (r"^(?:take\s+(?:a\s+)?)?screen\s*shot\s+(?:of\s+)?(?:the\s+|this\s+|a\s+)?window$", "screenshot_window"),
+    (r"^(?:start\s+)?(?:a\s+)?(?:screen\s*recording|record(?:ing)?\s+(?:the\s+|my\s+)?screen|video\s+record(?:ing)?)$", "record_start"),
+    (r"^(?:stop|end|finish)\s+(?:the\s+)?(?:screen\s*)?recording$", "record_stop"),
+    (r"^(?:go\s+to\s+sleep|sleep(?:\s+now)?|put\s+(?:the\s+)?(?:computer|mac|it)\s+to\s+sleep)$", "sleep"),
+    (r"^lock(?:\s+(?:the\s+|my\s+)?(?:screen|computer|mac))?$", "lock"),
+    (r"^(?:log|sign)\s*(?:out|off)$", "log_out"),
+    (r"^(?:restart|reboot)(?:\s+(?:the\s+|my\s+)?(?:computer|mac))?$", "restart"),
+    (r"^(?:shut\s*down|power\s+off)(?:\s+(?:the\s+|my\s+)?(?:computer|mac))?$|^turn\s+off\s+(?:the\s+|my\s+)?(?:computer|mac)$", "shut_down"),
+))
+
+# Menu items by voice: "click save", "file new window", "edit find".
+_MENU_NAMED = re.compile(r"^(?P<item>(?:file|edit|view|format|insert|tools|history|bookmarks|help)\s+.+)$")
+_MENU = re.compile(r"^(?:click|press|choose|select|menu)\s+(?:on\s+)?(?:the\s+)?(?P<item>.+?)(?:\s+menu\s+item|\s+button)?$")
 
 SCROLL_STEP, SCROLL_PAGE = 450, 900  # pixels: about half a screen, about a screen
 
@@ -499,7 +530,7 @@ def split_tab(pid):
 
 
 # Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).
-_KEY = {"up": 126, "down": 125, "pageup": 116, "pagedown": 121, "`": 50, "t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
+_KEY = {"q": 12, "space": 49, "up": 126, "down": 125, "pageup": 116, "pagedown": 121, "`": 50, "t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
         "0": 29, "=": 24, "-": 27, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25}
 SHORTCUTS = {
     "new tab": ("t", "cmd"), "close tab": ("w", "cmd"), "reopen tab": ("t", "cmd shift"),
@@ -557,6 +588,157 @@ def press_shortcut(name, post=None):
         post(event)
 
 
+SHORTCUTS.update({"screenshot": ("3", "cmd shift"), "screenshot area": ("4", "cmd shift"),
+                  "screen capture tools": ("5", "cmd shift"), "lock screen": ("q", "ctrl cmd")})
+
+# What each system command does, as shown afterwards.
+SYSTEM_DONE = {"screenshot": "Screenshot saved", "screenshot_area": "Drag to choose the area",
+               "screenshot_window": "Click a window to capture it", "record_start": "Recording the screen · say “stop recording”",
+               "record_stop": "Screen recording saved", "sleep": "Going to sleep", "lock": "Locked",
+               "log_out": "Log out?", "restart": "Restart?", "shut_down": "Shut down?"}
+# macOS's own confirm dialogs for these (never done without asking): log out, restart, shut down.
+_POWER_EVENTS = {"log_out": "aevtlogo", "restart": "aevtrrst", "shut_down": "aevtrsdn"}
+
+
+def screenshot_folder(run=None):
+    """Where macOS saves screenshots (Screenshot app > Options), else the Desktop."""
+    import subprocess
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip())
+    try:
+        where = run(["defaults", "read", "com.apple.screencapture", "location"])
+    except Exception:
+        where = ""
+    path = Path(where).expanduser() if where else Path.home() / "Desktop"
+    return path if path.is_dir() else Path.home() / "Desktop"
+
+
+class ScreenRecorder:
+    """"screen recording" starts macOS's screencapture in video mode (needs Screen Recording
+    permission); "stop recording" ends it and the movie lands where screenshots go."""
+
+    def __init__(self, popen=None, folder=screenshot_folder, clock=time.time):
+        import subprocess
+        self.popen, self.folder, self.clock = popen or subprocess.Popen, folder, clock
+        self.process, self.path = None, None
+
+    @property
+    def recording(self):
+        return self.process is not None and self.process.poll() is None
+
+    def start(self):
+        """True if recording started (False: already recording, or screencapture refused)."""
+        if self.recording:
+            return False
+        stamp = time.strftime("%Y-%m-%d at %H.%M.%S", time.localtime(self.clock()))
+        self.path = self.folder() / f"Screen Recording {stamp}.mov"
+        self.process = self.popen(["screencapture", "-v", "-k", str(self.path)])
+        return True
+
+    def stop(self):
+        """The saved movie's path, or None if nothing was recording."""
+        import signal
+        if not self.recording:
+            return None
+        self.process.send_signal(signal.SIGINT)  # like ⌃C: screencapture finishes the file
+        try:
+            self.process.wait(timeout=5)
+        except Exception:
+            self.process.kill()
+        self.process = None
+        return self.path
+
+
+def system_action(action, run=None, press=None):
+    """Do a system command: screenshots (macOS's own shortcuts), sleep, lock, or ask macOS to
+    log out / restart / shut down (it shows its usual confirmation first)."""
+    import subprocess
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout.strip())
+    press = press or press_shortcut
+    if action == "screenshot":
+        press("screenshot")
+    elif action == "screenshot_area":
+        press("screenshot area")
+    elif action == "screenshot_window":
+        press("screenshot area")
+        time.sleep(0.3)
+        press_key("space")  # ⌘⇧4 then space: pick a window
+    elif action == "sleep":
+        run(["pmset", "sleepnow"])
+    elif action == "lock":
+        press("lock screen")
+    elif action in _POWER_EVENTS:
+        run(["osascript", "-e", f'tell application "loginwindow" to «event {_POWER_EVENTS[action]}»'])
+    else:
+        return False
+    return True
+
+
+def press_key(key, post=None):
+    """Press one key with no modifiers."""
+    import Quartz
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGSessionEventTap, event))
+    source = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+    for down in (True, False):
+        post(Quartz.CGEventCreateKeyboardEvent(source, _KEY[key], down))
+
+
+def _menu_title(text):
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", str(text or "").lower().replace("…", "")).split())
+
+
+def menu_items(pid, limit=1500):
+    """[(menu, item title, element)] of the app's menu bar: File, Edit, View, … and one level of
+    submenus. Apple menu skipped. At most `limit` items (History and Bookmarks can be huge)."""
+    import ApplicationServices as AS
+    bar = _ax(AS.AXUIElementCreateApplication(pid), "AXMenuBar")
+    out = []
+
+    def walk(menu, top, depth):
+        for item in _ax(menu, "AXChildren") or []:
+            if len(out) >= limit:
+                return
+            title = _menu_title(_ax(item, "AXTitle"))
+            if title and _ax(item, "AXRole") == "AXMenuItem":
+                out.append((top, title, item))
+            if depth < 2:
+                for sub in _ax(item, "AXChildren") or []:
+                    walk(sub, top, depth + 1)
+
+    for top_item in (_ax(bar, "AXChildren") or [])[1:]:  # [0] is the Apple menu
+        top = _menu_title(_ax(top_item, "AXTitle"))
+        for menu in _ax(top_item, "AXChildren") or []:
+            walk(menu, top, 0)
+    return out
+
+
+# Menu items never pressed by voice: they delete for good (a misheard word must not do that).
+MENU_BLOCKED = re.compile(r"\b(?:empty\s+(?:the\s+)?trash|empty\s+bin|delete\s+immediately|erase|secure\s+empty|"
+                          r"force\s+quit|delete\s+all|clear\s+(?:all\s+)?history)\b")
+
+
+def find_menu_item(phrase, items):
+    """The menu item for what was said: its title ("save as", "show sidebar"), menu plus title
+    ("file new window"), or the title without the app's name ("new window" for "New Finder
+    Window"). Items that delete for good (Empty Trash, Erase…) are never matched."""
+    said = _menu_title(phrase)
+    if not said or MENU_BLOCKED.search(said):
+        return None
+    app = items[0][0] if items else ""
+    for loose in (False, True):
+        for top, title, element in items:
+            if MENU_BLOCKED.search(title):
+                continue
+            name = " ".join(w for w in title.split() if w != app) if loose else title
+            if said == name or said == f"{top} {name}":
+                return top, title, element
+    return None
+
+
+def press_menu_item(element):
+    import ApplicationServices as AS
+    return AS.AXUIElementPerformAction(element, "AXPress") == 0
+
+
 def quit_app(pid):
     """Ask the app to quit normally (it can still ask about unsaved work). True if asked."""
     from AppKit import NSRunningApplication
@@ -571,6 +753,8 @@ _MISHEARD = [
     (re.compile(r"\b(?:top|tap|tub|tob|tad|tabb|tam)\s+(?=" + _TAB_NEXT + ")"), "tab "),
     (re.compile(r"\b(next|previous|new|close|reopen|last|move|split|mute|unmute)\s+(?:top|tap|tub|tob)\b"), r"\1 tab"),
     (re.compile(r"\btab(left|right)\b"), r"tab \1"),
+    (re.compile(r"(?<!reopen )(?<!undo )\b(?:closed|closes|clothes)\s+tabs?\b"), "close tab"),  # "Closed tab." (not "reopen closed tab")
+    (re.compile(r"^tab\s+(close|closed)$"), "close tab"),  # "Tab, close."
 ]
 
 
@@ -583,7 +767,7 @@ def fix_misheard(said):
 
 # What Whisper should expect when the switch key is held (an initial prompt biases it toward these).
 COMMAND_HINT = ("Voice commands: tab left, tab right, tab 3, new tab, close tab, move tab left, window 2, "
-                "next window, tabs side by side, open folder, scroll down, volume up, pause, mute mic, quit.")
+                "next window, tabs side by side, GitHub tab, YouTube tab 2, screenshot, stop recording, lock screen, open folder, scroll down, volume up, pause, mute mic, quit.")
 
 
 def command_prompt(nicknames=None, names=()):
@@ -716,6 +900,22 @@ def running_apps():
     return out
 
 
+def running_bundle_ids():
+    """Bundle ids of the running Dock apps."""
+    from AppKit import NSApplicationActivationPolicyRegular, NSWorkspace
+
+    return [str(app.bundleIdentifier()) for app in NSWorkspace.sharedWorkspace().runningApplications()
+            if app.activationPolicy() == NSApplicationActivationPolicyRegular and app.bundleIdentifier()]
+
+
+def bundle_id(path):
+    """The bundle id of the app at `path`, or None."""
+    from AppKit import NSBundle
+
+    bundle = NSBundle.bundleWithPath_(str(path)) if path else None
+    return str(bundle.bundleIdentifier()) if bundle is not None and bundle.bundleIdentifier() else None
+
+
 # Words in many app names that say nothing about which app ("Logic Pro", "Visual Studio Code").
 GENERIC_WORDS = {"pro", "app", "apps", "studio", "desktop", "mac", "for", "the", "plus", "mini", "lite", "player",
                  "helper", "one", "go", "x", "air", "max", "free", "beta", "new", "edition", "community"}
@@ -780,3 +980,85 @@ def bring_to_front(path, workspace=None):
     (workspace or NSWorkspace.sharedWorkspace()).openApplicationAtURL_configuration_completionHandler_(
         NSURL.fileURLWithPath_(path), config, None)
     return True
+
+
+# --- Browser tabs by site --------------------------------------------------------------------
+
+# Browsers whose tabs AppleScript can list and select (Chromium-based, and Safari).
+CHROMIUM_SCRIPTABLE = {"com.google.Chrome": "Google Chrome", "com.google.Chrome.canary": "Google Chrome Canary",
+                       "com.brave.Browser": "Brave Browser", "com.microsoft.edgemac": "Microsoft Edge",
+                       "company.thebrowser.Browser": "Arc", "com.vivaldi.Vivaldi": "Vivaldi",
+                       "org.chromium.Chromium": "Chromium", "com.operasoftware.Opera": "Opera"}
+SAFARI_SCRIPTABLE = {"com.apple.Safari": "Safari", "com.apple.SafariTechnologyPreview": "Safari Technology Preview"}
+
+_LIST_TABS = {
+    "chromium": ('tell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
+                 'repeat with t from 1 to count tabs of window w\nset out to out & w & tab & t & tab & '
+                 '(URL of tab t of window w) & tab & (title of tab t of window w) & linefeed\nend repeat\n'
+                 'end repeat\nreturn out\nend tell'),
+    "safari": ('tell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
+               'repeat with t from 1 to count tabs of window w\nset out to out & w & tab & t & tab & '
+               '(URL of tab t of window w) & tab & (name of tab t of window w) & linefeed\nend repeat\n'
+               'end repeat\nreturn out\nend tell'),
+}
+_SELECT_TAB = {
+    "chromium": 'tell application "{app}"\nset active tab index of window {w} to {t}\nset index of window {w} to 1\nactivate\nend tell',
+    "safari": 'tell application "{app}"\nset current tab of window {w} to tab {t} of window {w}\nset index of window {w} to 1\nactivate\nend tell',
+}
+
+
+def scriptable_browser(bundle_id):
+    """(family, app name) for a browser whose tabs can be listed, else None."""
+    if bundle_id in CHROMIUM_SCRIPTABLE:
+        return "chromium", CHROMIUM_SCRIPTABLE[bundle_id]
+    if bundle_id in SAFARI_SCRIPTABLE:
+        return "safari", SAFARI_SCRIPTABLE[bundle_id]
+    return None
+
+
+def list_tabs(family, app, run=None):
+    """[(window, tab, url, title)], front window first, tabs left to right."""
+    out = _osascript(_LIST_TABS[family].format(app=app), run) or ""
+    tabs = []
+    for line in out.splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+            tabs.append((int(parts[0]), int(parts[1]), parts[2], parts[3]))
+    return tabs
+
+
+def _host(url):
+    m = re.match(r"^[a-z]+://(?:www\d?\.|m\.)?([^/:?#]+)", url or "", re.I)
+    return m[1].lower() if m else ""
+
+
+# Sites people call by a name that isn't in the address.
+SITE_ALIASES = {"gmail": "mail google", "google mail": "mail google", "google drive": "drive google",
+                "google calendar": "calendar google", "google sheets": "docs google", "google slides": "docs google",
+                "twitter": "x", "chat gpt": "chatgpt", "claude": "claude", "linked in": "linkedin"}
+
+
+def site_tabs(site, tabs):
+    """The tabs whose site is `site` ("github", "you tube", "google docs"), in order: the web
+    address first (its name, then a sound-alike), else the page title."""
+    site = SITE_ALIASES.get(site.lower().strip(), site)
+    want = re.sub(r"[^a-z0-9]", "", site.lower())
+    if not want:
+        return []
+    by_host, by_sound, by_title = [], [], []
+    for entry in tabs:
+        host = _host(entry[2])
+        name = re.sub(r"[^a-z0-9]", "", host.rsplit(".", 1)[0]) if host else ""  # "docs.google" -> "docsgoogle"
+        labels = [re.sub(r"[^a-z0-9]", "", part) for part in host.split(".")[:-1]] + [name]
+        words = set(re.findall(r"[a-z0-9]+", site.lower()))
+        if want in labels or (len(want) >= 4 and want in name) or (len(words) > 1 and words <= set(labels)):
+            by_host.append(entry)
+        elif sounds_like(want) and any(sounds_like(label) == sounds_like(want) for label in labels):
+            by_sound.append(entry)
+        elif len(want) >= 3 and want in re.sub(r"[^a-z0-9]", "", (entry[3] or "").lower()):
+            by_title.append(entry)
+    return by_host or by_sound or by_title
+
+
+def select_tab(family, app, window, tab, run=None):
+    _osascript(_SELECT_TAB[family].format(app=app, w=window, t=tab), run)
