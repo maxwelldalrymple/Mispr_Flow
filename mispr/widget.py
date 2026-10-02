@@ -55,7 +55,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import apps, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, pointer, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
@@ -110,6 +110,7 @@ SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing i
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
+OVERLAY_SECONDS = 12  # numbered badges stay this long unless a number is said
 RECORDING_CHECK_SECONDS = 1.0  # screencapture refuses within this when it isn't allowed
 PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next paste
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
@@ -750,6 +751,72 @@ class WidgetController:
         self._switch_done(f"{hit[0].title()} › {hit[1].capitalize()}")
         return True
 
+    def _pointer_command(self, command):
+        kind = command[0]
+        overlay = self._overlay()
+        if kind == "hide_numbers":
+            overlay.hide()
+            return self._switch_done("Numbers hidden")
+        if kind == "number":
+            target = overlay.pick(command[1]) if overlay.showing else None
+            if target is None:
+                return self._switch_failed("Say “show numbers” first" if not overlay.showing else f"No number {command[1]}")
+            button, count, hover = self._pending_click
+            overlay.hide()
+            return self._click(target, button, count, hover)
+        if kind == "click" and command[1] is None:  # "click": right where the mouse is
+            pointer.click_at(pointer.mouse_position(), command[2], command[3])
+            return self._switch_done({1: "Clicked", 2: "Double-clicked"}[command[3]] if command[2] == "left" else "Right-clicked")
+        pid = apps.frontmost_pid()
+        if not pid:
+            return self._switch_failed("No app in front")
+        what = command[1] if kind in ("click", "hover") else None
+        self._pending_click = (command[2], command[3], False) if kind == "click" else ("left", 1, kind == "hover")
+        return self._in_background(lambda: self._scan(pid, what), lambda found: self._on_scanned(kind, what, found))
+
+    def _overlay(self):
+        if getattr(self, "overlay", None) is None:
+            from .overlay import NumberOverlay
+            self.overlay = NumberOverlay()
+        return self.overlay
+
+    @staticmethod
+    def _scan(pid, what):
+        """What's on screen in the app in front; for `what`, the targets it names."""
+        pointer.enable_web_accessibility(pid)
+        found = pointer.targets(pid)
+        return pointer.match(what, found) if what else pointer.numberable(found)
+
+    def _on_scanned(self, kind, what, found):
+        overlay = self._overlay()
+        if kind == "show_numbers":
+            if not found:
+                return self._switch_failed("Nothing clickable found here")
+            overlay.show(found)
+            AppHelper.callLater(OVERLAY_SECONDS, self._expire_numbers, overlay.targets)
+            return self._switch_done(f"{len(found)} numbered · say a number")
+        if not found:
+            if kind == "click" and self._press_menu(what):  # not on screen: a menu item ("click export")
+                return
+            return self._switch_failed(f"Couldn't find “{what}” on screen")
+        if len(found) == 1:
+            button, count, hover = self._pending_click
+            return self._click(found[0], button, count, hover)
+        overlay.show(found)
+        AppHelper.callLater(OVERLAY_SECONDS, self._expire_numbers, overlay.targets)
+        return self._switch_done(f"{len(found)} “{what}” · say a number")
+
+    def _expire_numbers(self, shown):
+        overlay = self._overlay()
+        if overlay.targets is shown:  # still the same numbers: nobody picked one
+            overlay.hide()
+
+    def _click(self, target, button, count, hover):
+        pointer.click_at(target.center, button, count, move_only=hover)
+        label = target.name or target.role.replace("AX", "").lower()
+        verb = "Pointing at" if hover else {("left", 1): "Clicked", ("left", 2): "Double-clicked"}.get((button, count), "Right-clicked")
+        return self._switch_done(f"{verb} {label}")
+
     def _find_site_tab(self, site, number, running):
         """Select the `number`th tab of `site` in the browser in front, else the first running
         browser that has one. Returns (message, found)."""
@@ -912,7 +979,9 @@ class WidgetController:
             return self._switch_failed("No tab to split here")
         if kind == "system":  # screenshots, screen recording, sleep, lock, log out / restart / shut down
             return self._system_command(command[1])
-        if kind == "menu":  # "click save", "press show sidebar"
+        if kind in ("click", "hover", "number", "show_numbers", "hide_numbers"):  # clicking by voice (pointer.py)
+            return self._pointer_command(command)
+        if kind == "menu":  # "file new window"
             return self._press_menu(command[1]) or self._switch_failed(f"No “{command[1]}” in this app's menus")
         if kind == "site_tab":  # "github tab", "youtube tab 2"
             _, site, number = command

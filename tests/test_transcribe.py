@@ -337,5 +337,12 @@ class TestNamesAndEchoes:
 
     def test_prompt_echo(self):
         from mispr.transcribe import DICTATION_VOCABULARY, echoes
-        assert echoes("ChatGPT, GitHub, YouTube.", DICTATION_VOCABULARY)
+        assert echoes("ChatGPT, GitHub, YouTube, LinkedIn, Gmail, Google Docs, Slack.", DICTATION_VOCABULARY)
+        assert not echoes("ChatGPT, GitHub.", DICTATION_VOCABULARY)  # a short real sentence
         assert not echoes("One.", DICTATION_VOCABULARY) and not echoes("Open GitHub please", DICTATION_VOCABULARY)
+
+    @pytest.mark.parametrize("command", ["YouTube tab.", "GitHub tab", "close tab", "New tab.", "tab left", "tabs side by side"])
+    def test_commands_in_the_hint_are_never_echoes(self, command):
+        from mispr import apps
+        from mispr.transcribe import echoes
+        assert not echoes(command, apps.command_prompt())  # 1.1.0/1.1.1 dropped these

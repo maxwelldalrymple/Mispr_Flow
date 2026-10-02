@@ -48,8 +48,11 @@ def parse(text):
         m = pattern.match(said)
         if m and make(m) is not None:
             return make(m)
-    m = _MENU.match(said) or _MENU_NAMED.match(said)
-    if m:  # "click save", "press show sidebar", "file new window"
+    pointer = _pointer_command(said)
+    if pointer:  # "click sign in", "double click budget", "show numbers", "7"
+        return pointer
+    m = _MENU_NAMED.match(said)
+    if m:  # "file new window", "edit find"
         return ("menu", m["item"])
     m = _WINDOW_N.match(said)
     if m:  # "window 2", "go to window one in chrome"
@@ -99,7 +102,7 @@ def parse(text):
 # "github tab", "go to the youtube tab 2": a browser tab by its site. Words that already mean a
 # tab command ("new tab", "close tab", "next tab", "tab 3") are never a site.
 _SITE_TAB = re.compile(r"^(?:(?:go|switch|jump)\s+to\s+|open\s+|show\s+)?(?:the\s+|my\s+)?(?P<site>[a-z0-9][a-z0-9 .]*?)\s+tab(?:\s+(?:number\s+)?(?P<n>\d))?$")
-_SITE_TAB_RESERVED = re.compile(r"^(?:new|close|closed|next|previous|prev|last|first|reopen|move|split|mute|unmute|this|that|a|the|"
+_SITE_TAB_RESERVED = re.compile(r"^(?:click|tap|press|select|choose|new|close|closed|next|previous|prev|last|first|reopen|move|split|mute|unmute|this|that|a|the|"
                                 r"open|go|switch|move|duplicate|pin|other|another|same|left|right|\d+)(?:\s|$)")
 
 _SITE_TAB_RESERVED_END = re.compile(r"(?:^|\s)(?:new|close|closed|next|previous|prev|last|first|reopen|move|split|mute|"
@@ -322,6 +325,55 @@ _SOUND = (
 ))
 
 # Menu items by voice: "click save", "file new window", "edit find".
+# Clicking by voice (mispr/pointer.py): on whatever is on screen, else a menu item.
+_CLICK = re.compile(r"^(?:(?P<how>double|right|left)\s*-?\s*)?(?:click|tap|press|select|choose|open the|hit)"
+                    r"(?:\s+(?:on|at))?(?:\s+(?P<what>.+?))?$")
+_HOVER = re.compile(r"^(?:move\s+(?:the\s+)?(?:mouse|cursor|pointer)\s+(?:to|over)|hover(?:\s+over)?|point\s+(?:at|to))\s+(?P<what>.+)$")
+_SHOW_NUMBERS = re.compile(r"^(?:show|display)\s+(?:the\s+)?(?:numbers|labels|clickables?|links|buttons)$|^numbers$")
+_HIDE_NUMBERS = re.compile(r"^(?:hide|clear|remove)\s+(?:the\s+)?(?:numbers|labels)$|^(?:never\s*mind|cancel)$")
+_NUMBER = re.compile(r"^(?:click\s+|number\s+|pick\s+|choose\s+)?(?P<n>\d{1,3})$")
+
+
+_SMALL = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+
+
+def _spoken_number(said):
+    """ "seven" -> "7", "click twelve" -> "click 12", "number forty two" -> "number 42"."""
+    words = said.split()
+    lead = words[:1] if words and words[0] in ("click", "number", "pick", "choose") else []
+    rest = words[len(lead):]
+    if len(rest) == 1 and rest[0] in _SMALL:
+        return " ".join(lead + [str(_SMALL[rest[0]])])
+    if len(rest) in (1, 2) and rest[0] in _TENS and (len(rest) == 1 or rest[1] in _SMALL and _SMALL[rest[1]] < 10):
+        return " ".join(lead + [str(_TENS[rest[0]] + (_SMALL[rest[1]] if len(rest) == 2 else 0))])
+    return said
+
+
+def _pointer_command(said):
+    """("click", what | None, button, count), ("hover", what), ("number", n), ("show_numbers",),
+    or ("hide_numbers",); None if it isn't a pointer command."""
+    m = _NUMBER.match(said) or _NUMBER.match(_spoken_number(said))
+    if m:
+        return ("number", int(m["n"]))
+    if _SHOW_NUMBERS.match(said):
+        return ("show_numbers",)
+    if _HIDE_NUMBERS.match(said):
+        return ("hide_numbers",)
+    m = _HOVER.match(said)
+    if m:
+        return ("hover", m["what"].strip())
+    m = _CLICK.match(said)
+    if m and not (m["what"] or "").startswith(("tab ", "window ")):
+        how = m["how"] or "left"
+        what = re.sub(r"^(?:the|a|this|that)\s+|\s+(?:here|there)$", "", (m["what"] or "").strip()).strip()
+        if what in ("", "here", "there", "it", "this", "that"):
+            what = None
+        return ("click", what, "right" if how == "right" else "left", 2 if how == "double" else 1)
+    return None
+
+
 _MENU_NAMED = re.compile(r"^(?P<item>(?:file|edit|view|format|insert|tools|history|bookmarks|help)\s+.+)$")
 _MENU = re.compile(r"^(?:click|press|choose|select|menu)\s+(?:on\s+)?(?:the\s+)?(?P<item>.+?)(?:\s+menu\s+item|\s+button)?$")
 
@@ -767,7 +819,7 @@ def fix_misheard(said):
 
 # What Whisper should expect when the switch key is held (an initial prompt biases it toward these).
 COMMAND_HINT = ("Voice commands: tab left, tab right, tab 3, new tab, close tab, move tab left, window 2, "
-                "next window, tabs side by side, GitHub tab, YouTube tab 2, screenshot, stop recording, lock screen, open folder, scroll down, volume up, pause, mute mic, quit.")
+                "next window, tabs side by side, GitHub tab, YouTube tab 2, click, double click, right click, show numbers, screenshot, stop recording, lock screen, open folder, scroll down, volume up, pause, mute mic, quit.")
 
 
 def command_prompt(nicknames=None, names=()):
