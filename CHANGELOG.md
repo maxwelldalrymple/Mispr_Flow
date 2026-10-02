@@ -2,6 +2,10 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Oct 2: v1.1.1
+
+- The first release delivered by automatic update: proves 1.1.0 finds, verifies and installs a new version by itself. No other changes.
+
 ## Oct 2: v1.1.0
 
 - **Automatic updates** (DMG app): checks GitHub ~5×/day, signed downloads only, installs when you're idle, keeps permissions; Settings switch and Check now.
