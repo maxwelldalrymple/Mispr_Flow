@@ -169,3 +169,8 @@ class TestPrivateFolders:
     def test_the_folders_covered(self):
         names = [p.name for p in storage.private_dirs()]
         assert "voice-recordings" in names and "meeting-recordings" in names and names[-1] == storage.LOG_DIR.name
+
+    def test_engine_inside_an_app_bundle_uses_application_support(self, monkeypatch):
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        monkeypatch.setattr(storage, "__file__", "/Applications/Mispr Flow.app/Contents/Resources/engine/mispr/storage.py")
+        assert storage._data_root() == Path.home() / "Library" / "Application Support" / "Mispr_Flow"

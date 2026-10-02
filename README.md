@@ -14,6 +14,22 @@ CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m mispr        # then hold fn and speak
 ```
 
+## Download
+
+**[Mispr-Flow-1.0.0.dmg](https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v1.0.0)** (87 MB) for Apple Silicon Macs on macOS 14 or newer. Models (about 3.1 GB) are downloaded during setup.
+
+**Verify it** before opening. The SHA-256 must match exactly:
+
+```
+ab4fe8b9008267b8a5f1ddd96851a225fc9e228ff98174085f01910786a85c51  Mispr-Flow-1.0.0.dmg
+```
+
+```bash
+shasum -a 256 ~/Downloads/Mispr-Flow-1.0.0.dmg
+```
+
+**First open:** the app isn't signed with an Apple Developer ID, so macOS blocks a double-click. Drag it to Applications, then right-click it and choose **Open** (or System Settings → Privacy & Security → **Open Anyway**). The DMG holds only the app: it creates its own folders in `~/Library` on first run. Build it yourself with `tools/build_dmg.sh`.
+
 ## Why
 
 1. **Open source.** MIT licensed. Every line is readable, auditable and changeable: the hotkey, the audio pipeline, the prompts, the safety checks.
@@ -104,14 +120,12 @@ Every function has tests, and Python line coverage is 96%. Tests never touch the
 
 ## Status
 
-Dictation, voice commands, the main window and meeting notes all work, as a signed local `.app`.
+Dictation, voice commands, the main window and meeting notes all work, as a downloadable app (see [Download](#download)).
 
 **Next:**
-- a first-run tutorial;
-- a security and network audit;
 - languages;
 - a dictionary and snippets;
-- an installable app for other Macs.
+- a signed and notarized build.
 
 See [plan.md](plan.md).
 

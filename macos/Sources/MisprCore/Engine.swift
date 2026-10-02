@@ -16,7 +16,13 @@ public struct EngineConfig: Equatable {
         if let arguments { self.arguments = arguments }
     }
 
-    public static func resolve(info: [String: Any], env: [String: String]) -> EngineConfig? {
+    /// From the environment, else Info.plist: a development build names this checkout and its
+    /// .venv; the DMG build sets MisprBundled and carries Python and the engine in `resources`.
+    public static func resolve(info: [String: Any], env: [String: String], resources: URL? = nil) -> EngineConfig? {
+        if env["MISPR_PROJECT_ROOT"] == nil, info["MisprBundled"] as? Bool == true, let resources {
+            return EngineConfig(python: resources.appendingPathComponent("python/bin/python3"),
+                                projectRoot: resources.appendingPathComponent("engine"))
+        }
         guard let root = env["MISPR_PROJECT_ROOT"] ?? info["MisprProjectRoot"] as? String else { return nil }
         let rootURL = URL(fileURLWithPath: root)
         let python = env["MISPR_PYTHON"] ?? info["MisprPython"] as? String
