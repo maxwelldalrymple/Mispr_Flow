@@ -91,5 +91,8 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$ROOT/dist" && rm -f "$DMG"
 hdiutil create -quiet -volname "Mispr Flow" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG"
 (cd "$ROOT/dist" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+# Don't leave extra copies of the app around: macOS would treat them as the same app (one ID)
+# and could launch one of them, or apply a permission to it, instead of the installed copy.
+rm -rf "$STAGE" "$ROOT/build/Mispr Flow.app"
 echo "Built $DMG ($(du -h "$DMG" | cut -f1))"
 cat "$DMG.sha256"
