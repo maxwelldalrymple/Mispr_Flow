@@ -253,6 +253,7 @@ def main():
     icon = _app_icon()
     if icon is not None:
         app.setApplicationIconImage_(icon)  # the Dock tile, alerts, and About
+    storage.lock_down()  # data folders owner-only (security audit)
     widget = WidgetController()
     fn = hotkey.FnMonitor(widget.fn_down, widget.fn_up, widget.fn_combo, widget.handle_key,
                           trigger=widget.settings.hotkey, on_note=widget.request_note,

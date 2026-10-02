@@ -35,6 +35,8 @@ def pytest_configure(config):
 def isolated_paths(tmp_path, monkeypatch):
     """Redirect every on-disk location the app writes to into this test's tmp dir."""
     monkeypatch.setattr(settings, "SETTINGS_PATH", tmp_path / "support" / "settings.json")
+    from mispr import storage as _storage
+    monkeypatch.setattr(_storage, "LOG_DIR", tmp_path / "logs")  # lock_down() never touches the real log folder
     monkeypatch.setattr(storage, "RECORDINGS_DIR", tmp_path / "voice-recordings")
     monkeypatch.setattr(models, "MODELS_DIR", tmp_path / "models")
     return tmp_path
@@ -140,8 +142,9 @@ class FakeTranscriber:
     def load_async(self):
         self.loaded += 1
 
-    def transcribe_async(self, audio, on_done, post=None):
+    def transcribe_async(self, audio, on_done, post=None, prompt=""):
         self.calls.append((audio, on_done, post))
+        self.prompt = prompt
 
 
 class FakeCleaner:

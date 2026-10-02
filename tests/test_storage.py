@@ -153,3 +153,19 @@ def test_set_transcript_keeps_what_was_heard(tmp_path):
     import json
     meta = json.loads(wav.with_suffix(".json").read_text())
     assert meta == {"transcript": "Opened claude", "raw_transcript": "Open clawed folder.", "words": 2}
+
+
+class TestPrivateFolders:
+    """Security audit: dictations, meetings, settings and the log are owner-only."""
+
+    def test_lock_down_makes_folders_owner_only(self, tmp_path):
+        import os, stat
+        open_dir, private, missing = tmp_path / "a", tmp_path / "b", tmp_path / "none"
+        open_dir.mkdir(mode=0o755); private.mkdir(mode=0o700)
+        os.chmod(open_dir, 0o755)
+        assert storage.lock_down([open_dir, private, missing]) == [open_dir]
+        assert stat.S_IMODE(open_dir.stat().st_mode) == 0o700 and stat.S_IMODE(private.stat().st_mode) == 0o700
+
+    def test_the_folders_covered(self):
+        names = [p.name for p in storage.private_dirs()]
+        assert "voice-recordings" in names and "meeting-recordings" in names and names[-1] == storage.LOG_DIR.name
