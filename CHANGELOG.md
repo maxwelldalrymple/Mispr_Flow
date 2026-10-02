@@ -2,6 +2,26 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Oct 2: v1.1.0
+
+- **Automatic updates** (DMG app): checks GitHub ~5×/day, signed downloads only, installs when you're idle, keeps permissions; Settings switch and Check now.
+- **Auto-Enter key** ⌃⌥↩ (changeable); ⌘Return on LinkedIn, Gmail and Outlook web, where Return is a new line.
+- **No phantom text:** a speech check (Silero, volume-evened) drops clicks and silence; Whisper's noise phrases and sound labels ("*Drums*") removed.
+- **Fillers** ("uhh…", "um,") always removed; the cleanup guard counts them as fillers.
+- **Long dictations** typed in piece by piece while processing; Auto-Enter waits for the last piece.
+- **Voice commands:**
+  - "close tab" fixed (heard as "Closed tab.");
+  - a tab by its site ("GitHub tab", "YouTube tab 2"), with misheard names assumed and unopened sites opened;
+  - screenshots, screen recording, sleep, lock, log out / restart / shut down (macOS confirms);
+  - any menu item by name, never ones that delete for good.
+- **Site names:** the 1,000 most visited sites (`mispr/assets/sites.txt`) for misheard names in tab commands and spoken web addresses; Whisper primed with ChatGPT, GitHub, YouTube…
+- **Release builds** signed with a fixed certificate, plus an update signature (`.sig`).
+
+## Oct 2: v1.0.0
+
+- First DMG release (`tools/build_dmg.sh`): bundled Python 3.13, macOS 14+, no personal data (checked by the build). SHA-256 in the README.
+- Gemma Terms of Use on the setup Models page. 146 screenshots in `docs/screenshots/`.
+
 ## Oct 1: Documentation (branch `documentation`)
 
 - Feature guides (`docs/features/`), engine protocol, models, testing.

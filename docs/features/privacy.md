@@ -12,7 +12,13 @@
 | TitaNet-large (speaker voices) | github.com/k2-fsa/sherpa-onnx releases | 101 MB | first meeting |
 | Silero VAD (speech detection) | github.com/k2-fsa/sherpa-onnx releases | 0.6 MB | first meeting |
 
-Each download is checked against a pinned SHA-256 before use (`mispr/models.py`). After that the app works offline. A full network audit is planned; see the roadmap.
+Each download is checked against a pinned SHA-256 before use (`mispr/models.py`). After that the app works offline.
+
+## Update checks (the DMG app, from v1.1.0)
+
+About 5 times a day (and a minute after launch) the app asks GitHub for the latest release: one plain request to `api.github.com/repos/maxwelldalrymple/Mispr_Flow/releases/latest`, with nothing about you in it. A newer version is downloaded from GitHub, and installed only if its signature checks out (see [main window: updates](main-window.md#automatic-updates)).
+
+Turn it off in **Settings → System → Automatic updates** (`auto_update` in settings.json). **Check now** works even when it's off. Development builds never check.
 
 ## On disk
 
