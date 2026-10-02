@@ -409,13 +409,21 @@ class TestSaving:
         finish_transcription(controller)
         assert saved_json(isolated_paths) == [] and controller.typed == ["Hello world."] and controller.pasted == []
 
-    def test_cancelled_recording_saved_on_expiry(self, controller, speech, clock, isolated_paths):
+    def test_cancelled_recording_is_never_saved(self, controller, speech, clock, isolated_paths):
+        """Cancelled means gone: no audio file and no history entry, once Undo runs out."""
         controller.recorder.audio_data = speech
         controller.begin_handsfree()
         controller.cancel()
         controller._run_due(clock.now + W.TOAST_SECONDS)
-        (meta,) = saved_json(isolated_paths)
-        assert meta["status"] == "cancelled" and meta["pasted_into"] is None
+        assert saved_json(isolated_paths) == [] and controller.recorder.wiped
+        assert not list((isolated_paths / "voice-recordings").rglob("*.wav"))  # no audio file either
+
+    def test_delete_on_the_undo_toast_wipes_without_saving(self, controller, speech, isolated_paths):
+        controller.recorder.audio_data = speech
+        controller.begin_handsfree()
+        controller.cancel()
+        controller._expire_cancel()  # delete pressed on the toast
+        assert saved_json(isolated_paths) == [] and controller.state == W.IDLE
 
     def test_short_audio_not_saved(self, controller, isolated_paths):
         controller.recorder.audio_data = np.full(1000, 0.5, np.float32)  # 62 ms
@@ -919,14 +927,13 @@ class TestStateMachineDetails:
         (meta,) = saved_json(isolated_paths)
         assert meta["ended_at"] >= meta["started_at"]
 
-    def test_superseded_cancel_is_saved_before_new_recording(self, controller, speech, isolated_paths):
+    def test_superseded_cancel_is_wiped_not_saved(self, controller, speech, isolated_paths):
         controller.recorder.audio_data = speech
         controller.begin_handsfree()
         controller.cancel()
         controller.set_state(W.CANCELLED)
         controller.begin_handsfree()  # new hands-free recording replaces the toast
-        (meta,) = saved_json(isolated_paths)
-        assert meta["status"] == "cancelled" and controller.state == W.HANDSFREE
+        assert saved_json(isolated_paths) == [] and controller.state == W.HANDSFREE
 
     def test_hold_records_where_dictation_started(self, controller):
         controller.begin_hold("fn")
