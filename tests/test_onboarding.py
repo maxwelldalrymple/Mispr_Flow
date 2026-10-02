@@ -37,12 +37,12 @@ class Models:
         self.retries += 1
 
 
-def make_flow(perms=None, models=None, onboarded=False):
+def make_flow(perms=None, models=None, onboarded=False, saved=None):
     perms = perms or Perms()
     models = models or Models()
     flow = SetupFlow(perms.list, models_ready=lambda: models.ready, model_progress=lambda: models.progress,
                      model_error=lambda: models.error, retry_models=models.retry,
-                     settings=st.Settings(onboarded=onboarded))
+                     settings=saved or st.Settings(onboarded=onboarded))
     return flow, perms, models
 
 
@@ -491,3 +491,31 @@ class TestSetupStaysInFront:
         assert not w.watching and not w.window.isVisible()
         w.bring_front()  # hidden: stays hidden
         assert not w.window.isVisible()
+
+
+class TestSetupResumes:
+    """macOS quits and reopens the app after some permissions: setup must not start over."""
+
+    def test_the_step_is_remembered_and_resumed(self):
+        flow, perms, _ = make_flow()
+        perms.grant_required()
+        flow.advance(); flow.advance()  # Welcome → Allow access → Optional features
+        assert st.load().setup_step == o.EXTRAS
+        again, _, _ = make_flow(perms, saved=st.load())  # the app reopened: settings read from disk
+        assert again.start_step() == o.EXTRAS
+
+    def test_never_past_allow_access_while_something_required_is_missing(self):
+        flow, perms, _ = make_flow()
+        perms.grant_required()
+        flow.advance(); flow.advance(); flow.advance()  # up to Models
+        perms.granted["accessibility"] = False  # reset meanwhile
+        again, _, _ = make_flow(perms, saved=st.load())
+        assert again.start_step() == o.PERMISSIONS
+
+    def test_back_is_remembered_too_and_new_users_start_at_welcome(self):
+        fresh, _, _ = make_flow()
+        assert fresh.start_step() == o.WELCOME
+        flow, perms, _ = make_flow()
+        flow.advance()
+        flow.back()
+        assert st.load().setup_step == o.WELCOME
