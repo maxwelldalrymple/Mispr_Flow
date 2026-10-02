@@ -6,6 +6,8 @@ Private, fully local voice control for macOS. Hold **fn**, speak, and clean, pun
 
 An open clone of the Wispr Flow desktop experience, without the cloud.
 
+<p align="center"><img src="docs/screenshots/main-window/home_dictation-history_classic-dark.png" width="820" alt="Mispr Flow's Home page: dictation history, stats, shortcuts and voice commands"></p>
+
 **macOS · Apple Silicon · 100% on-device · free · [MIT licensed](LICENSE)**
 
 ```bash
@@ -13,6 +15,21 @@ python3.13 -m venv .venv && .venv/bin/pip install cmake
 CMAKE_ARGS="-DGGML_METAL=on" .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m mispr        # then hold fn and speak
 ```
+
+## Screenshots
+
+| | |
+|---|---|
+| <img src="docs/screenshots/note-window/note_2-recording-live-transcript_classic-dark.png" width="300" alt="Live meeting transcript with speakers told apart"> | <img src="docs/screenshots/main-window/notetaker_meeting-detail_summary-tab_classic-light.png" width="480" alt="A saved meeting's summary"> |
+| **Meeting notes:** a live transcript that tells speakers apart | **A saved note:** summary, decisions and action items |
+| <img src="docs/screenshots/tutorial/tutorial_step-3-of-8_auto-enter-and-incognito_classic-light.png" width="480" alt="First-run tutorial, step 3"> | <img src="docs/screenshots/main-window/insights_overview_classic-dark.png" width="480" alt="Insights page"> |
+| **First-run tutorial:** 8 steps that point out each area | **Insights:** words, speed and streaks |
+| <img src="docs/screenshots/themes/main-window_home_sunset-light.png" width="480" alt="Sunset theme, light"> | <img src="docs/screenshots/themes/main-window_home_ocean-dark.png" width="480" alt="Ocean theme, dark"> |
+| **Six themes**, each in light and dark (Sunset light) | (Ocean dark) |
+| <img src="docs/screenshots/setup-window/setup-window_welcome_system-light.png" width="420" alt="Setup window"> | <img src="docs/screenshots/settings/settings_general-section_classic-dark.png" width="480" alt="Settings"> |
+| **Guided setup:** permissions and model downloads | **Settings:** keys, sounds, nicknames, themes |
+
+All 146 screenshots (every window, state, theme and mode) are in [docs/screenshots/](docs/screenshots/README.md).
 
 ## Download
 
