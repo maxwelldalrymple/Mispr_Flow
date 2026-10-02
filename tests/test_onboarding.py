@@ -332,6 +332,14 @@ class TestWindow:
         w.refresh()
         assert status.stringValue() == "✓ Models installed and verified." and w.continue_button.isEnabled()
 
+    def test_model_page_links_the_gemma_terms(self, window):
+        w, *_ = window
+        opened = []
+        w.open_url = opened.append
+        go(w, MODELS)
+        w.actions.gemmaTerms_(None)
+        assert opened == ["https://ai.google.dev/gemma/terms"]
+
     def test_start_dictating_finishes_and_closes(self, window):
         w, flow, _, _, finished = window
         go(w, READY)

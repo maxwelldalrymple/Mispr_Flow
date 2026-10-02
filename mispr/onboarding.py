@@ -293,11 +293,15 @@ class _Actions(NSObject):
     def refresh_(self, timer):
         self.owner.refresh()
 
+    def gemmaTerms_(self, sender):
+        self.owner.open_url(GEMMA_TERMS_URL)
+
     def appActivated_(self, note):
         self.owner.on_app_activated(note.userInfo().get("NSWorkspaceApplicationKey"))
 
 
-APP_BUNDLE_ID = "io.github.maxwelldalrymple.MisprFlow"  # the SwiftUI app that hosts this engine
+APP_BUNDLE_ID = "io.github.maxwelldalrymple.MisprFlow"
+GEMMA_TERMS_URL = "https://ai.google.dev/gemma/terms"  # Google requires users of Gemma to get these terms  # the SwiftUI app that hosts this engine
 
 
 class SetupWindow:
@@ -313,6 +317,7 @@ class SetupWindow:
         self.actions.owner = self
         self.timer = None
         self.watching = False  # for the app coming back to the front (from System Settings)
+        self.open_url = lambda url: NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, self.WIDTH, self.HEIGHT),
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable, NSBackingStoreBuffered, False,
@@ -484,7 +489,14 @@ class SetupWindow:
         status = _label("", 13, color=NSColor.secondaryLabelColor())
         retry = NSButton.buttonWithTitle_target_action_("Retry", self.actions, "retry:")
         self.model_widgets = (bar, status, retry)
-        return _stack(views + [bar, _stack([status, retry], vertical=False, spacing=10, align=ALIGN_CENTER_Y)],
+        # Gemma's licence asks that people who get it receive its terms: say so, with a link.
+        terms = NSButton.buttonWithTitle_target_action_("Gemma Terms of Use", self.actions, "gemmaTerms:")
+        terms.setBordered_(False)
+        terms.setContentTintColor_(NSColor.linkColor())
+        terms.setFont_(NSFont.systemFontOfSize_(12))
+        notice = _stack([_label("By downloading Gemma you agree to Google's", 12, color=NSColor.secondaryLabelColor()), terms],
+                        vertical=False, spacing=4, align=ALIGN_CENTER_Y)
+        return _stack(views + [bar, _stack([status, retry], vertical=False, spacing=10, align=ALIGN_CENTER_Y), notice],
                       spacing=12, align=ALIGN_CENTER_X)
 
     def _ready(self):
