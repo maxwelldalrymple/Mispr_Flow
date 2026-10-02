@@ -27,6 +27,8 @@ public enum EngineEvent: Equatable {
     case meeting(active: Bool)
     /// Two voices turned out to be the same person: relabel `speaker`'s lines as `into`.
     case speakersMerged(meeting: String, speaker: Int, into: Int)
+    /// The user finished the setup window: show the main window and the first-run tour.
+    case setupFinished
     /// The engine changed settings.json itself (a nickname set by voice): re-read it.
     case settingsChanged
     /// A well-formed event this version doesn't know.
@@ -74,6 +76,8 @@ public enum EngineEvent: Equatable {
         case "speakers_merged":
             guard let from = object["speaker"] as? Int, let into = object["into"] as? Int else { return nil }
             return .speakersMerged(meeting: object["id"] as? String ?? "", speaker: from, into: into)
+        case "setup_finished":
+            return .setupFinished
         case "settings_changed":
             return .settingsChanged
         case "meeting":

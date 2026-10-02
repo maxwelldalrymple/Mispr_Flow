@@ -128,8 +128,8 @@ class TestSetupOpener:
         created = []
 
         class Window:
-            def __init__(self, flow, play):
-                self.flow, self.play, self.shown = flow, play, 0
+            def __init__(self, flow, play, on_finish=lambda: None):
+                self.flow, self.play, self.shown, self.on_finish = flow, play, 0, on_finish
                 self.window = type("W", (), {"visible": True, "isVisible": lambda s: s.visible})()
                 created.append(self)
 
@@ -267,3 +267,24 @@ def test_setup_window_show_brings_it_forward_and_starts_refreshing(monkeypatch):
     finally:
         w.close()
     assert w.timer is None and not w.window.isVisible()
+
+
+def test_finishing_setup_tells_the_app(monkeypatch):
+    finished = []
+    made = []
+
+    class Window:
+        def __init__(self, flow, play, on_finish):
+            self.on_finish = on_finish
+            self.window = type("W", (), {"isVisible": lambda s: True})()
+            made.append(self)
+
+        def show(self):
+            pass
+
+    widget = type("Widget", (), {"sounds": type("S", (), {"play": lambda s, n: None})(),
+                                 "on_setup_finished": staticmethod(lambda: finished.append(True))})()
+    monkeypatch.setattr(app, "_setup_flow", lambda w: "flow")
+    app.make_setup_opener(widget, window_class=Window)()
+    made[0].on_finish()
+    assert finished == [True]

@@ -159,6 +159,7 @@ def _connect_host(app, widget, open_setup, fn=None):
     widget.on_saved = lambda path: host.send("saved", path=str(path))
     widget.on_note_requested = lambda: host.send("open_note", start=True)
     widget.on_settings_changed = lambda: host.send("settings_changed")  # e.g. a nickname set by voice
+    widget.on_setup_finished = lambda: host.send("setup_finished")  # the app shows its window and the tour
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
     # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
@@ -233,7 +234,9 @@ def make_setup_opener(widget, window_class=None):
         window = current.get("w")
         if window is None or not window.window.isVisible():
             cls = window_class or onboarding.SetupWindow
-            window = cls(_setup_flow(widget), play=widget.sounds.play)
+            # Finishing setup tells the app, which opens the main window and starts the tour.
+            window = cls(_setup_flow(widget), play=widget.sounds.play,
+                         on_finish=lambda: getattr(widget, "on_setup_finished", lambda: None)())
             current["w"] = window
         window.show()
 

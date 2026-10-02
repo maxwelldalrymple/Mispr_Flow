@@ -43,6 +43,8 @@ final class AppModel: ObservableObject {
     @Published var settingsSection: SettingsModal.Section = .profile
     /// Set by AppDelegate: shows the note side window.
     var openNote: () -> Void = {}
+    /// Set by AppDelegate: brings up the main window.
+    var showMain: () -> Void = {}
     private var cancellables: Set<AnyCancellable> = []
 
     /// Tests pass their own engine (no process) and profile (scratch preferences).
@@ -56,6 +58,7 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.reloadRecordings() }
         }.store(in: &cancellables)
         engine.saved.sink { [weak self] _ in self?.reloadRecordings() }.store(in: &cancellables)
+        engine.setupFinished.sink { [weak self] in self?.setupFinished() }.store(in: &cancellables)
         profile.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.noteRequested.sink { [weak self] start in
             guard let self else { return }
@@ -103,6 +106,12 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Tour
+
+    /// Setup just finished: open the main window and start the tour (first time only).
+    func setupFinished() {
+        showMain()
+        startTourIfNew()
+    }
 
     func startTour() {
         showSettings = false

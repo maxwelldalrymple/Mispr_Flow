@@ -126,7 +126,7 @@ class TestConnectHost:
             begin_meeting = object()
             stop_meeting = object()
             transcriber = cleaner = None
-            on_saved = on_note_requested = on_meeting_changed = on_settings_changed = meeting_levels = None
+            on_saved = on_note_requested = on_meeting_changed = on_settings_changed = on_setup_finished = meeting_levels = None
 
         opened = object()
         widget = Widget()
@@ -154,6 +154,8 @@ class TestConnectHost:
         assert sent[-1] == ("meeting", {"active": True})
         widget.on_settings_changed()  # a nickname set by voice: the app re-reads settings
         assert sent[-1] == ("settings_changed", {})
+        widget.on_setup_finished()  # setup done: the app shows its window and the tour
+        assert sent[-1] == ("setup_finished", {})
         listened["handlers"]["quit"]()
         listened["eof"]()
         assert App.terminated == 2
