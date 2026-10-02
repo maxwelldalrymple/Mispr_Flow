@@ -602,7 +602,9 @@ class WidgetController:
         self.sounds.play(sounds.STOP)
         self.set_state(PROCESSING)
         # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
-        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text))
+        hint = apps.command_prompt(self.settings.app_nicknames, sorted(apps.running_apps()))
+        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text),
+                                          prompt=hint)
 
     def _remute(self):
         if self.mic_saved is not None:

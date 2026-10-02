@@ -142,8 +142,9 @@ class FakeTranscriber:
     def load_async(self):
         self.loaded += 1
 
-    def transcribe_async(self, audio, on_done, post=None):
+    def transcribe_async(self, audio, on_done, post=None, prompt=""):
         self.calls.append((audio, on_done, post))
+        self.prompt = prompt
 
 
 class FakeCleaner:

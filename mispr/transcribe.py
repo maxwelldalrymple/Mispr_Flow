@@ -74,17 +74,17 @@ class Transcriber:
             self._loading = True
             self._load()
 
-    def transcribe_async(self, audio, on_done, post=None):
+    def transcribe_async(self, audio, on_done, post=None, prompt=""):
         """Transcribe on a worker thread; `on_done(text, raw, info, seconds)` runs on the main thread.
 
         `post(raw) -> (text, info)` optionally refines the transcript on the same worker
         (LLM cleanup). `audio` must stay untouched until on_done fires (it is a view of the
-        live buffer).
+        live buffer). `prompt` primes Whisper with expected words (voice commands).
         """
 
         def work():
             started = self.clock()
-            raw = self._transcribe(audio)
+            raw = self._transcribe(audio, prompt)
             text, info = post(raw) if (post and raw) else (raw, None)
             AppHelper.callAfter(on_done, text, raw, info, self.clock() - started)
 
@@ -99,10 +99,10 @@ class Transcriber:
         chunks are split where the speaker changes)."""
         return [(s.t0 / 100, s.t1 / 100, text) for s in self._segments(audio) if (text := clean_text(s.text))]
 
-    def _transcribe(self, audio):
-        return clean_text(" ".join(s.text for s in self._segments(audio)))
+    def _transcribe(self, audio, prompt=""):
+        return clean_text(" ".join(s.text for s in self._segments(audio, prompt)))
 
-    def _segments(self, audio):
+    def _segments(self, audio, prompt=""):
         if len(audio) < MIN_SECONDS * SAMPLE_RATE:
             return []
         # max/min reduce in place; np.abs() would make an unwiped copy of the audio.
@@ -112,4 +112,6 @@ class Transcriber:
         if self._model is None:
             return []
         with self._lock:
-            return self._model.transcribe(audio, language=self.language)
+            # Always pass the prompt: pywhispercpp keeps parameters between calls, so an empty one
+            # clears a command hint before the next dictation.
+            return self._model.transcribe(audio, language=self.language, initial_prompt=prompt)

@@ -37,8 +37,9 @@ class FakeModel:
         self.texts = texts
         self.seen = []
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, initial_prompt=""):
         self.seen.append((audio, language))
+        self.prompts = getattr(self, "prompts", []) + [initial_prompt]
         return [Segment(t) for t in self.texts]
 
 
@@ -126,7 +127,7 @@ class TestTimedSegments:
 
     def test_seconds_and_clean_text(self, speech):
         model = FakeModel()
-        model.transcribe = lambda audio, language: [Segment(" Hi [MUSIC] there.", 0, 150), Segment(" (laughs) ", 150, 200),
+        model.transcribe = lambda audio, language, initial_prompt="": [Segment(" Hi [MUSIC] there.", 0, 150), Segment(" (laughs) ", 150, 200),
                                                     Segment(" Bye.", 200, 310)]
         assert ready_transcriber(model).segments(speech) == [(0.0, 1.5, "Hi there."), (2.0, 3.1, "Bye.")]
 
@@ -234,3 +235,11 @@ class TestTranscriberLifecycle:
         monkeypatch.setattr(Transcriber, "_load", lambda self: None)
         Transcriber().load_async()
         assert inline_threads == ["whisper-load"]
+
+
+def test_a_command_hint_never_sticks_to_the_next_dictation(speech):
+    model = FakeModel()
+    t = ready_transcriber(model)
+    t._transcribe(speech, "Voice commands: tab left.")
+    t._transcribe(speech)
+    assert model.prompts == ["Voice commands: tab left.", ""]  # cleared, since pywhispercpp keeps parameters

@@ -394,3 +394,20 @@ class TestBrowserExtras:
     def test_window_and_split_helpers_are_safe_without_windows(self):
         assert apps.windows(999_999) == [] and apps.focus_window(999_999, 1) is False
         assert apps.split_tab(999_999) is False and apps.tile_front_two(999_999, (0, 0, 100, 100)) is False
+
+
+class TestMisheardCommands:
+    """Whisper wrote "Top left." for "tab left" four times in a row."""
+
+    @pytest.mark.parametrize("said,expected", [
+        ("Top left.", ("shortcut", "previous tab", None)), ("tap right", ("shortcut", "next tab", None)),
+        ("Tub three", ("shortcut", "tab 3", None)), ("close top", ("shortcut", "close tab", None)),
+        ("Tableft.", ("shortcut", "previous tab", None)), ("top tabs side by side", ("switch", "top tabs side by side")),
+        ("scroll to the top", ("scroll_end", "top")), ("top", ("shortcut", "top", None)),  # "top" alone still scrolls to the top
+    ])
+    def test_fixes(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_command_hint_lists_commands_and_nicknames(self):
+        hint = apps.command_prompt({"c": "Google Chrome"}, ["Google Chrome", "Slack"])
+        assert "tab left" in hint and hint.endswith("c, Google Chrome, Slack.")

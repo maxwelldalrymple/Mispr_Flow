@@ -40,6 +40,7 @@ def parse(text):
         m = pattern.match(said)
         if m:
             return ("nickname", m["nick"].strip(), m["app"].strip())
+    said = fix_misheard(said)
     said = _number_words(said)
     said = re.sub(r"\b(tab|window)\s+(" + "|".join(_ONES) + r")\b", lambda m: f"{m[1]} {_ONES[m[2]]}", said)  # "tab nine"
     for pattern, make in _SOUND:
@@ -561,6 +562,34 @@ def quit_app(pid):
     from AppKit import NSRunningApplication
     app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
     return bool(app and app.terminate())
+
+
+# Whisper hears short commands without context: "tab left" came out as "Top left." every time.
+# Fix the word "tab" only right before something a tab command takes, so "top" elsewhere stays.
+_TAB_NEXT = r"(?:left|right|over|\d+|one|two|three|four|five|six|seven|eight|nine|side\s+by\s+side)\b"
+_MISHEARD = [
+    (re.compile(r"\b(?:top|tap|tub|tob|tad|tabb|tam)\s+(?=" + _TAB_NEXT + ")"), "tab "),
+    (re.compile(r"\b(next|previous|new|close|reopen|last|move|split|mute|unmute)\s+(?:top|tap|tub|tob)\b"), r"\1 tab"),
+    (re.compile(r"\btab(left|right)\b"), r"tab \1"),
+]
+
+
+def fix_misheard(said):
+    """Common mishearings of short commands: "top left" -> "tab left", "close top" -> "close tab"."""
+    for pattern, fix in _MISHEARD:
+        said = pattern.sub(fix, said)
+    return said
+
+
+# What Whisper should expect when the switch key is held (an initial prompt biases it toward these).
+COMMAND_HINT = ("Voice commands: tab left, tab right, tab 3, new tab, close tab, move tab left, window 2, "
+                "next window, tabs side by side, open folder, scroll down, volume up, pause, mute mic, quit.")
+
+
+def command_prompt(nicknames=None, names=()):
+    """The hint for a voice command, with the user's nicknames and some app names."""
+    extra = list(nicknames or {}) + list(names)[:20]
+    return COMMAND_HINT + (" " + ", ".join(extra) + "." if extra else "")
 
 
 _ACTIONS = {"close": "close", "minimize": "minimize", "minimise": "minimize", "hide": "minimize",
