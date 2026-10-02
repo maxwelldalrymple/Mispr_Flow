@@ -566,3 +566,25 @@ class TestMenuCommands:
 
     def test_titles_are_normalized(self):
         assert apps._menu_title("Save As…") == "save as" and apps._menu_title("Show Tab Bar") == "show tab bar"
+
+
+class TestPopularSites:
+    @pytest.mark.parametrize("said, domain", [("chat gbt", "chatgpt.com"), ("linkdin", "linkedin.com"), ("get hub", "github.com"),
+                                              ("net flicks", "netflix.com"), ("google docs", "docs.google.com"), ("claude", "claude.ai")])
+    def test_misheard_names(self, said, domain):
+        from mispr import sites
+        assert sites.guess(said) == domain
+
+    @pytest.mark.parametrize("said", ["the", "my house", "zzqx"])
+    def test_ordinary_words_are_not_sites(self, said):
+        from mispr import sites
+        assert sites.guess(said) is None
+
+    def test_list_has_about_a_thousand_sites(self):
+        from mispr import sites
+        assert 900 <= len(sites.known()) <= 1000
+
+    def test_misheard_site_finds_its_open_tab(self):
+        tabs = [(1, 1, "https://www.netflix.com/browse", "Netflix"), (1, 2, "https://github.com", "GitHub")]
+        assert [t[:2] for t in apps.site_tabs("net flicks", tabs)] == [(1, 1)]
+        assert [t[:2] for t in apps.site_tabs("you two", [(1, 1, "https://www.youtube.com/w", "x")])] == [(1, 1)]

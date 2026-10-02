@@ -102,8 +102,9 @@ def clean_text(text):
 
 def echoes(text, prompt):
     """True when Whisper just repeated its prompt back (it can, on near-silence)."""
-    said = " ".join(re.findall(r"[a-z0-9]+", text.lower()))
-    return bool(said) and said in " ".join(re.findall(r"[a-z0-9]+", prompt.lower()))
+    said = re.findall(r"[a-z0-9]+", text.lower())
+    heard = " ".join(re.findall(r"[a-z0-9]+", prompt.lower()))
+    return len(said) >= 2 and f" {' '.join(said)} " in f" {heard} "  # whole words: "One." isn't "iPhone"
 
 
 class Transcriber:

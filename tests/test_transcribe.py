@@ -323,3 +323,19 @@ class TestTranscribeChunks:
 def test_sound_labels_in_asterisks_are_removed():
     assert clean_text("*Drums*") == "" and clean_text("*repeat* *repeat*") == ""
     assert clean_text("Hello *music* world") == "Hello world"
+
+
+class TestNamesAndEchoes:
+    @pytest.mark.parametrize("raw, expected", [
+        ("Open chat GBT and git hub", "Open ChatGPT and GitHub"), ("I watched it on you tube", "I watched it on YouTube"),
+        ("my linked in profile", "my LinkedIn profile"), ("I got linked in to the call", "I got linked in to the call"),
+        ("go to chat gbt dot com", "go to chatgpt.com"), ("email bob dot com", "email bob dot com"),
+        ("I will get up early", "I will get up early"),
+    ])
+    def test_names_fixed(self, raw, expected):
+        assert clean_text(raw) == expected
+
+    def test_prompt_echo(self):
+        from mispr.transcribe import DICTATION_VOCABULARY, echoes
+        assert echoes("ChatGPT, GitHub, YouTube.", DICTATION_VOCABULARY)
+        assert not echoes("One.", DICTATION_VOCABULARY) and not echoes("Open GitHub please", DICTATION_VOCABULARY)

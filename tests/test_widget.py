@@ -2019,8 +2019,12 @@ class TestSiteTabCommand:
         monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"bundle_id": "com.apple.Safari"})
         monkeypatch.setattr(W.apps, "running_bundle_ids", lambda: [])
         monkeypatch.setattr(W.apps, "list_tabs", lambda family, app: [(1, 1, "https://youtube.com", "Y")])
+        opened = []
+        monkeypatch.setattr(W.apps, "open_site", lambda domain, app: opened.append((domain, app)))
         assert controller._find_site_tab("youtube", 3, {}) == ("Only 1 youtube tab open", False)
-        assert controller._find_site_tab("github", 1, {}) == ("No github tab open", False)
+        assert controller._find_site_tab("github", 1, {}) == ("Opened github.com", True)  # a popular site: opened
+        assert opened == [("github.com", "Safari")]
+        assert controller._find_site_tab("zzqx", 1, {}) == ("No zzqx tab open", False)
 
     def test_needs_a_browser(self, controller, monkeypatch):
         monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {"bundle_id": "com.apple.finder"})
