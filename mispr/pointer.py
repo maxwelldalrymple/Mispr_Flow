@@ -247,3 +247,35 @@ def mouse_position():
     import Quartz
     point = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
     return float(point.x), float(point.y)
+
+
+def drag(start, end, steps=20, post=None, pause=time.sleep):
+    """Press at `start`, move to `end` in small steps (so apps see a drag), and let go."""
+    import Quartz
+    post = post or (lambda event: Quartz.CGEventPost(Quartz.kCGHIDEventTap, event))
+    button = Quartz.kCGMouseButtonLeft
+    post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventMouseMoved, start, button))
+    post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDown, start, button))
+    pause(0.08)
+    for i in range(1, steps + 1):
+        point = (start[0] + (end[0] - start[0]) * i / steps, start[1] + (end[1] - start[1]) * i / steps)
+        post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseDragged, point, button))
+        pause(0.01)
+    post(Quartz.CGEventCreateMouseEvent(None, Quartz.kCGEventLeftMouseUp, end, button))
+
+
+def press_menu_extra(name):
+    """Click a menu-bar item of Control Center by its label: "Clock" opens Notification Center,
+    "Control Center" opens Control Center. True if pressed."""
+    import ApplicationServices as AS
+    from AppKit import NSWorkspace
+    pid = next((a.processIdentifier() for a in NSWorkspace.sharedWorkspace().runningApplications()
+                if a.bundleIdentifier() == "com.apple.controlcenter"), None)
+    if pid is None:
+        return False
+    app = AS.AXUIElementCreateApplication(pid)
+    for item in _ax(_ax(app, "AXExtrasMenuBar"), "AXChildren") or []:
+        label = " ".join(str(_ax(item, a) or "") for a in ("AXDescription", "AXTitle", "AXIdentifier")).lower()
+        if name.lower() in label or (name == "Clock" and "clock" in label):
+            return AS.AXUIElementPerformAction(item, "AXPress") == 0
+    return False

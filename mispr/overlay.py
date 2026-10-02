@@ -37,11 +37,21 @@ def badge_rects(frames, screen_height, font_size=BADGE_FONT):
     return out
 
 
+def centered_badges(frames, screen_height, font_size=BADGE_FONT):
+    """Badges in the middle of each frame (grid squares), bigger, in window coordinates."""
+    out = []
+    for i, (x, y, w, h) in enumerate(frames, 1):
+        width, height = 18 + 9 * len(str(i)), font_size + 12
+        out.append((x + (w - width) / 2, screen_height - y - h / 2 - height / 2, width, height))
+    return out
+
+
 class _BadgeView(NSView):
     def initWithFrame_(self, frame):
         self = objc.super(_BadgeView, self).initWithFrame_(frame)
         if self is not None:
             self.badges = []
+            self.outlines = []
         return self
 
     def isFlipped(self):
@@ -50,6 +60,13 @@ class _BadgeView(NSView):
     def drawRect_(self, rect):
         font = NSFont.boldSystemFontOfSize_(BADGE_FONT)
         attrs = {NSFontAttributeName: font, NSForegroundColorAttributeName: NSColor.whiteColor()}
+        for x, y, w, h in self.outlines:  # grid squares
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(*ACCENT, 0.08).set()
+            NSBezierPath.fillRect_(NSMakeRect(x, y, w, h))
+            NSColor.colorWithCalibratedRed_green_blue_alpha_(*ACCENT, 0.85).set()
+            border = NSBezierPath.bezierPathWithRect_(NSMakeRect(x + 0.5, y + 0.5, w - 1, h - 1))
+            border.setLineWidth_(1.5)
+            border.stroke()
         for i, (x, y, w, h) in enumerate(self.badges, 1):
             NSColor.colorWithCalibratedWhite_alpha_(0, 0.25).set()
             NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(x + 0.5, y - 1, w, h), h / 2, h / 2).fill()
@@ -89,12 +106,14 @@ class NumberOverlay:
         self.view = _BadgeView.alloc().initWithFrame_(((0, 0), screen.size))
         self.window.setContentView_(self.view)
 
-    def show(self, targets):
+    def show(self, targets, outlines=False):
+        """Badges on `targets`; with `outlines`, their frames drawn too (the grid)."""
         if self.window is None:
             self._make()
         self.targets = list(targets)
         height = NSScreen.screens()[0].frame().size.height
-        self.view.badges = badge_rects([t.frame for t in self.targets], height)
+        self.view.badges = (centered_badges if outlines else badge_rects)([t.frame for t in self.targets], height)
+        self.view.outlines = [(x, height - y - h, w, h) for x, y, w, h in (t.frame for t in self.targets)] if outlines else []
         self.view.setNeedsDisplay_(True)
         self.window.orderFrontRegardless()
 

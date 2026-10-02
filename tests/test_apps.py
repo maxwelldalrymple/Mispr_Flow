@@ -546,7 +546,7 @@ class TestMenuCommands:
              ("edit", "undo", 4), ("file", "move to trash", 5), ("view", "show sidebar", 6)]
 
     @pytest.mark.parametrize("said, expected", [
-        ("click save", ("menu", "save")), ("press show sidebar", ("menu", "show sidebar")),
+        ("click save", ("click", "save", "left", 1)), ("press show sidebar", ("click", "show sidebar", "left", 1)),
         ("file new window", ("menu", "file new window")), ("edit find", ("menu", "edit find")),
     ])
     def test_parse(self, said, expected):

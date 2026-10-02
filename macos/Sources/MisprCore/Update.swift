@@ -7,6 +7,8 @@ public struct Release: Equatable {
     public let dmg: URL
     public let signature: URL
     public let page: URL?
+    /// A beta (GitHub "pre-release"): offered in Settings, never installed automatically.
+    public var beta: Bool = false
 }
 
 /// The pieces of automatic updates that don't touch the system: reading GitHub's answer,
@@ -17,6 +19,8 @@ public struct Release: Equatable {
 /// out against the public key below, so a swapped file on GitHub, or anywhere in between, is refused.
 public enum Update {
     public static let latestURL = URL(string: "https://api.github.com/repos/maxwelldalrymple/Mispr_Flow/releases/latest")!
+    /// Every recent release, stable and beta.
+    public static let releasesURL = URL(string: "https://api.github.com/repos/maxwelldalrymple/Mispr_Flow/releases?per_page=30")!
     /// The public half of ~/.config/mispr-flow/update-signing-key.pem.
     public static let publicKey = "8pAbV5YsCHSk4CduRDIR3etCMbgAHGlolm8jwA0c5fY="
     /// How often to look for a new version (about 5 times a day), and how soon after launch.
@@ -25,11 +29,30 @@ public enum Update {
     /// Where downloads may come from (GitHub and its file servers), always HTTPS.
     static let allowedHosts: Set<String> = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"]
 
-    /// The release in GitHub's "latest release" JSON, if it has a signed DMG.
+    /// The release in GitHub's "latest release" JSON, if it's a stable one with a signed DMG.
     public static func parse(_ data: Data) -> Release? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = object["tag_name"] as? String,
-              object["draft"] as? Bool != true, object["prerelease"] as? Bool != true,
+              let release = release(object), !release.beta else { return nil }
+        return release
+    }
+
+    /// What to do with GitHub's list of releases (`releasesURL`), for a Mac on `current`:
+    /// `stable` is the newest stable release newer than `current` (installed automatically);
+    /// `beta` is the newest beta newer than both `current` and every stable release (offered only).
+    public static func choose(_ data: Data, current: String) -> (stable: Release?, beta: Release?) {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return (nil, nil) }
+        let releases = list.compactMap(release)
+        let newestStable = releases.filter { !$0.beta }.max { isNewer($1.version, than: $0.version) }
+        let stable = newestStable.flatMap { isNewer($0.version, than: current) ? $0 : nil }
+        let floor = [current, newestStable?.version].compactMap { $0 }
+        let beta = releases.filter { r in r.beta && floor.allSatisfy { isNewer(r.version, than: $0) } }
+            .max { isNewer($1.version, than: $0.version) }
+        return (stable, beta)
+    }
+
+    /// One release object from GitHub's JSON, if it isn't a draft and has a signed DMG.
+    static func release(_ object: [String: Any]) -> Release? {
+        guard let tag = object["tag_name"] as? String, object["draft"] as? Bool != true,
               let assets = object["assets"] as? [[String: Any]] else { return nil }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         func asset(_ name: String) -> URL? {
@@ -41,22 +64,34 @@ public enum Update {
         let name = "Mispr-Flow-\(version).dmg"
         guard let dmg = asset(name), let signature = asset(name + ".sig") else { return nil }
         return Release(version: version, dmg: dmg, signature: signature,
-                       page: (object["html_url"] as? String).flatMap(URL.init(string:)))
+                       page: (object["html_url"] as? String).flatMap(URL.init(string:)),
+                       beta: object["prerelease"] as? Bool == true || version.contains("-"))
     }
 
     public static func isAllowed(_ url: URL) -> Bool {
         url.scheme == "https" && allowedHosts.contains(url.host ?? "")
     }
 
-    /// "1.10.0" is newer than "1.9.2"; missing parts count as 0.
+    /// "1.10.0" is newer than "1.9.2"; missing parts count as 0. A beta ("1.3.0-beta.2") comes
+    /// before its release ("1.3.0") and after the betas numbered below it.
     public static func isNewer(_ candidate: String, than current: String) -> Bool {
-        func parts(_ v: String) -> [Int] { v.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 } }
-        let a = parts(candidate), b = parts(current)
-        for i in 0..<max(a.count, b.count) {
-            let x = i < a.count ? a[i] : 0, y = i < b.count ? b[i] : 0
+        func split(_ v: String) -> (core: [Int], beta: Int?) {
+            let pieces = v.split(separator: "-", maxSplits: 1).map(String.init)
+            let core = pieces[0].split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
+            let beta = pieces.count > 1 ? (Int(pieces[1].filter(\.isNumber)) ?? 0) : nil
+            return (core, beta)
+        }
+        let a = split(candidate), b = split(current)
+        for i in 0..<max(a.core.count, b.core.count) {
+            let x = i < a.core.count ? a.core[i] : 0, y = i < b.core.count ? b.core[i] : 0
             if x != y { return x > y }
         }
-        return false
+        switch (a.beta, b.beta) {
+        case (nil, nil): return false
+        case (nil, _): return true  // the release beats its betas
+        case (_, nil): return false
+        case let (x?, y?): return x > y
+        }
     }
 
     /// True if `signature` (base64 text, as in the .sig file) is the maintainer's signature of
