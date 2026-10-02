@@ -22,7 +22,7 @@ MIN_SECONDS = 0.3  # shorter than this is a slip, not speech
 SILENCE_PEAK = 0.01  # below this the mic heard nothing; whisper would hallucinate
 
 # Non-speech annotations whisper emits, e.g. [BLANK_AUDIO], (music), [typing].
-_ANNOTATION = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+_ANNOTATION = re.compile(r"\[[^\]]*\]|\([^)]*\)|\*[^*\n]{1,40}\*")  # [Music], (laughs), *Drums*
 _SPACES = re.compile(r"\s+")
 
 
@@ -75,8 +75,35 @@ def split_points(audio, rate=SAMPLE_RATE, every=12.0, search=4.0, frame=0.1):
     return bounds
 
 
+# Names Whisper often mishears: "chat GBT", "git hub". Fixed in every transcript.
+_NAMES = [
+    (re.compile(r"\bchat\s*-?\s*g\.?\s*[bp]\.?\s*t\b\.?", re.I), "ChatGPT"),
+    (re.compile(r"\b(?:git|get)\s*-?\s*hub\b", re.I), "GitHub"),
+    (re.compile(r"\byou\s*-?\s*tube\b", re.I), "YouTube"),
+    (re.compile(r"\blinked\s*-?\s*in\b(?=\s+(?:profile|post|message|messages|page|account|connections?|feed|learning)\b)|\blinkedin\b", re.I), "LinkedIn"),
+    (re.compile(r"\bg\s*-?\s*mail\b", re.I), "Gmail"),
+    (re.compile(r"\bmac\s*os\b", re.I), "macOS"),
+    (re.compile(r"\bi\s*phone\b", re.I), "iPhone"),
+]
+# Primes Whisper toward the right spelling of common names when dictating.
+DICTATION_VOCABULARY = "ChatGPT, GitHub, YouTube, LinkedIn, Gmail, Google Docs, Slack, Notion, Figma, macOS, iPhone."
+
+
+def fix_names(text):
+    for pattern, name in _NAMES:
+        text = pattern.sub(name, text)
+    return text
+
+
 def clean_text(text):
-    return _SPACES.sub(" ", _ANNOTATION.sub("", text)).strip()
+    from .sites import fix_addresses
+    return fix_addresses(fix_names(_SPACES.sub(" ", _ANNOTATION.sub("", text)).strip()))
+
+
+def echoes(text, prompt):
+    """True when Whisper just repeated its prompt back (it can, on near-silence)."""
+    said = " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+    return bool(said) and said in " ".join(re.findall(r"[a-z0-9]+", prompt.lower()))
 
 
 class Transcriber:
@@ -137,7 +164,7 @@ class Transcriber:
             started = self.clock()
             speech_s = speech(audio) if speech else None
             raw = "" if speech_s is not None and speech_s < SPEECH_MIN_SECONDS else self._transcribe(audio, prompt)
-            if raw and phantom(raw, speech_s, len(audio) / SAMPLE_RATE):
+            if raw and (phantom(raw, speech_s, len(audio) / SAMPLE_RATE) or (prompt and echoes(raw, prompt))):
                 raw = ""
             text, info = post(raw) if (post and raw) else (raw, None)
             AppHelper.callAfter(on_done, text, raw, info, self.clock() - started)
@@ -156,8 +183,8 @@ class Transcriber:
                 piece = audio[a:b]
                 speech_s = speech(piece) if speech else None
                 raw = ("" if speech_s is not None and speech_s < SPEECH_MIN_SECONDS
-                       else self._transcribe(piece, before[-CHUNK_PROMPT_CHARS:]))
-                if raw and phantom(raw, speech_s, (b - a) / SAMPLE_RATE):
+                       else self._transcribe(piece, f"{DICTATION_VOCABULARY} {before[-CHUNK_PROMPT_CHARS:]}".strip()))
+                if raw and (phantom(raw, speech_s, (b - a) / SAMPLE_RATE) or echoes(raw, DICTATION_VOCABULARY)):
                     raw = ""
                 text, info = post(raw) if (post and raw) else (raw, None)
                 before = raw or before

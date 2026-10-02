@@ -67,6 +67,18 @@ def combo_mask(trigger):
     return sum(COMBO_FLAGS[m] for m in trigger["mods"])
 
 
+KEY_RETURN = 36
+# The Auto-Enter key: press it to turn Auto-Enter on or off. Default ⌃⌥Return.
+DEFAULT_AUTO_ENTER_KEY = {"kind": "combo", "mods": ["control", "option"], "keycode": KEY_RETURN, "label": "⌃⌥↩"}
+
+
+def normalize_toggle_trigger(trigger):
+    """The Auto-Enter key: a key with modifiers ({"kind": "combo", ...}), or None (off/unusable)."""
+    if not isinstance(trigger, dict) or trigger.get("kind") != "combo" or trigger.get("keycode") is None:
+        return None
+    return normalize_combo(trigger)
+
+
 def normalize_switch_trigger(trigger, dictation=None):
     """The app switcher key, or None when it's off, malformed, fn, or the dictation key itself."""
     if not isinstance(trigger, dict) or trigger.get("kind") not in ("modifier", "key", "combo"):
@@ -121,7 +133,7 @@ class FnMonitor:
     """
 
     def __init__(self, on_down, on_up, on_combo, on_key=None, trigger=None, on_note=None,
-                 on_switch=None, switch_trigger=None):
+                 on_switch=None, switch_trigger=None, on_toggle=None, toggle_trigger=None):
         self.on_down, self.on_up, self.on_combo = on_down, on_up, on_combo
         self.on_key = on_key
         self.on_note = on_note  # ⌥M: new meeting note
@@ -131,6 +143,9 @@ class FnMonitor:
         self.on_switch = on_switch
         self.switch_trigger = normalize_switch_trigger(switch_trigger, self.trigger)
         self.switch_down = False
+        # The Auto-Enter key: on_toggle() once per press. Off when toggle_trigger is None.
+        self.on_toggle = on_toggle
+        self.toggle_trigger = normalize_toggle_trigger(toggle_trigger)
         self._swallowed_keys = set()  # swallow the key-up of keys whose key-down we took
         self.active = False  # True when fn presses are swallowed
         self._tap = None
@@ -155,6 +170,15 @@ class FnMonitor:
             self.switch_down = False
             AppHelper.callAfter(self.on_switch, "combo")  # abandon a press on the old key
         self.switch_trigger = trigger
+
+    def set_toggle_trigger(self, trigger):
+        """Change (or turn off, with None) the Auto-Enter key."""
+        self.toggle_trigger = normalize_toggle_trigger(trigger)
+
+    def _is_toggle(self, event, keycode):
+        t = self.toggle_trigger
+        return (t is not None and self.on_toggle is not None and keycode == t["keycode"]
+                and Quartz.CGEventGetFlags(event) & _ALL_COMBO_FLAGS == combo_mask(t))
 
     def _switch_edge(self, event_type, event):
         """For the switch key: "down", "up", "repeat" (held key-repeat), or None (another key)."""
@@ -288,6 +312,13 @@ class FnMonitor:
                 if self.active:
                     self._swallowed_keys.add(keycode)
                     return None  # ⌥M would otherwise type "µ"
+                return event
+            if self._is_toggle(event, keycode):  # the Auto-Enter key: on/off, and the app never sees it
+                if not Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
+                    AppHelper.callAfter(self.on_toggle)
+                if self.active:
+                    self._swallowed_keys.add(keycode)
+                    return None
                 return event
             if self.fn_down:
                 AppHelper.callAfter(self.on_combo)

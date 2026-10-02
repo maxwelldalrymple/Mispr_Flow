@@ -992,13 +992,14 @@ CHROMIUM_SCRIPTABLE = {"com.google.Chrome": "Google Chrome", "com.google.Chrome.
 SAFARI_SCRIPTABLE = {"com.apple.Safari": "Safari", "com.apple.SafariTechnologyPreview": "Safari Technology Preview"}
 
 _LIST_TABS = {
-    "chromium": ('tell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
-                 'repeat with t from 1 to count tabs of window w\nset out to out & w & tab & t & tab & '
-                 '(URL of tab t of window w) & tab & (title of tab t of window w) & linefeed\nend repeat\n'
+    # The separator is set outside the tell block: inside it, "tab" means a browser tab, not ⇥.
+    "chromium": ('set sep to character id 9\ntell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
+                 'repeat with t from 1 to count tabs of window w\nset out to out & w & sep & t & sep & '
+                 '(URL of tab t of window w) & sep & (title of tab t of window w) & linefeed\nend repeat\n'
                  'end repeat\nreturn out\nend tell'),
-    "safari": ('tell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
-               'repeat with t from 1 to count tabs of window w\nset out to out & w & tab & t & tab & '
-               '(URL of tab t of window w) & tab & (name of tab t of window w) & linefeed\nend repeat\n'
+    "safari": ('set sep to character id 9\ntell application "{app}"\nset out to ""\nrepeat with w from 1 to count windows\n'
+               'repeat with t from 1 to count tabs of window w\nset out to out & w & sep & t & sep & '
+               '(URL of tab t of window w) & sep & (name of tab t of window w) & linefeed\nend repeat\n'
                'end repeat\nreturn out\nend tell'),
 }
 _SELECT_TAB = {
@@ -1038,6 +1039,9 @@ SITE_ALIASES = {"gmail": "mail google", "google mail": "mail google", "google dr
                 "twitter": "x", "chat gpt": "chatgpt", "claude": "claude", "linked in": "linkedin"}
 
 
+SITE_GUESS_MIN = 0.6  # how close a misheard site name must be to an open tab's to be assumed
+
+
 def site_tabs(site, tabs):
     """The tabs whose site is `site` ("github", "you tube", "google docs"), in order: the web
     address first (its name, then a sound-alike), else the page title."""
@@ -1057,7 +1061,31 @@ def site_tabs(site, tabs):
             by_sound.append(entry)
         elif len(want) >= 3 and want in re.sub(r"[^a-z0-9]", "", (entry[3] or "").lower()):
             by_title.append(entry)
-    return by_host or by_sound or by_title
+    if by_host or by_sound or by_title:
+        return by_host or by_sound or by_title
+    # A misheard popular site ("linkdin", "net flicks"): its tabs.
+    from .sites import guess
+    domain = guess(site)
+    if domain:
+        hits = [e for e in tabs if _host(e[2]) == domain or _host(e[2]).endswith("." + domain)]
+        if hits:
+            return hits
+    # Nothing matched: assume the open site whose name is spelled closest ("you two" -> youtube).
+    scored = []
+    for entry in tabs:
+        host = _host(entry[2])
+        name = re.sub(r"[^a-z0-9]", "", host.rsplit(".", 1)[0].split(".")[-1]) if host else ""
+        if len(name) >= 3:
+            scored.append((difflib.SequenceMatcher(None, want, name).ratio(), entry))
+    best = max((score for score, _ in scored), default=0)
+    return [entry for score, entry in scored if score == best] if best >= SITE_GUESS_MIN else []
+
+
+def open_site(domain, app, run=None):
+    """Open https://<domain> in a new tab of `app` (the browser in front)."""
+    import subprocess
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, timeout=5))
+    run(["open", "-a", app, f"https://{domain}"])
 
 
 def select_tab(family, app, window, tab, run=None):

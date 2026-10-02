@@ -318,3 +318,8 @@ class TestTranscribeChunks:
         pieces = []
         t.transcribe_chunks_async(speech, [(0, 16000)], lambda *a: pieces.append(a), lambda s: None, speech=lambda a: 0.0)
         assert pieces[0][1] == "" and model.seen == []
+
+
+def test_sound_labels_in_asterisks_are_removed():
+    assert clean_text("*Drums*") == "" and clean_text("*repeat* *repeat*") == ""
+    assert clean_text("Hello *music* world") == "Hello world"

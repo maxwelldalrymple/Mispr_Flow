@@ -39,6 +39,9 @@ final class AppModel: ObservableObject {
     @Published var notesError: String?
     @Published private(set) var settingsError: String?
     let note = NoteModel()
+    let updater = Updater()
+    /// Set after an automatic update, shown once: "Updated to 1.2.0".
+    @Published var updatedTo: String?
     let profile: Profile
     @Published var settingsSection: SettingsModal.Section = .profile
     /// Set by AppDelegate: shows the note side window.
@@ -68,6 +71,13 @@ final class AppModel: ObservableObject {
         }.store(in: &cancellables)
         engine.meetingEvents.sink { [weak self] event in self?.note.handle(event) }.store(in: &cancellables)
         note.engine = engine
+        updater.enabled = { [weak self] in self?.setting("auto_update") ?? true }
+        updater.busy = { [weak self] in
+            guard let self else { return false }
+            return self.engine.dictating || self.engine.meetingActive
+        }
+        updater.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+        if Updater.justUpdated(to: updater.current) { updatedTo = updater.current }
         note.meetingsDir = { [weak self] in self?.meetingsDir }
         note.incognito = { [weak self] in self?.setting("incognito") ?? false }
         note.onSaved = { [weak self] in self?.reloadRecordings() }
@@ -224,6 +234,19 @@ final class AppModel: ObservableObject {
     var nicknames: [String: String] { settingsFile.nicknames }
 
     /// The app switcher key (nil turns it off).
+    var autoEnterKey: DictationKey? { settingsFile.autoEnterKey }
+
+    func setAutoEnterKey(_ key: DictationKey?) {
+        do {
+            try settingsFile.setAutoEnterKey(key)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the shortcut: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
+
     func setSwitchKey(_ key: DictationKey?) {
         do {
             try settingsFile.setSwitchKey(key)

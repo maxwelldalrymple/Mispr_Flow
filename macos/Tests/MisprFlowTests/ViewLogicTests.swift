@@ -305,3 +305,23 @@ final class TourTests: XCTestCase {
         XCTAssertEqual(tall.width, 224)  // beside a spot that fills the height
     }
 }
+
+final class AutoEnterKeyPickerTests: XCTestCase {
+    func testModifiersPlusReturn() {
+        let pick = KeyRecorder.pickAutoEnter(keyDown: true, keyCode: 36, characters: "\r", flags: [.control, .option])
+        XCTAssertEqual(pick, .choose(DictationKey(kind: .combo, keycode: 36, label: "⌃⌥↩", mods: ["control", "option"]), warning: nil))
+    }
+
+    func testAKeyAloneIsRefusedAndEscCancels() {
+        if case .refuse = KeyRecorder.pickAutoEnter(keyDown: true, keyCode: 36, characters: "\r", flags: []) {} else { XCTFail() }
+        XCTAssertEqual(KeyRecorder.pickAutoEnter(keyDown: true, keyCode: 53, characters: nil, flags: []), .cancel)
+        XCTAssertEqual(KeyRecorder.pickAutoEnter(keyDown: false, keyCode: 58, characters: nil, flags: [.option]), .ignore)
+    }
+
+    func testUpdateStatusWords() {
+        XCTAssertEqual(UpdateStatusText.describe(.upToDate("1.1.0"), blocker: nil), "Up to date (1.1.0).")
+        XCTAssertEqual(UpdateStatusText.describe(.idle, blocker: "Move Mispr Flow to Applications to get updates"),
+                       "Move Mispr Flow to Applications to get updates")
+        XCTAssertTrue(UpdateStatusText.describe(.waiting("1.2.0"), blocker: nil).contains("not dictating"))
+    }
+}

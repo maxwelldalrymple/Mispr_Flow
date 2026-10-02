@@ -25,6 +25,8 @@ public enum EngineEvent: Equatable {
     case openNote(start: Bool)
     /// A meeting recording started or stopped (from the note window or the widget's pill).
     case meeting(active: Bool)
+    /// Dictation started or finished (recording or working on the words): updates wait for false.
+    case busy(Bool)
     /// Two voices turned out to be the same person: relabel `speaker`'s lines as `into`.
     case speakersMerged(meeting: String, speaker: Int, into: Int)
     /// The user finished the setup window: show the main window and the first-run tour.
@@ -83,6 +85,9 @@ public enum EngineEvent: Equatable {
         case "meeting":
             guard let active = object["active"] as? Bool else { return nil }
             return .meeting(active: active)
+        case "busy":
+            guard let busy = object["busy"] as? Bool else { return nil }
+            return .busy(busy)
         default:
             return .unknown(event)
         }

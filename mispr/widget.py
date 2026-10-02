@@ -55,14 +55,14 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
-from . import apps, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
+from . import apps, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import ENTER_DELAY, RESTORE_AFTER, copy_text, paste_text, press_enter, type_text
+from .paste import ENTER_DELAY, RESTORE_AFTER, copy_text, paste_text, press_enter, send_with_command, type_text
 from .threads import start_daemon
-from .transcribe import Transcriber, split_points
+from .transcribe import DICTATION_VOCABULARY, Transcriber, split_points
 from .levels import FakeLevelSource
 from .screens import active_screen
 
@@ -75,6 +75,7 @@ CANCELLED = "cancelled"
 MEETING = "meeting"
 MISTAKE = "mistake"
 SETUP = "setup"
+BUSY_STATES = (HOLD, HANDSFREE, PROCESSING, MEETING)  # recording or working on your words
 
 RECORDING_STATES = (HOLD, HANDSFREE, MEETING)
 
@@ -285,6 +286,7 @@ class WidgetController:
         # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
+        self.on_busy = lambda busy: None  # the Swift app waits for not-busy before installing an update
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
         self.mic_saved = None  # the mic's level while "mute mic" has it at 0
 
@@ -344,6 +346,8 @@ class WidgetController:
         if new == self.state:
             return
         log(f"state {self.state} -> {new}")
+        if (new in BUSY_STATES) != (self.state in BUSY_STATES):
+            self.on_busy(new in BUSY_STATES)  # the app holds updates while you're dictating
         self.state = new
         self.seq += 1
         self.state_since = time.monotonic()
@@ -396,6 +400,14 @@ class WidgetController:
             return
         self.on_saved(path)
         return path
+
+    def toggle_auto_enter(self):
+        """The Auto-Enter key: flip Auto-Enter, save it, and say so (badge, chime, notice)."""
+        current = settings.load()
+        current.auto_enter = not current.auto_enter
+        settings.save(current)
+        self.reload_settings()
+        self.on_settings_changed()  # the app's top-bar button follows
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
@@ -453,6 +465,7 @@ class WidgetController:
             self.recorder.audio(),
             lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
             post=self._post_processor(),
+            prompt=DICTATION_VOCABULARY,  # spell ChatGPT, GitHub, YouTube… right
             speech=self._speech_seconds,
         )
 
@@ -533,7 +546,7 @@ class WidgetController:
         else:
             if self.settings.auto_enter:  # once, after the last piece is in
                 AppHelper.callLater(max(0.0, run["free_at"] - time.monotonic() - RESTORE_AFTER - PIECE_GAP) + ENTER_DELAY,
-                                    press_enter)
+                                    press_enter, send_with_command((run["target"] or {}).get("url")))
             self.sounds.play(sounds.PASTE)
             self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
         self._wipe(run["reason"])
@@ -566,7 +579,8 @@ class WidgetController:
                 # Incognito types the words in directly so they never pass through the clipboard.
                 (type_text if incognito else paste_text)(text)
                 if self.settings.auto_enter:
-                    AppHelper.callLater(ENTER_DELAY, press_enter)  # send it, so you can just talk
+                    # send it, so you can just talk (⌘Return where Return is a new line: LinkedIn, Gmail)
+                    AppHelper.callLater(ENTER_DELAY, press_enter, send_with_command((target or {}).get("url")))
                 self.sounds.play(sounds.PASTE)
                 status = storage.PASTED
             # The worker is done with the audio view: save it (unless Incognito), then wipe.
@@ -756,6 +770,10 @@ class WidgetController:
             total += len(matches)
         if total:
             return (f"Only {total} {site} tab{'' if total == 1 else 's'} open", False)
+        domain = sites.guess(site)
+        if domain:  # a popular site that isn't open yet: open it in the browser in front
+            apps.open_site(domain, apps.scriptable_browser(browsers[0])[1])
+            return (f"Opened {domain}", True)
         return (f"No {site} tab open", False)
 
     def _do_switch_command(self, text):

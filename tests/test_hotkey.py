@@ -493,3 +493,39 @@ class TestSwitchKey:
         e = ev(96)
         m.active = True
         assert cb(m, KEY_DOWN, e) is e
+
+
+class TestAutoEnterKey:
+    """⌃⌥Return (by default) turns Auto-Enter on or off; the app in front never sees it."""
+
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.on_toggle = lambda: monitor.calls.append("toggle")
+        monitor.set_toggle_trigger(hotkey.DEFAULT_AUTO_ENTER_KEY)
+        return monitor
+
+    def test_press_toggles_and_is_swallowed(self, m):
+        assert cb(m, KEY_DOWN, ev(hotkey.KEY_RETURN, CTRL | OPT)) is None
+        assert cb(m, KEY_UP, ev(hotkey.KEY_RETURN)) is None
+        assert m.calls == ["toggle"]
+
+    def test_return_alone_or_with_other_keys_types_as_usual(self, m):
+        for flags in (0, CMD, CTRL, OPT, CTRL | OPT | SHIFT):
+            e = ev(hotkey.KEY_RETURN, flags)
+            assert cb(m, KEY_DOWN, e) is e
+        assert "toggle" not in m.calls
+
+    def test_held_key_toggles_once(self, m):
+        cb(m, KEY_DOWN, ev(hotkey.KEY_RETURN, CTRL | OPT))
+        cb(m, KEY_DOWN, ev(hotkey.KEY_RETURN, CTRL | OPT, repeat=1))
+        assert m.calls == ["toggle"]
+
+    def test_off(self, m):
+        m.set_toggle_trigger(None)
+        e = ev(hotkey.KEY_RETURN, CTRL | OPT)
+        assert cb(m, KEY_DOWN, e) is e and "toggle" not in m.calls
+
+    @pytest.mark.parametrize("trigger", [None, {"kind": "key", "keycode": 36}, {"kind": "combo", "mods": ["control"], "keycode": None},
+                                         {"kind": "combo", "mods": [], "keycode": 36}])
+    def test_only_a_key_with_modifiers_is_usable(self, trigger):
+        assert hotkey.normalize_toggle_trigger(trigger) is None

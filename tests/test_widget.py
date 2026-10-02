@@ -842,7 +842,7 @@ class TestSoundCues:
 
     def test_auto_enter_presses_return_after_pasting(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(controller.pasted[:]))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(controller.pasted[:]))
         controller.settings.auto_enter = True
         controller.begin_handsfree()
         controller.finish()
@@ -851,7 +851,7 @@ class TestSoundCues:
 
     def test_auto_enter_also_works_when_incognito_types(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(True))
         controller.settings.auto_enter = controller.settings.incognito = True
         controller.begin_handsfree()
         controller.finish()
@@ -860,7 +860,7 @@ class TestSoundCues:
 
     def test_auto_enter_never_presses_return_without_a_text_box(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(True))
         monkeypatch.setattr(W.context, "focused_text_target", lambda: (W.context.NO, "Finder"))
         controller.settings.auto_enter = True
         controller.begin_handsfree()
@@ -870,7 +870,7 @@ class TestSoundCues:
 
     def test_no_return_unless_auto_enter_is_on(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(True))
         assert controller.settings.auto_enter is False  # off by default
         controller.begin_handsfree()
         controller.finish()
@@ -1862,7 +1862,7 @@ class TestTerminalDictation:
 
     def test_auto_enter_runs_the_command_in_terminals_too(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(True))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(True))
         controller.settings.auto_enter = True
         controller.begin_handsfree(); controller.finish()
         controller._on_transcribed("ls -a", "ls flag a", {"terminal": True, "applied": False, "ms": 0, "rejected": "x"}, 1.0, "finished")
@@ -1934,7 +1934,7 @@ class TestLongDictationInPieces:
 
     def test_auto_enter_only_after_the_last_piece(self, controller, monkeypatch):
         enters = []
-        monkeypatch.setattr(W, "press_enter", lambda: enters.append(controller.pasted[:]))
+        monkeypatch.setattr(W, "press_enter", lambda *command: enters.append(controller.pasted[:]))
         controller.settings.auto_enter = True
         _, _, on_chunk, on_done, _ = self.start(controller)
         on_chunk(0, "One.", "one", None)
@@ -2081,3 +2081,35 @@ class TestSystemAndMenuCommands(TestAppSwitcher):
         monkeypatch.setattr(W.apps, "menu_items", lambda pid: [])
         self.say(controller, clock, "Zebra.")
         assert controller.notice[0].startswith("No app called")
+
+
+class TestAutoEnterKeyAndSendKey:
+    def test_the_key_flips_auto_enter_saves_and_says_so(self, controller, monkeypatch):
+        saved, changed = [], []
+        current = W.settings.Settings()
+        monkeypatch.setattr(W.settings, "load", lambda: current)
+        monkeypatch.setattr(W.settings, "save", lambda s: saved.append(s.auto_enter))
+        controller.on_settings_changed = lambda: changed.append(True)
+        controller.toggle_auto_enter()
+        assert saved == [True] and changed == [True] and controller.settings.auto_enter
+        assert controller.notice[0] == "Auto-Enter on ⏎" and controller.sounds.played[-1] == "lock"
+
+    def test_linkedin_gets_command_return(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda command=False: enters.append(command))
+        monkeypatch.setattr(W.context, "frontmost", lambda include_page=True: {
+            "app": "Google Chrome", "bundle_id": "com.google.Chrome", "url": "https://www.linkedin.com/messaging/", "page_title": "x"})
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert enters == [True]
+
+    def test_other_sites_get_plain_return(self, controller, monkeypatch):
+        enters = []
+        monkeypatch.setattr(W, "press_enter", lambda command=False: enters.append(command))
+        controller.settings.auto_enter = True
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert enters == [False]

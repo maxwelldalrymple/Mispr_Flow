@@ -91,7 +91,19 @@ struct EngineBanner: View {
         case .starting:
             Text("Starting dictation engine…").font(.system(size: 12)).foregroundStyle(Theme.secondary).padding(.top, 14)
         default:
-            EmptyView()
+            if let version = model.updatedTo {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                    Text("Updated to \(version)").font(.system(size: 12))
+                    Link("What's new", destination: URL(string: "https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v\(version)")!)
+                        .font(.system(size: 12))
+                    Button { model.updatedTo = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).foregroundStyle(Theme.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(Capsule().fill(Theme.card))
+                .padding(.top, 10)
+            }
         }
     }
 }
