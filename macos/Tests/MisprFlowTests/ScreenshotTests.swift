@@ -53,7 +53,8 @@ final class ScreenshotTests: XCTestCase {
     func shot<V: View>(_ folder: String, _ name: String, _ view: V, size: CGSize = mainSize) throws {
         Palette.current = Palette.all.first { $0.id == theme }!
         t.model.profile.themeID = theme
-        let rep = render(view, model: t.model, size: size, appearance: NSAppearance(named: dark ? .darkAqua : .aqua))
+        // The window background: pages shot on their own (not inside RootView) are otherwise see-through.
+        let rep = render(view.background(Theme.content), model: t.model, size: size, appearance: NSAppearance(named: dark ? .darkAqua : .aqua))
         XCTAssertTrue(hasContent(rep), "\(name) rendered blank")
         let dir = out.appendingPathComponent(folder)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
