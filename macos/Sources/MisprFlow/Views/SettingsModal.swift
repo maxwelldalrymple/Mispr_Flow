@@ -176,6 +176,10 @@ struct SystemSettings: View {
             SettingRow(title: "Setup guide", detail: "Permissions, model downloads, and the fn walkthrough.") {
                 Button("Open…") { model.engine.send(.openSetup) }
             }
+            Divider()
+            SettingRow(title: "Tutorial", detail: "A quick tour of every page, in 8 steps.") {
+                Button("Show") { model.startTour() }
+            }
         }
     }
 }

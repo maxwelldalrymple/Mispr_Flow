@@ -2,6 +2,21 @@
 
 A SwiftUI app (`macos/`). The Dock icon opens it; it hosts the Python engine in the background.
 
+## First-run tour
+
+The first time the window opens after setup, an 8-step tour outlines each part and explains it, with a card showing "3 of 8" and **Back**, **Next** and **Skip tour**:
+
+1. the dictation key;
+2. history;
+3. Auto-Enter and Incognito;
+4. voice commands;
+5. Insights;
+6. meeting notes (New note);
+7. Prompts;
+8. Settings.
+
+Finishing or skipping marks it done. Replay it from **Help → Show Tutorial**, or Settings → System → Tutorial. Code: `Views/Tutorial.swift` (`TourStep`, `TourOverlay`, `.tourSpot(_:)`).
+
 ## Top bar
 
 - **Auto-Enter (⏎)** and **Incognito** switches, each with a hover explanation.

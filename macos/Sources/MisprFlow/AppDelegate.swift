@@ -32,6 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Window
 
+    /// Help → Show Tutorial: the tour again, from the start.
+    @objc func showTutorial() {
+        showMainWindow()
+        model.startTour()
+    }
+
     @objc func showMainWindow() {
         if window == nil { window = makeMainWindow() }
         window?.makeKeyAndOrderFront(nil)
@@ -106,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(item("Mispr Flow", #selector(showMainWindow), "0"))
         main.addItem(submenu(windowMenu))
         NSApp.windowsMenu = windowMenu
+
+        let help = NSMenu(title: "Help")
+        help.addItem(item("Show Tutorial", #selector(showTutorial), ""))
+        main.addItem(submenu(help))
+        NSApp.helpMenu = help
         return main
     }
 

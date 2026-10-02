@@ -11,6 +11,7 @@ struct RootView: View {
                 Sidebar().frame(width: 212).transition(.move(edge: .leading))
             }
             page
+                .tourSpot(.page)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(RoundedRectangle(cornerRadius: 16).fill(Theme.content))
                 .overlay {
@@ -43,8 +44,11 @@ struct RootView: View {
         .overlay(alignment: .top) { EngineBanner() }
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 12) {
-                AutoEnterButton()
-                IncognitoSwitch()
+                HStack(spacing: 12) {
+                    AutoEnterButton()
+                    IncognitoSwitch()
+                }
+                .tourSpot(.topBar)
                 Button { model.openProfile() } label: { AvatarView(size: 24) }
                     .buttonStyle(.plain).help("Profile")
             }
@@ -53,6 +57,8 @@ struct RootView: View {
         .overlay {
             if model.showSettings { SettingsModal() }
         }
+        .overlayPreferenceValue(TourAnchors.self) { anchors in TourOverlay(anchors: anchors) }
+        .onAppear { model.startTourIfNew() }
         .ignoresSafeArea()
         .foregroundStyle(Theme.text)
     }
@@ -108,6 +114,7 @@ struct Sidebar: View {
             }
             Spacer()
             SidebarItem(title: "Settings", symbol: "gearshape", selected: false) { model.showSettings = true }
+                .tourSpot(.settings)
             SidebarItem(title: "Help", symbol: "questionmark.circle", selected: false) {
                 NSWorkspace.shared.open(URL(string: "https://github.com/maxwelldalrymple/Mispr_Flow#readme")!)
             }

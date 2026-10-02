@@ -32,6 +32,12 @@ final class Profile: ObservableObject {
     private let defaults: UserDefaults
     private let photoURL: URL
 
+    /// The first-run tour was finished or skipped.
+    var tutorialDone: Bool {
+        get { defaults.bool(forKey: "profile.tutorialDone") }
+        set { defaults.set(newValue, forKey: "profile.tutorialDone") }
+    }
+
     init(defaults: UserDefaults = .standard, photoURL customPhoto: URL? = nil) {
         self.defaults = defaults
         self.photoURL = customPhoto ?? FileManager.default.homeDirectoryForCurrentUser

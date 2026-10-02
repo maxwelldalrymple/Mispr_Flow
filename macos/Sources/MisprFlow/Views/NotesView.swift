@@ -38,6 +38,7 @@ struct NotesView: View {
                             Label("New note", systemImage: "plus").font(.system(size: 13, weight: .medium))
                         }
                         .buttonStyle(OutlineButton())
+                        .tourSpot(.newNote)
                     }
                     .padding(.bottom, 22)
                     HStack(spacing: 22) {
