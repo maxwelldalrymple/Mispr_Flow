@@ -6,7 +6,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/docs/screenshots"
-rm -rf "$OUT"
+rm -rf "$OUT"/*/  # the image folders; README.md stays
 MISPR_SCREENSHOTS="$OUT" swift test --package-path "$ROOT/macos" --filter ScreenshotTests
 # The Python renders, renamed the same way: <window>_<page>_<state>_<theme>-<light|dark>.png.
 mkdir -p "$OUT/setup-window" "$OUT/floating-widget"
