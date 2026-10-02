@@ -450,3 +450,44 @@ def test_setup_offers_finder_control_as_optional():
     finder = next(p for p in onboarding.default_permissions() if p.key == "finder")
     assert not finder.required and finder.pane == "Privacy_Automation" and finder.title == "Control Finder"
     assert finder.check() in (True, False)
+
+
+class TestSetupStaysInFront:
+    """Coming back from System Settings, the setup window must not end up behind the app's window."""
+
+    class App:
+        def __init__(self, bundle):
+            self.bundle = bundle
+
+        def bundleIdentifier(self):
+            return self.bundle
+
+    def window(self, monkeypatch):
+        flow, perms, _ = make_flow()
+        w = SetupWindow(flow)
+        fronted = []
+        monkeypatch.setattr(w, "bring_front", lambda: fronted.append(True))
+        return w, perms, fronted
+
+    def test_the_app_coming_back_brings_setup_forward(self, monkeypatch):
+        w, _, fronted = self.window(monkeypatch)
+        w.on_app_activated(self.App(o.APP_BUNDLE_ID))
+        w.on_app_activated(self.App("com.apple.systempreferences"))  # System Settings itself: leave it be
+        w.on_app_activated(None)
+        assert fronted == [True]
+
+    def test_granting_a_permission_brings_setup_forward(self, monkeypatch):
+        w, perms, fronted = self.window(monkeypatch)
+        perms.granted["microphone"] = True
+        w.refresh()
+        assert fronted == [True]
+
+    def test_watching_starts_with_show_and_stops_with_close(self):
+        flow, _, _ = make_flow()
+        w = SetupWindow(flow)
+        w.show()
+        assert w.watching
+        w.close()
+        assert not w.watching and not w.window.isVisible()
+        w.bring_front()  # hidden: stays hidden
+        assert not w.window.isVisible()

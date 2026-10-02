@@ -281,6 +281,12 @@ class _Actions(NSObject):
     def refresh_(self, timer):
         self.owner.refresh()
 
+    def appActivated_(self, note):
+        self.owner.on_app_activated(note.userInfo().get("NSWorkspaceApplicationKey"))
+
+
+APP_BUNDLE_ID = "io.github.maxwelldalrymple.MisprFlow"  # the SwiftUI app that hosts this engine
+
 
 class SetupWindow:
     WIDTH, HEIGHT = 560, 520
@@ -294,6 +300,7 @@ class SetupWindow:
         self.actions = _Actions.alloc().init()
         self.actions.owner = self
         self.timer = None
+        self.watching = False  # for the app coming back to the front (from System Settings)
         self.window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, self.WIDTH, self.HEIGHT),
             NSWindowStyleMaskTitled | NSWindowStyleMaskClosable, NSBackingStoreBuffered, False,
@@ -317,12 +324,33 @@ class SetupWindow:
             self.timer = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
                 0.5, self.actions, "refresh:", None, True)
             NSRunLoop.currentRunLoop().addTimer_forMode_(self.timer, NSRunLoopCommonModes)
+        if not self.watching:
+            from AppKit import NSWorkspace
+            NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
+                self.actions, "appActivated:", "NSWorkspaceDidActivateApplicationNotification", None)
+            self.watching = True
 
     def close(self):
         if self.timer is not None:
             self.timer.invalidate()
             self.timer = None
+        if self.watching:
+            from AppKit import NSWorkspace
+            NSWorkspace.sharedWorkspace().notificationCenter().removeObserver_(self.actions)
+            self.watching = False
         self.window.orderOut_(None)
+
+    def bring_front(self):
+        """Keep the setup window above the app's main window. It belongs to the engine (another
+        process), so when macOS brings Mispr Flow back, e.g. after allowing a permission in System
+        Settings, the main window would otherwise cover it."""
+        if self.window.isVisible():
+            self.window.orderFrontRegardless()
+
+    def on_app_activated(self, app):
+        """Mispr Flow (the app hosting this engine) came to the front: put setup back on top."""
+        if app is not None and app.bundleIdentifier() == APP_BUNDLE_ID:
+            self.bring_front()
 
     # Events
     def on_continue(self):
@@ -479,6 +507,7 @@ class SetupWindow:
         granted = self.flow.granted()
         if any(granted[k] and not self.was_granted.get(k) for k in granted):
             self.play(sounds.SUCCESS)  # a checkmark just turned on
+            self.bring_front()  # back from System Settings: setup, not the main window, in front
         self.was_granted = granted
         for key, (status, button) in self.rows.items():
             status.setHidden_(not granted[key])
