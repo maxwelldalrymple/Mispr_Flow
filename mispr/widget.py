@@ -353,8 +353,7 @@ class WidgetController:
     def _drop_cancelled(self):
         # A new recording replaces one still waiting in the Undo toast.
         if self.state == CANCELLED:
-            self._save(storage.CANCELLED, "")
-            self._wipe("cancelled (superseded)")
+            self._wipe("cancelled (superseded)")  # cancelled means gone: never saved
 
     def _note_context(self):
         self.rec_started_at, self.rec_ended_at = datetime.now(), None
@@ -499,7 +498,7 @@ class WidgetController:
         self.after(TOAST_SECONDS, self._expire_cancel)
 
     def _expire_cancel(self):
-        self._save(storage.CANCELLED, "")
+        """The Undo time is up (or delete was pressed): the recording is wiped, never saved."""
         self._wipe("cancelled")
         self.to_idle()
 
