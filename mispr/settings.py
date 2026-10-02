@@ -28,6 +28,9 @@ class Settings:
     app_nicknames: dict = field(default_factory=dict)
     # Set once the user finishes the first-run setup window.
     onboarded: bool = False
+    # The setup step reached, so setup resumes there if macOS quits and reopens the app
+    # (it does after some permissions, like Screen & System Audio).
+    setup_step: int = 0
 
 
 def load():

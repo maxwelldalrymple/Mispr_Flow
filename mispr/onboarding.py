@@ -165,7 +165,10 @@ class SetupFlow:
 
     def start_step(self):
         if not self.settings.onboarded:
-            return WELCOME
+            # Resume where setup was (macOS may have quit and reopened the app to apply a
+            # permission), but never past Allow access while a required permission is missing.
+            saved = max(WELCOME, min(int(getattr(self.settings, "setup_step", 0) or 0), READY))
+            return min(saved, PERMISSIONS) if self.missing_required() else saved
         if self.missing_required():
             return PERMISSIONS
         if not self.models_ready():
@@ -183,12 +186,21 @@ class SetupFlow:
     def advance(self):
         if self.step < READY and self.can_advance():
             self.step += 1
+            self._remember()
         return self.step
 
     def back(self):
         if self.step > WELCOME:
             self.step -= 1
+            self._remember()
         return self.step
+
+    def _remember(self):
+        """Save the step (into settings.json, keeping everything else) so a reopen resumes here."""
+        self.settings.setup_step = self.step
+        current = settings_mod.load()
+        current.setup_step = self.step
+        settings_mod.save(current)
 
     def finish(self):
         self.settings.onboarded = True
