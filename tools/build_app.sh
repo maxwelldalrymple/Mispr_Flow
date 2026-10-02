@@ -39,6 +39,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>Mispr Flow opens the folders you name by voice in Finder, and changes the volume when you ask. Only when you hold your voice command key.</string>
     <key>NSMicrophoneUsageDescription</key><string>Mispr Flow listens while you hold fn and turns your speech into text, entirely on this Mac.</string>
     <key>MisprProjectRoot</key><string>$ROOT</string>
     <key>MisprPython</key><string>$PYTHON</string>

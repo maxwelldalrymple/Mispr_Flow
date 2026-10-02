@@ -353,7 +353,7 @@ class TestShutdown:
             recorder, cleaner = FakeRecorder(), FakeCleaner()
 
         w = Widget()
-        app._install_shutdown("ITEM", w)
+        app._install_shutdown("ITEM", w, exit=lambda code: stopped.append(code))  # never the real os._exit
         return dict(handlers=handlers, observers=observers, removed=removed, stopped=stopped, widget=w)
 
     def test_handles_term_int_hup(self, wiring):
@@ -363,7 +363,7 @@ class TestShutdown:
         wiring["handlers"][signal.SIGTERM](signal.SIGTERM, None)
         w = wiring["widget"]
         assert w.recorder.stopped == 1 and w.recorder.buffer.closed and w.cleaner.closed == 1
-        assert wiring["removed"] == ["ITEM"] and wiring["stopped"] == [True]
+        assert wiring["removed"] == ["ITEM"] and wiring["stopped"] == [0]  # exits at once, skipping C++ destructors
 
     def test_menu_quit_releases_models_and_audio(self, wiring):
         (name, block), = wiring["observers"]
@@ -371,6 +371,7 @@ class TestShutdown:
         block(None)
         w = wiring["widget"]
         assert w.recorder.buffer.closed and w.cleaner.closed == 1
+        assert wiring["stopped"] == [0]  # then exits at once (llama.cpp's Metal teardown aborted at normal exit)
 
 
 class TestBranding:
