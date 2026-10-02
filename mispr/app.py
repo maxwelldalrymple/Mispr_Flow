@@ -1,6 +1,7 @@
 """App entry point: Dock icon, menu bar item, and the floating widget."""
 
 import fcntl
+import os
 import signal
 import sys
 import tempfile
@@ -106,9 +107,17 @@ def _single_instance_lock(path=LOCK_PATH):
     return lock  # the lock is held until the process exits
 
 
-def _install_shutdown(status_item, widget):
-    """Clean up on Quit and on kill/Ctrl-C: wipe audio, free the models (llama.cpp crashes at
-    exit otherwise), and remove the menu bar icon (macOS otherwise leaves a ghost)."""
+def _install_shutdown(status_item, widget, exit=None):
+    """Clean up on Quit and on kill/Ctrl-C: wipe audio, free the models, remove the menu bar
+    icon (macOS otherwise leaves a ghost), then exit at once. Skipping the C++ exit-time
+    destructors matters: llama.cpp's Metal backend aborts in them if a model is still loading
+    (seen when quitting right after a model download)."""
+    exit = exit or os._exit
+
+    def leave():
+        sys.stdout.flush()
+        sys.stderr.flush()
+        exit(0)
 
     def release():
         widget.recorder.stop()
@@ -118,13 +127,13 @@ def _install_shutdown(status_item, widget):
     def on_signal(signum, frame):
         release()
         NSStatusBar.systemStatusBar().removeStatusItem_(status_item)
-        AppHelper.stopEventLoop()
+        leave()
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, on_signal)
     # Quit from the menu goes through -terminate:, which exits without returning to Python.
     NSNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
-        NSApplicationWillTerminateNotification, None, None, lambda note: release()
+        NSApplicationWillTerminateNotification, None, None, lambda note: (release(), leave())
     )
 
 
