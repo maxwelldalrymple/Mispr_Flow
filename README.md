@@ -33,19 +33,21 @@ All 146 screenshots (every window, state, theme and mode) are in [docs/screensho
 
 ## Download
 
-**[Mispr-Flow-1.0.0.dmg](https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v1.0.0)** (87 MB) for Apple Silicon Macs on macOS 14 or newer. Models (about 3.1 GB) are downloaded during setup.
+**[Mispr-Flow-1.1.0.dmg](https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v1.1.0)** (87 MB) for Apple Silicon Macs on macOS 14 or newer. Models (about 3.1 GB) are downloaded during setup. From 1.1.0 on, the app updates itself (Settings → System → Automatic updates).
 
 **Verify it** before opening. The SHA-256 must match exactly:
 
 ```
-ab4fe8b9008267b8a5f1ddd96851a225fc9e228ff98174085f01910786a85c51  Mispr-Flow-1.0.0.dmg
+645df470de75edf2c5b87481233288ef8c2c452b1b7421564168e2720fabfa1b  Mispr-Flow-1.1.0.dmg
 ```
 
 ```bash
-shasum -a 256 ~/Downloads/Mispr-Flow-1.0.0.dmg
+shasum -a 256 ~/Downloads/Mispr-Flow-1.1.0.dmg
 ```
 
 **First open:** the app isn't signed with an Apple Developer ID, so macOS blocks a double-click. Drag it to Applications, then right-click it and choose **Open** (or System Settings → Privacy & Security → **Open Anyway**). The DMG holds only the app: it creates its own folders in `~/Library` on first run. Build it yourself with `tools/build_dmg.sh`.
+
+**Updates are signed:** each release also has a `.sig` file, an Ed25519 signature over the DMG's SHA-256. The app installs an update only if it matches the public key in `macos/Sources/MisprCore/Update.swift`.
 
 ## Why
 
