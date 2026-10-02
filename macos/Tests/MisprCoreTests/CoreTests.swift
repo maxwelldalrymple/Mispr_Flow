@@ -95,6 +95,15 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(config?.python.path, "/q/.venv/bin/python")
     }
 
+    func testBundledAppUsesItsOwnPythonAndEngine() {
+        let res = URL(fileURLWithPath: "/A/Mispr Flow.app/Contents/Resources")
+        let config = EngineConfig.resolve(info: ["MisprBundled": true], env: [:], resources: res)
+        XCTAssertEqual(config?.python.path, "/A/Mispr Flow.app/Contents/Resources/python/bin/python3")
+        XCTAssertEqual(config?.projectRoot.path, "/A/Mispr Flow.app/Contents/Resources/engine")
+        // A development override still wins.
+        XCTAssertEqual(EngineConfig.resolve(info: ["MisprBundled": true], env: ["MISPR_PROJECT_ROOT": "/q"], resources: res)?.projectRoot.path, "/q")
+    }
+
     func testNoConfigFails() {
         XCTAssertNil(EngineConfig.resolve(info: [:], env: [:]))
         let engine = Engine(config: nil)

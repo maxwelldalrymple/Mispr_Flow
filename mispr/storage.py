@@ -20,8 +20,9 @@ import numpy as np
 
 
 def _data_root():
-    """The project folder when running from source; Application Support once packaged as an .app."""
-    if getattr(sys, "frozen", False):
+    """The project folder when running from source; Application Support once packaged (the DMG
+    build puts this package inside the .app, which must stay unmodified)."""
+    if getattr(sys, "frozen", False) or ".app/Contents/" in str(Path(__file__).resolve()):
         return Path.home() / "Library" / "Application Support" / "Mispr_Flow"
     return Path(__file__).resolve().parent.parent
 

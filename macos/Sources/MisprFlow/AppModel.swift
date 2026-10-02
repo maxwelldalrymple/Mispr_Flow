@@ -50,7 +50,8 @@ final class AppModel: ObservableObject {
     /// Tests pass their own engine (no process) and profile (scratch preferences).
     init(engine injected: Engine? = nil, profile customProfile: Profile? = nil) {
         let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Mispr Flow/engine.log")
-        self.engine = injected ?? Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment),
+        self.engine = injected ?? Engine(config: EngineConfig.resolve(info: Bundle.main.infoDictionary ?? [:], env: ProcessInfo.processInfo.environment,
+                                                                       resources: Bundle.main.resourceURL),
                                        logURL: logs)
         self.profile = customProfile ?? Profile()
         engine.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
