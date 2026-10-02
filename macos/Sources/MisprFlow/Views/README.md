@@ -10,4 +10,5 @@
 | `NoteWindow.swift` | The meeting side panel (`NoteModel` + `NoteView`): recording, live transcript, tabs, ask, Save note / Discard card, the Save / Discard / Keep editing question, split screen, `SourceChip` |
 | `PromptsView.swift` | Edit and try the cleanup prompt |
 | `SettingsModal.swift` | Settings: Profile, General (dictation key, app switcher key, `NicknameList`, mic, cleanup), System (login, sounds, setup), Privacy; `KeyRecorder` and `ComboPicker` |
+| `Tutorial.swift` | The first-run tour: `TourStep.all` (8 steps), `TourOverlay` (dims everything but the outlined spot; card with Back / Next / Skip), `.tourSpot(_:)` to mark what to outline |
 | `Theme.swift` | Colours and fonts for the 6 themes |

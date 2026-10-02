@@ -7,7 +7,7 @@ preferences when helping. Paths are relative to the repository root
 (github.com/maxwelldalrymple/Mispr_Flow). Links inside each section are relative to that section's own
 file, named in the comment above it.
 
-_Built 2026-10-01 20:41 from 25 files by tools/build_knowledge_base.py._
+_Built 2026-10-01 20:58 from 25 files by tools/build_knowledge_base.py._
 
 
 ---
@@ -938,6 +938,21 @@ Patterns across all meetings: count, time in meetings, your talk share, open act
 
 A SwiftUI app (`macos/`). The Dock icon opens it; it hosts the Python engine in the background.
 
+## First-run tour
+
+The first time the window opens after setup, an 8-step tour outlines each part and explains it, with a card showing "3 of 8" and **Back**, **Next** and **Skip tour**:
+
+1. the dictation key;
+2. history;
+3. Auto-Enter and Incognito;
+4. voice commands;
+5. Insights;
+6. meeting notes (New note);
+7. Prompts;
+8. Settings.
+
+Finishing or skipping marks it done. Replay it from **Help → Show Tutorial**, or Settings → System → Tutorial. Code: `Views/Tutorial.swift` (`TourStep`, `TourOverlay`, `.tourSpot(_:)`).
+
 ## Top bar
 
 - **Auto-Enter (⏎)** and **Incognito** switches, each with a hover explanation.
@@ -1548,6 +1563,7 @@ Tests: `macos/Tests/MisprFlowTests/`.
 | `NoteWindow.swift` | The meeting side panel (`NoteModel` + `NoteView`): recording, live transcript, tabs, ask, Save note / Discard card, the Save / Discard / Keep editing question, split screen, `SourceChip` |
 | `PromptsView.swift` | Edit and try the cleanup prompt |
 | `SettingsModal.swift` | Settings: Profile, General (dictation key, app switcher key, `NicknameList`, mic, cleanup), System (login, sounds, setup), Privacy; `KeyRecorder` and `ComboPicker` |
+| `Tutorial.swift` | The first-run tour: `TourStep.all` (8 steps), `TourOverlay` (dims everything but the outlined spot; card with Back / Next / Skip), `.tourSpot(_:)` to mark what to outline |
 | `Theme.swift` | Colours and fonts for the 6 themes |
 
 

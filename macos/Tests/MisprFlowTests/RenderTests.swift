@@ -47,6 +47,15 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(HomeView.tab(records, commands: false).map(\.id), ["a"])
     }
 
+    func testEveryTourStepDraws() {
+        for i in TourStep.all.indices {
+            t.model.startTour()
+            for _ in 0..<i { t.model.moveTour(1) }
+            check(RootView())  // the page, the dimmed overlay with its outline, and the card
+        }
+        t.model.endTour()
+    }
+
     func testHomeEmpty() {
         let empty = TestApp()
         drainMain()

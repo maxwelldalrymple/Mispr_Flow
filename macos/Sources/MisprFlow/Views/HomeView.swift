@@ -20,11 +20,11 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 22) {
             greeting.padding(.top, 36)
             HStack(alignment: .top, spacing: 20) {
-                history.frame(maxWidth: .infinity)
+                history.frame(maxWidth: .infinity).tourSpot(.history)
                 VStack(spacing: 14) {
                     statsCard
                     tipsCard
-                    commandsCard
+                    commandsCard.tourSpot(.commands)
                 }
                 .frame(width: 232)
             }
@@ -50,6 +50,7 @@ struct HomeView: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(Theme.key.opacity(0.85)))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.black.opacity(0.25)))
                 .foregroundStyle(Color.black.opacity(0.8))
+                .tourSpot(.fnKey)
         }
     }
 

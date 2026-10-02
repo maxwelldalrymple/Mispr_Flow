@@ -226,3 +226,68 @@ final class ComboPickerTests: XCTestCase {
         XCTAssertEqual(NicknameList.installedApps(in: [dir.path, "/nope"]), ["arc", "Zed"])
     }
 }
+
+/// The first-run tour: 8 steps across the pages; Next, Back, Skip; once done it stays done.
+final class TourTests: XCTestCase {
+    func testEightStepsAcrossThePages() {
+        XCTAssertEqual(TourStep.all.count, 8)
+        XCTAssertEqual(Set(TourStep.all.map(\.page)), Set(Page.allCases))
+        XCTAssertEqual(TourStep.all.first?.spot, .fnKey)
+        XCTAssertEqual(TourStep.all.last?.spot, .settings)
+    }
+
+    func testNextBackAndDone() {
+        let t = TestApp()
+        t.model.startTour()
+        XCTAssertEqual(t.model.tourStep, 0)
+        t.model.moveTour(-1)  // Back on the first step stays
+        XCTAssertEqual(t.model.tourStep, 0)
+        for i in 1..<8 {
+            t.model.moveTour(1)
+            XCTAssertEqual(t.model.tourStep, i)
+            XCTAssertEqual(t.model.page, TourStep.all[i].page)  // each step shows its page
+        }
+        t.model.moveTour(1)  // Done
+        XCTAssertNil(t.model.tourStep)
+        XCTAssertTrue(t.model.profile.tutorialDone)
+        XCTAssertEqual(t.model.page, .home)
+    }
+
+    func testSkipEndsItForGood() {
+        let t = TestApp()
+        t.model.setSetting("onboarded", true)
+        t.model.startTourIfNew()
+        XCTAssertEqual(t.model.tourStep, 0)
+        t.model.moveTour(1)
+        t.model.endTour()  // Skip tour
+        XCTAssertNil(t.model.tourStep)
+        t.model.startTourIfNew()
+        XCTAssertNil(t.model.tourStep)  // not again by itself
+        t.model.startTour()  // Help → Show Tutorial
+        XCTAssertEqual(t.model.tourStep, 0)
+    }
+
+    func testOnlyStartsByItselfAfterSetup() {
+        let t = TestApp()
+        t.model.startTourIfNew()
+        XCTAssertNil(t.model.tourStep)  // setup not finished yet
+    }
+
+    func testStartingClosesSettings() {
+        let t = TestApp()
+        t.model.showSettings = true
+        t.model.startTour()
+        XCTAssertFalse(t.model.showSettings)
+    }
+
+    func testCardPlacement() {
+        let size = CGSize(width: 1000, height: 700), card = CGSize(width: 320, height: 170)
+        XCTAssertEqual(TourOverlay.cardOrigin(near: nil, in: size, card: card), CGSize(width: 340, height: 265))  // centred
+        XCTAssertEqual(TourOverlay.cardOrigin(near: CGRect(x: 100, y: 50, width: 200, height: 40), in: size, card: card),
+                       CGSize(width: 40, height: 104))  // below, kept 16 pt inside
+        XCTAssertEqual(TourOverlay.cardOrigin(near: CGRect(x: 600, y: 600, width: 100, height: 60), in: size, card: card).height,
+                       600 - 14 - 170)  // above when there's no room below
+        let tall = TourOverlay.cardOrigin(near: CGRect(x: 10, y: 10, width: 200, height: 680), in: size, card: card)
+        XCTAssertEqual(tall.width, 224)  // beside a spot that fills the height
+    }
+}

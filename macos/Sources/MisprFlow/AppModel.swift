@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     let engine: Engine
     @Published var page: Page = .home
     @Published var showSettings = false
+    /// The tour step on screen (index into `TourStep.all`), or nil when the tour isn't showing.
+    @Published var tourStep: Int?
     @Published private(set) var recordings: [Recording] = []
     @Published private(set) var stats = Stats()
     @Published private(set) var more = MoreInsights()
@@ -98,6 +100,35 @@ final class AppModel: ObservableObject {
                 self.more = more
             }
         }
+    }
+
+    // MARK: - Tour
+
+    func startTour() {
+        showSettings = false
+        tourStep = 0
+        page = TourStep.all[0].page
+    }
+
+    /// The first time the window opens after setup.
+    func startTourIfNew() {
+        if tourStep == nil && !profile.tutorialDone && setting("onboarded") { startTour() }
+    }
+
+    /// Next (+1) or Back (-1); past the last step ends the tour.
+    func moveTour(_ by: Int) {
+        guard let step = tourStep else { return }
+        let next = step + by
+        guard next < TourStep.all.count else { return endTour() }
+        tourStep = max(0, next)
+        page = TourStep.all[max(0, next)].page
+    }
+
+    /// Done or Skip tour: it won't start by itself again (Help → Show Tutorial replays it).
+    func endTour() {
+        tourStep = nil
+        profile.tutorialDone = true
+        page = .home
     }
 
     func delete(_ record: Recording) {
