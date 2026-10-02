@@ -76,10 +76,12 @@ func drainMain(_ seconds: TimeInterval = 0.2) {
 /// Lay out and draw a SwiftUI view offscreen (so every `body` actually runs); returns the
 /// rendered image so tests can check something was drawn.
 @discardableResult
-func render<V: View>(_ view: V, model: AppModel, size: CGSize = CGSize(width: 1180, height: 800)) -> NSBitmapImageRep {
+func render<V: View>(_ view: V, model: AppModel, size: CGSize = CGSize(width: 1180, height: 800),
+                     appearance: NSAppearance? = nil) -> NSBitmapImageRep {
     let host = NSHostingView(rootView: view.environmentObject(model).environmentObject(model.note))
     host.frame = NSRect(origin: .zero, size: size)
     let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+    window.appearance = appearance  // nil: the system's light or dark
     window.contentView = host
     host.layoutSubtreeIfNeeded()
     drainMain(0.05)
