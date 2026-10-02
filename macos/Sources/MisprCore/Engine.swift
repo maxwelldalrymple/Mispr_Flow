@@ -42,6 +42,8 @@ public final class Engine: ObservableObject {
     public let tried = PassthroughSubject<TryResult, Never>()
     /// Fires on the main thread for each saved dictation.
     public let saved = PassthroughSubject<URL, Never>()
+    /// The setup window was finished (the app opens its window and starts the tour).
+    public let setupFinished = PassthroughSubject<Void, Never>()
     /// The widget's note button or ⌥M (true: start or stop recording too).
     public let noteRequested = PassthroughSubject<Bool, Never>()
     /// Meeting results: transcribed chunks, summaries, answers.
@@ -153,6 +155,9 @@ public final class Engine: ObservableObject {
             meetingActive = active
         case .settingsChanged:
             objectWillChange.send()  // views read settings.json fresh
+        case .setupFinished:
+            objectWillChange.send()
+            setupFinished.send()
         case .unknown:
             break
         }

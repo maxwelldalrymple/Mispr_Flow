@@ -267,6 +267,20 @@ final class TourTests: XCTestCase {
         XCTAssertEqual(t.model.tourStep, 0)
     }
 
+    func testFinishingSetupOpensTheWindowAndStartsTheTour() {
+        let t = TestApp()
+        var shown = 0
+        t.model.showMain = { shown += 1 }
+        t.model.setSetting("onboarded", true)  // the engine saves this before telling the app
+        t.event(["event": "setup_finished"])
+        XCTAssertEqual(shown, 1)
+        XCTAssertEqual(t.model.tourStep, 0)
+        t.model.endTour()
+        t.event(["event": "setup_finished"])  // setup reopened later from the menu: no tour again
+        XCTAssertNil(t.model.tourStep)
+        XCTAssertEqual(shown, 2)
+    }
+
     func testOnlyStartsByItselfAfterSetup() {
         let t = TestApp()
         t.model.startTourIfNew()

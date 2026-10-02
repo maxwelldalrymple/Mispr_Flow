@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = makeMainMenu()
         model.engine.onCleanExit = { NSApp.terminate(nil) }
         model.openNote = { [weak self] in self?.noteWindow.show() }
+        model.showMain = { [weak self] in self?.showMainWindow() }
         model.profile.apply()
         model.start()
         showMainWindow()

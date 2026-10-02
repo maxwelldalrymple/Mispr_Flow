@@ -1248,3 +1248,10 @@ final class CommandHistoryTests: XCTestCase {
         XCTAssertEqual(Stats([record]).totalWords, 0)
     }
 }
+
+
+final class SetupFinishedEventTests: XCTestCase {
+    func testParses() {
+        XCTAssertEqual(EngineEvent.parse(EngineEvent.prefix + #"{"event": "setup_finished"}"#), .setupFinished)
+    }
+}
