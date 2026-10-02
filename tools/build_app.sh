@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Mispr Flow.app"
 PYTHON="$ROOT/.venv/bin/python"
-VERSION="1.1.1"
+VERSION="1.2.0"
 BUNDLE_ID="io.github.maxwelldalrymple.MisprFlow"
 
 [ -x "$PYTHON" ] || { echo "missing $PYTHON: set up the venv first (see README)" >&2; exit 1; }
