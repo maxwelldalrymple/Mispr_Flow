@@ -41,20 +41,27 @@ def parse(text):
         if m:
             return ("nickname", m["nick"].strip(), m["app"].strip())
     said = _number_words(said)
+    said = re.sub(r"\b(tab|window)\s+(" + "|".join(_ONES) + r")\b", lambda m: f"{m[1]} {_ONES[m[2]]}", said)  # "tab nine"
     for pattern, make in _SOUND:
         m = pattern.match(said)
         if m and make(m) is not None:
             return make(m)
+    m = _WINDOW_N.match(said)
+    if m:  # "window 2", "go to window one in chrome"
+        return ("window", int(m["n"]), m["app"])
+    m = _SPLIT_TAB.match(said)
+    if m:  # "tabs side by side", "split tab"
+        return ("split_tab", m["app"])
     m = _SHORTCUT.match(said)
     if m:  # "new tab", "close tab in chrome", "chrome reload", "tab 3"
         lead = r"^(?:(?:please|go|to|open|switch|then|and|a|the)\b\s*)+"
         app = next((n for n in (re.sub(lead, "", m[k] or "").strip() for k in ("app", "app2")) if n), None)
         name = m["cmd"]
-        if name.startswith(("tab ", "go to tab ", "switch to tab ")):
+        if re.fullmatch(r"(?:go to |switch to )?tab \d+", name):
             n = int(name.split()[-1])
             if not 1 <= n <= 9:
                 return None
-            name = f"tab {n}"
+            name = "last tab" if n == 9 else f"tab {n}"  # ⌘9 is always the last tab
         return ("shortcut", SHORTCUT_ALIASES.get(name, name), _FILLER.sub("", app).strip() if app else None)
     m = _QUIT.match(said)
     if m:
@@ -374,47 +381,130 @@ def set_mic_level(level, run=None):
     _osascript(f"set volume input volume {int(level)}", run)
 
 
+def _ax(el, name):
+    import ApplicationServices as AS
+    err, v = AS.AXUIElementCopyAttributeValue(el, name, None)
+    return v if err == 0 else None
+
+
+def _ax_find(el, test, depth=0):
+    """The first element under `el` (depth-first, 12 levels) that passes `test`, or None."""
+    if el is None or depth > 12:
+        return None
+    if test(el):
+        return el
+    for child in _ax(el, "AXChildren") or []:
+        hit = _ax_find(child, test, depth + 1)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _tab_menu(pid):
+    """Open the selected tab's own menu (Chrome-style browsers). Returns (tab, app element) or None."""
+    import ApplicationServices as AS
+    tab = _ax_find(_window(pid), lambda e: _ax(e, "AXRole") == "AXRadioButton" and _ax(e, "AXValue") == 1
+                   and _ax(_ax(e, "AXParent"), "AXRole") == "AXTabGroup")
+    if tab is None or AS.AXUIElementPerformAction(tab, "AXShowMenu") != 0:
+        return None
+    return tab, AS.AXUIElementCreateApplication(pid)
+
+
+def _menu_item(root, test):
+    return _ax_find(root, lambda e: _ax(e, "AXRole") == "AXMenuItem" and test(str(_ax(e, "AXTitle") or "").lower()))
+
+
 def mute_tab(pid, mute=True):
     """Chrome-style browsers: press "Mute site" (or "Unmute site") in the selected tab's menu.
     True if done, None if it was already that way (the other item is there), False if no tab menu."""
     import ApplicationServices as AS
-    def attr(el, name):
-        err, v = AS.AXUIElementCopyAttributeValue(el, name, None)
-        return v if err == 0 else None
-    def find(el, test, depth=0):
-        if el is None or depth > 12:
-            return None
-        if test(el):
-            return el
-        for child in attr(el, "AXChildren") or []:
-            hit = find(child, test, depth + 1)
-            if hit is not None:
-                return hit
-        return None
-    win = _window(pid)
-    tab = find(win, lambda e: attr(e, "AXRole") == "AXRadioButton" and attr(e, "AXValue") == 1
-               and attr(attr(e, "AXParent"), "AXRole") == "AXTabGroup")
-    if tab is None or AS.AXUIElementPerformAction(tab, "AXShowMenu") != 0:
+    opened = _tab_menu(pid)
+    if opened is None:
         return False
+    tab, root = opened
     wanted = ("mute site", "mute tab") if mute else ("unmute site", "unmute tab")
     other = ("unmute site", "unmute tab") if mute else ("mute site", "mute tab")
-    root = AS.AXUIElementCreateApplication(pid)
-    title = lambda e: str(attr(e, "AXTitle") or "").lower()
-    item = find(root, lambda e: attr(e, "AXRole") == "AXMenuItem" and title(e) in wanted)
+    item = _menu_item(root, lambda t: t in wanted)
     if item is not None:
         return AS.AXUIElementPerformAction(item, "AXPress") == 0
-    if find(root, lambda e: attr(e, "AXRole") == "AXMenuItem" and title(e) in other) is not None:
+    if _menu_item(root, lambda t: t in other) is not None:
         AS.AXUIElementPerformAction(tab, "AXCancel")  # close the menu again
         return None
+    AS.AXUIElementPerformAction(tab, "AXCancel")
     return False
 
 
+def windows(pid):
+    """The app's normal, visible windows, numbered for "window 1, 2…": left to right, then top
+    to bottom (so with two windows side by side, the left one is window 1)."""
+    from AppKit import NSPointFromCGPoint  # noqa: F401  (keeps PyObjC's CG value types loaded)
+    import ApplicationServices as AS
+    found = []
+    for win in _ax(AS.AXUIElementCreateApplication(pid), "AXWindows") or []:
+        if _ax(win, "AXSubrole") not in (None, "AXStandardWindow") or _ax(win, "AXMinimized"):
+            continue
+        pos = _ax(win, "AXPosition")
+        ok, point = AS.AXValueGetValue(pos, AS.kAXValueCGPointType, None) if pos is not None else (False, None)
+        x, y = (point.x, point.y) if ok else (0, 0)
+        found.append((round(x / 40), round(y / 40), win))  # within 40 px counts as the same column/row
+    return [win for _, _, win in sorted(found, key=lambda t: (t[0], t[1]))]
+
+
+def focus_window(pid, number):
+    """Bring the app's window `number` (1-based, see windows()) to the front. True if it exists."""
+    import ApplicationServices as AS
+    wins = windows(pid)
+    if not 1 <= number <= len(wins):
+        return False
+    win = wins[number - 1]
+    AS.AXUIElementSetAttributeValue(win, "AXMain", True)
+    return AS.AXUIElementPerformAction(win, "AXRaise") == 0
+
+
+def tile_front_two(pid, screen):
+    """Put the app's two front-most windows side by side: the one before on the left, the newest
+    on the right (after "move tab to new window"). True if there were two."""
+    import ApplicationServices as AS
+    wins = [w for w in (_ax(AS.AXUIElementCreateApplication(pid), "AXWindows") or [])
+            if _ax(w, "AXSubrole") in (None, "AXStandardWindow") and not _ax(w, "AXMinimized")]
+    if len(wins) < 2:
+        return False
+    left, right = layout(screen, "beside")
+    for win, (x, y, w, h) in ((wins[1], left), (wins[0], right)):
+        size = AS.AXValueCreate(AS.kAXValueCGSizeType, (w, h))
+        AS.AXUIElementSetAttributeValue(win, "AXSize", size)
+        AS.AXUIElementSetAttributeValue(win, "AXPosition", AS.AXValueCreate(AS.kAXValueCGPointType, (x, y)))
+        AS.AXUIElementSetAttributeValue(win, "AXSize", size)
+    return True
+
+
+def split_tab(pid):
+    """Put the current tab side by side with another: Chrome's own split view if it has it
+    ("split" returned); otherwise move the tab to a new window and tile the two windows
+    ("windows"). False if the app has no tab menu."""
+    import ApplicationServices as AS
+    opened = _tab_menu(pid)
+    if opened is None:
+        return False
+    tab, root = opened
+    item = _menu_item(root, lambda t: "split view" in t or "side by side" in t)
+    if item is not None:
+        return "split" if AS.AXUIElementPerformAction(item, "AXPress") == 0 else False
+    item = _menu_item(root, lambda t: t.startswith("move tab to new window") or t == "move to new window")
+    if item is None or AS.AXUIElementPerformAction(item, "AXPress") != 0:
+        AS.AXUIElementPerformAction(tab, "AXCancel")
+        return False
+    return "windows"
+
+
 # Keyboard shortcuts most Mac apps (and every browser) share: name -> (key code, modifiers).
-_KEY = {"up": 126, "down": 125, "t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
+_KEY = {"up": 126, "down": 125, "pageup": 116, "pagedown": 121, "`": 50, "t": 17, "w": 13, "n": 45, "r": 15, "l": 37, "f": 3, "d": 2, "[": 33, "]": 30, "tab": 48,
         "0": 29, "=": 24, "-": 27, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25}
 SHORTCUTS = {
     "new tab": ("t", "cmd"), "close tab": ("w", "cmd"), "reopen tab": ("t", "cmd shift"),
     "next tab": ("tab", "ctrl"), "previous tab": ("tab", "ctrl shift"),
+    "move tab left": ("pageup", "ctrl shift"), "move tab right": ("pagedown", "ctrl shift"),
+    "next window": ("`", "cmd"), "previous window": ("`", "cmd shift"),
     "new window": ("n", "cmd"), "new private window": ("n", "cmd shift"), "close window": ("w", "cmd shift"),
     "reload": ("r", "cmd"), "back": ("[", "cmd"), "forward": ("]", "cmd"), "address bar": ("l", "cmd"),
     "find": ("f", "cmd"), "bookmark": ("d", "cmd"), "zoom in": ("=", "cmd"), "zoom out": ("-", "cmd"),
@@ -423,6 +513,11 @@ SHORTCUTS = {
     **{f"tab {n}": (str(n), "cmd") for n in range(1, 9)},
 }
 SHORTCUT_ALIASES = {
+    "tab left": "previous tab", "left tab": "previous tab", "tab to the left": "previous tab",
+    "tab right": "next tab", "right tab": "next tab", "tab to the right": "next tab",
+    "move this tab left": "move tab left", "move the tab left": "move tab left",
+    "move this tab right": "move tab right", "move the tab right": "move tab right",
+    "other window": "next window", "switch window": "next window", "last window": "previous window",
     "open tab": "new tab", "open a new tab": "new tab", "a new tab": "new tab", "close this tab": "close tab",
     "close the tab": "close tab", "reopen closed tab": "reopen tab", "reopen the tab": "reopen tab",
     "undo close tab": "reopen tab", "next": "next tab", "previous": "previous tab", "prev tab": "previous tab",
@@ -435,8 +530,13 @@ SHORTCUT_ALIASES = {
     "exit full screen": "full screen", "close this window": "close window",
 }
 _SHORTCUT_WORDS = "|".join(sorted((re.escape(k) for k in list(SHORTCUTS) + list(SHORTCUT_ALIASES)), key=len, reverse=True))
-_SHORTCUT = re.compile(rf"^(?:please\s+)?(?:(?P<app>.+?)\s+)?(?P<cmd>{_SHORTCUT_WORDS}|(?:go to |switch to )?tab \d+)"
+_SHORTCUT = re.compile(rf"^(?:please\s+)?(?:(?P<app>.+?)\s+)??(?P<cmd>{_SHORTCUT_WORDS}|(?:go to |switch to )?tab \d+)"
                        rf"(?:\s+(?:in|on|for)\s+(?P<app2>.+))?$")
+_WINDOW_N = re.compile(r"^(?:please\s+)?(?:(?:go|switch)\s+to\s+)?(?:the\s+)?window\s+(?:number\s+)?(?P<n>\d{1,2})"
+                       r"(?:\s+(?:in|on|of)\s+(?P<app>.+))?$")
+_SPLIT_TAB = re.compile(r"^(?:please\s+)?(?:put\s+)?(?:(?:the|these|my)\s+)?(?:tabs?\s+side\s+by\s+side|side\s+by\s+side\s+tabs?|"
+                        r"split\s+(?:the\s+|this\s+)?(?:tab|tabs|view|screen\s+tabs)|split\s+view)"
+                        r"(?:\s+(?:in|on)\s+(?P<app>.+))?$")
 _QUIT = re.compile(r"^(?:please\s+)?(?:quit|exit)(?:\s+(?:this\s+app|the\s+app|app|it))?(?:\s+(?P<app>.+))?$")
 
 

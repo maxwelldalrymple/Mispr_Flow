@@ -102,6 +102,7 @@ COPIED_NOTICE = "No text box · Copied to clipboard"
 INCOGNITO_NOTICE = "No text box · Incognito, nothing copied"
 SWITCH_NOTICE = "Say an app to switch to"
 SWITCH_RESULT_SECONDS = 2.5
+TILE_DELAY = 0.6  # seconds for a moved tab's new window to appear before tiling
 SHORTCUT_DELAY = 0.35  # seconds after bringing an app forward before pressing its shortcut
 INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.0)  # matches the app's Incognito purple
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
@@ -723,6 +724,30 @@ class WidgetController:
             if kind == "mute_app":
                 return self._switch_failed("macOS can't mute one app. Say “pause”, or “mute tab” in a browser")
             return self._switch_failed("No tab to mute here")
+        if kind in ("window", "split_tab"):  # "window 2", "tabs side by side"
+            name = command[2] if kind == "window" else command[1]
+            hit = find(name) if name else None
+            if name and hit is None:
+                return self._switch_failed(f"No app called “{name}”")
+            if hit:
+                apps.bring_to_front(hit[1])
+            pid = apps.pid_for(hit[1]) if hit else apps.frontmost_pid()
+            label = hit[0] if hit else "this app"
+            if not pid:
+                return self._switch_failed(f"{label} isn't open")
+            if kind == "window":
+                number = command[1]
+                if apps.focus_window(pid, number):
+                    return self._switch_done(f"Window {number} · {label}")
+                count = len(apps.windows(pid))
+                return self._switch_failed(f"{label} has {count} window{'' if count == 1 else 's'}")
+            result = apps.split_tab(pid)
+            if result == "split":
+                return self._switch_done("Tabs side by side")
+            if result == "windows":  # the tab moved to a new window: tile the two once it's there
+                AppHelper.callLater(TILE_DELAY, apps.tile_front_two, pid, apps.screen_frame())
+                return self._switch_done("Tabs side by side (two windows)")
+            return self._switch_failed("No tab to split here")
         if kind == "shortcut":  # "new tab", "close tab in chrome"
             _, shortcut, name = command
             if name is None:

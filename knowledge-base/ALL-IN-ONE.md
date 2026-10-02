@@ -7,7 +7,7 @@ preferences when helping. Paths are relative to the repository root
 (github.com/maxwelldalrymple/Mispr_Flow). Links inside each section are relative to that section's own
 file, named in the comment above it.
 
-_Built 2026-10-01 19:18 from 25 files by tools/build_knowledge_base.py._
+_Built 2026-10-01 20:41 from 25 files by tools/build_knowledge_base.py._
 
 
 ---
@@ -795,13 +795,21 @@ The widget confirms what happened ("→ Google Chrome", "Volume 55%"). The comma
 | Say | Shortcut |
 |---|---|
 | new tab / close tab / reopen tab | ⌘T / ⌘W / ⇧⌘T |
-| next tab / previous tab / tab 3 / last tab | ⌃⇥ / ⌃⇧⇥ / ⌘3 / ⌘9 |
+| next tab / previous tab (also "tab right" / "tab left") | ⌃⇥ / ⌃⇧⇥ |
+| tab 3 ("tab three"), tab 1–8 / tab 9 or last tab | ⌘3 / ⌘9 |
+| move tab left / move tab right | ⌃⇧PgUp / ⌃⇧PgDn |
+| next window / previous window | ⌘\` / ⌘⇧\` |
 | new window / close window / incognito (private) window | ⌘N / ⇧⌘W / ⇧⌘N |
 | reload ("refresh") / back / forward | ⌘R / ⌘[ / ⌘] |
 | address bar / find / bookmark | ⌘L / ⌘F / ⌘D |
 | zoom in / zoom out / reset zoom / full screen | ⌘= / ⌘- / ⌘0 / ⌃⌘F |
 
 Add "in Chrome" (or say "Chrome new tab") to bring that app forward first.
+
+| Say | Does |
+|---|---|
+| "window 2" / "go to window one in Chrome" | Brings that window of the app forward. Windows are numbered left to right, then top to bottom, so with two side by side the left one is window 1 |
+| "tabs side by side" / "split tab" / "split view" | Uses Chrome's own split view if it has one; otherwise moves the tab into its own window and puts the two windows side by side |
 
 ## Sound and media
 

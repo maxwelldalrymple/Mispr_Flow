@@ -368,3 +368,29 @@ class TestSystemHelpersSafely:
         ran = []
         apps.open_path("/Users/me/Docs", run=ran.append)
         assert ran == [["open", "/Users/me/Docs"]]
+
+
+class TestBrowserExtras:
+    """Tab left/right, moving tabs, numbered tabs and windows, side-by-side tabs."""
+
+    @pytest.mark.parametrize("said,expected", [
+        ("Tab left.", ("shortcut", "previous tab", None)), ("tab right", ("shortcut", "next tab", None)),
+        ("move tab left", ("shortcut", "move tab left", None)), ("move the tab right", ("shortcut", "move tab right", None)),
+        ("tab 3", ("shortcut", "tab 3", None)), ("Tab nine", ("shortcut", "last tab", None)),
+        ("go to tab 2 in chrome", ("shortcut", "tab 2", "chrome")),
+        ("Window 2.", ("window", 2, None)), ("go to window one in Chrome", ("window", 1, "chrome")),
+        ("next window", ("shortcut", "next window", None)), ("previous window", ("shortcut", "previous window", None)),
+        ("tabs side by side", ("split_tab", None)), ("split tab in chrome", ("split_tab", "chrome")),
+        ("split view", ("split_tab", None)),
+        ("Chrome new tab", ("shortcut", "new tab", "chrome")), ("Chrome beside VS Code", ("beside", "chrome", "vs code", None)),
+    ])
+    def test_commands(self, said, expected):
+        assert apps.parse(said) == expected
+
+    def test_new_shortcut_keys(self):
+        assert apps.SHORTCUTS["move tab left"] == ("pageup", "ctrl shift") and apps._KEY["pageup"] == 116
+        assert apps.SHORTCUTS["next window"] == ("`", "cmd") and apps._KEY["`"] == 50
+
+    def test_window_and_split_helpers_are_safe_without_windows(self):
+        assert apps.windows(999_999) == [] and apps.focus_window(999_999, 1) is False
+        assert apps.split_tab(999_999) is False and apps.tile_front_two(999_999, (0, 0, 100, 100)) is False

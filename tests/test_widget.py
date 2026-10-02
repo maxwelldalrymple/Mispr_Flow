@@ -1752,6 +1752,28 @@ class TestAppSwitcher:
         self.say(controller, clock, "Open Chrome")
         assert fronted == ["/A/Google Chrome.app"]
 
+    def test_window_number(self, controller, clock, fronted, monkeypatch, windows):
+        focused = []
+        monkeypatch.setattr(W.apps, "focus_window", lambda pid, n: focused.append((pid, n)) or n <= 2)
+        monkeypatch.setattr(W.apps, "windows", lambda pid: [1, 2])
+        self.say(controller, clock, "Window 2 in Chrome")
+        assert focused == [(11, 2)] and fronted == ["/A/Google Chrome.app"] and controller.notice[0] == "Window 2 · Google Chrome"
+        self.say(controller, clock, "window 5")
+        assert controller.notice[0] == "this app has 2 windows"
+
+    def test_tabs_side_by_side(self, controller, clock, fronted, monkeypatch, windows):
+        tiled = []
+        monkeypatch.setattr(W.apps, "tile_front_two", lambda pid, screen: tiled.append(pid))
+        monkeypatch.setattr(W.apps, "split_tab", lambda pid: "split")
+        self.say(controller, clock, "tabs side by side")
+        assert controller.notice[0] == "Tabs side by side" and tiled == []
+        monkeypatch.setattr(W.apps, "split_tab", lambda pid: "windows")  # no split view: two windows, tiled
+        self.say(controller, clock, "split tab in chrome")
+        assert tiled == [11] and controller.notice[0] == "Tabs side by side (two windows)"
+        monkeypatch.setattr(W.apps, "split_tab", lambda pid: False)
+        self.say(controller, clock, "split view")
+        assert controller.notice[0] == "No tab to split here"
+
     def test_ignored_while_busy_or_without_a_press(self, controller, clock, fronted):
         controller.switch_key("up")  # no press: nothing
         controller.begin_handsfree()
