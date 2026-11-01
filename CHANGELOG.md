@@ -2,7 +2,7 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
-## Nov 1: invisible mode (unreleased)
+## Nov 1: v1.3.0
 
 - **Invisible mode:** ⌃⌥I (changeable), "invisible mode" by voice, or Settings → General hides the pill. It can't be seen or clicked, and everything keeps working.
 - **Copy text on screen by voice:** "copy you should be able" (to the end of the passage) or "copy key press was to auto enter does" (from … through …). It reads the text from the app, close words are enough, and editable text gets highlighted. "copy all" = ⌘A ⌘C.
