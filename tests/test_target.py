@@ -61,3 +61,13 @@ def test_browser_tab_is_noted_only_for_scriptable_browsers(monkeypatch):
     monkeypatch.setattr(target, "_osascript", lambda s, timeout=3: (0, "101, 202"))
     assert target.browser_tab("com.google.Chrome") == ("101", "202")
     assert target.browser_tab("com.apple.Safari") is None
+
+
+def test_goes_to_start_unless_you_picked_a_new_box():
+    start = Spot(10, "Notes", window="w1", element="my box")
+    assert target.goes_to_start(start, now=Spot(11, "Chrome", window="w9", element=None))  # other window, no box
+    assert not target.goes_to_start(start, now=Spot(11, "Chrome", window="w9", element="chrome box"))  # a new box wins
+    assert not target.goes_to_start(start, now=Spot(10, "Notes", window="w1", element="my box"))  # still there
+    assert not target.goes_to_start(start, now=Spot(10, "Notes", window="w1", element=None))  # same window: refocus path
+    assert not target.goes_to_start(start, now=Spot(10, "Notes", window="w1", element="another box"))  # new box, same window
+    assert not target.goes_to_start(None, now=Spot(1, "x"))

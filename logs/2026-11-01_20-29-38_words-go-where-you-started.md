@@ -66,3 +66,11 @@ Chrome came to the front when the tab was added (both `open -g` and AppleScript 
 - **Before:** clicking out but staying in the window counted as "still there", so the text went to the window's main box, not the one you'd been typing in.
 - **Now:** if nothing has the cursor at the end but a box had it at the start, `_refocus` puts the cursor back in that box (AXFocused, then a check) and pastes there. The main box is used only when no box had the cursor at the start.
 - **Test:** `TestClickedOutOfTheBox`; `test_widget` passes.
+
+## The rule, as the owner put it
+
+"Where you started, unless you put the cursor in a different text input."
+- `target.goes_to_start(spot)` is used for both whole dictations and pieces.
+- A text box focused now that isn't the start box overrides the start, in any window, so it's pasted normally.
+- Otherwise, in another window or app, the text goes back to the start (background route, or held). In the same window, the usual path pastes, putting you back in your box if you'd clicked out.
+- **Tests:** `test_target` (every case of the rule), `test_widget` (a box clicked into in another app gets the words). Both pass.

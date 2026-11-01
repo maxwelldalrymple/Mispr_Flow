@@ -2509,3 +2509,15 @@ class TestClickedOutOfTheBox:
         controller.finish()
         controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
         assert focused == ["my box"] and controller.pasted == ["Hello."]
+
+
+class TestNewBoxOverrides:
+    def test_a_box_you_clicked_into_elsewhere_gets_the_words(self, controller, monkeypatch):
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(10, "Notes", window="w1", element="my box"))
+        controller.begin_handsfree()
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(11, "Chrome", window="w9", element="chrome box"))
+        sent = []
+        monkeypatch.setattr(W.spots, "insert_quietly", lambda *a: sent.append(a) or True)
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        assert controller.pasted == ["Hello."] and sent == []  # pasted where you are, not sent back

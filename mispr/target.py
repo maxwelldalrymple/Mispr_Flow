@@ -134,6 +134,19 @@ def still_there(spot, now=_NOW):
     return spot.element is None or now.element is None or spot.element == now.element
 
 
+def goes_to_start(spot, now=_NOW):
+    """True when the words should go back to where you started (in the background, or held):
+    you're in another window or app and haven't put the cursor in a new text box there. A text box
+    you've clicked into since (anywhere) overrides the start; in the same window, the usual paste
+    handles it (and puts you back in your box if you'd clicked out)."""
+    now = capture() if now is _NOW else now
+    if spot is None or now is None:
+        return False
+    if now.element is not None and now.element != spot.element:
+        return False  # you picked a new text box: it goes there
+    return not still_there(spot, now)
+
+
 def box_for(spot):
     """The text box to deliver to: the one that had the cursor, else the window's main one."""
     if spot.element is not None:

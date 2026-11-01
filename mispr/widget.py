@@ -720,7 +720,7 @@ class WidgetController:
         piece = (" " if run["texts"] else "") + text
         run["texts"].append(text)
         spot = getattr(self, "_start_spot", None)
-        if run["deferred"] or (spot is not None and not spots.still_there(spot)):
+        if run["deferred"] or (spot is not None and spots.goes_to_start(spot)):
             run["deferred"].append(piece)  # you've switched away: the rest goes back where you started
             return
         if run["where"] != context.NO:
@@ -772,7 +772,7 @@ class WidgetController:
             cleanup_note = f", cleanup {info['ms']} ms " + ("applied" if info["applied"] else f"rejected ({info['rejected']})")
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
         spot = getattr(self, "_start_spot", None)
-        if text and spot is not None and not spots.still_there(spot):
+        if text and spot is not None and spots.goes_to_start(spot):
             return self._deliver_to_start(spot, text, raw, info, reason)
         if text:
             target = context.frontmost()  # where the text is about to land
