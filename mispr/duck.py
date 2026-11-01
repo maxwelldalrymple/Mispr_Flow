@@ -1,11 +1,11 @@
 """Pause while you talk: the moment you press the dictation key, whatever is playing pauses; when
 you let go, it plays again.
 
-macOS reports which apps are sending sound to the speakers (CoreAudio's per-process output,
-macOS 14.4+; ~4 ms once loaded). If one of them is a music or video source (a browser, Apple
-Music, Spotify, VLC…), the play/pause media key is pressed straight away, exactly like the
-keyboard's own key; it's pressed again on release. When nothing is playing, nothing is pressed,
-so it can never start music on its own.
+macOS is asked whether something is playing (its "now playing" media: a video, Music, Spotify…).
+If so, it gets an explicit *pause* (not the play/pause toggle, which started paused videos), and
+an explicit *play* on release, only if this paused it. A paused or idle player is never started.
+(`playing_apps` below reports which apps send sound to the speakers; it stays as a diagnostic, but
+it can't tell a paused video from a playing one: Chrome keeps its audio open after a pause.)
 """
 
 import ctypes
@@ -75,33 +75,84 @@ def playing_apps():
         return set()
 
 
-def _press_play_pause():
-    from .apps import press_media
-    press_media("play")
+# --- macOS's media commands (what Control Center's play/pause uses): an explicit pause, never a toggle ---
+
+_MR = {}
+_PLAY, _PAUSE = 0, 1  # MRMediaRemoteCommand values
+
+
+def _media_remote():
+    """MediaRemote's functions, loaded once: (is_playing(queue, block), send_command(cmd, options))."""
+    if not _MR:
+        import objc
+        from Foundation import NSBundle
+        bundle = NSBundle.bundleWithPath_("/System/Library/PrivateFrameworks/MediaRemote.framework")
+        objc.loadBundleFunctions(bundle, _MR, [
+            ("MRMediaRemoteGetNowPlayingApplicationIsPlaying", b"v@@?", "",
+             {"arguments": {1: {"callable": {"retval": {"type": b"v"}, "arguments": {0: {"type": b"^v"}, 1: {"type": b"Z"}}}}}}),
+            ("MRMediaRemoteSendCommand", b"ZI@"),
+        ])
+        libsystem = ctypes.CDLL("/usr/lib/libSystem.dylib")
+        libsystem.dispatch_queue_create.restype = ctypes.c_void_p
+        libsystem.dispatch_queue_create.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+        _MR["queue"] = objc.objc_object(c_void_p=libsystem.dispatch_queue_create(b"mispr.media", None))
+    return _MR
+
+
+def media_is_playing(timeout=0.3):
+    """True if something is playing now (the "now playing" app: a video, Music, Spotify…). False if
+    paused, nothing, or no answer in time."""
+    try:
+        mr = _media_remote()
+        answer, done = [], threading.Event()
+
+        def got(playing):  # runs on macOS's queue: must return None and never raise (that aborts the process)
+            try:
+                answer.append(bool(playing))
+            finally:
+                done.set()
+
+        mr["MRMediaRemoteGetNowPlayingApplicationIsPlaying"](mr["queue"], got)
+        done.wait(timeout)
+        return bool(answer and answer[0])
+    except Exception:
+        return False
+
+
+def send_media(command):
+    """Pause or play the "now playing" app: an explicit command, so pause never starts anything."""
+    try:
+        return bool(_media_remote()["MRMediaRemoteSendCommand"](command, None))
+    except Exception:
+        return False
 
 
 class Ducker:
-    """duck() on press, restore() on release (restore(later=…) after a tap: it may be a double-tap)."""
+    """duck() on press, restore() on release (restore(later=…) after a tap: it may be a double-tap).
+    Pause only if something is playing; play again only what this paused."""
 
-    def __init__(self, sounding=playing_apps, media_key=_press_play_pause, timer=threading.Timer):
-        self.sounding, self.media_key, self.timer = sounding, media_key, timer
-        self.paused = False  # we pressed pause (so we press play)
+    def __init__(self, playing=media_is_playing, send=send_media, timer=threading.Timer):
+        self.playing, self.send, self.timer = playing, send, timer
+        self.paused = False  # we paused it (so we play it)
         self.pending = None  # a delayed restore
         self.lock = threading.RLock()
-        sounding()  # warm up now, so the first press is as quick as the rest
+        try:
+            _media_remote()  # load now, so the first press is as quick as the rest
+        except Exception:
+            pass
 
     def duck(self):
-        """Dictation started: if media is playing, press pause now."""
+        """Dictation started: if something is playing, pause it (an explicit pause: never a toggle)."""
         with self.lock:
             self._cancel_pending()
             if self.paused:
                 return  # still paused from a double-tap's first tap
-            if any(is_media(b) for b in self.sounding()):
-                self.media_key()
+            if self.playing():
+                self.send(_PAUSE)
                 self.paused = True
 
     def restore(self, later=0.0):
-        """Dictation over: press play if we paused. `later` waits first (a tap may be the first of two)."""
+        """Dictation over: play again, only if we paused it. `later` waits first (a tap may be the first of two)."""
         with self.lock:
             self._cancel_pending()
             if not self.paused:
@@ -111,7 +162,7 @@ class Ducker:
                 self.pending.daemon = True
                 self.pending.start()
                 return
-            self.media_key()
+            self.send(_PLAY)
             self.paused = False
 
     def recover(self):

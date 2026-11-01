@@ -1,5 +1,5 @@
-"""Pause while you talk (mispr/duck.py). The media key and the "what's playing" check are replaced:
-nothing on this Mac is paused or played by these tests."""
+"""Pause while you talk (mispr/duck.py). macOS's media commands are replaced by recorders: nothing
+on this Mac is paused or played by these tests."""
 
 from mispr import duck
 from mispr.duck import Ducker
@@ -19,47 +19,46 @@ class Timer:
         self.cancelled = True
 
 
-def make(sounding=("com.google.Chrome.helper",)):
-    keys = []
+def make(playing=True):
+    sent = []
     Timer.made = []
-    d = Ducker(sounding=lambda: set(sounding), media_key=lambda: keys.append("play/pause"), timer=Timer)
-    return d, keys
+    d = Ducker(playing=lambda: playing, send=lambda command: sent.append({0: "play", 1: "pause"}[command]), timer=Timer)
+    return d, sent
 
 
 def test_playing_media_is_paused_then_played():
-    d, keys = make()
+    d, sent = make(playing=True)
     d.duck()
-    assert keys == ["play/pause"]
+    assert sent == ["pause"]
     d.restore()
-    assert keys == ["play/pause", "play/pause"]
+    assert sent == ["pause", "play"]
 
 
-def test_nothing_playing_presses_nothing():
-    d, keys = make(sounding=("com.thebandwagonapp.app", "systemsoundserverd"))
+def test_a_paused_video_is_never_started():
+    d, sent = make(playing=False)
     d.duck()
     d.restore()
-    assert keys == []  # the key would start music
+    assert sent == []  # the old play/pause toggle started it
+
+
+def test_only_ever_explicit_pause_and_play():
+    assert duck._PAUSE == 1 and duck._PLAY == 0  # MediaRemote: never the toggle (2)
 
 
 def test_a_tap_waits_and_a_second_tap_stays_paused():
-    d, keys = make()
+    d, sent = make()
     d.duck()
     d.restore(later=1.0)  # the first tap of a double-tap
-    assert keys == ["play/pause"] and len(Timer.made) == 1
+    assert sent == ["pause"] and len(Timer.made) == 1
     d.duck()  # the second tap: hands-free
-    assert Timer.made[0].cancelled and keys == ["play/pause"]
+    assert Timer.made[0].cancelled and sent == ["pause"]
     d.restore()
-    assert keys == ["play/pause", "play/pause"]
+    assert sent == ["pause", "play"]
 
 
 def test_a_lone_tap_plays_after_the_wait():
-    d, keys = make()
+    d, sent = make()
     d.duck()
     d.restore(later=1.0)
-    Timer.made[0].fn()  # the wait ran out: no second tap
-    assert keys == ["play/pause", "play/pause"]
-
-
-def test_media_sources():
-    assert duck.is_media("com.google.Chrome.helper") and duck.is_media("com.spotify.client")
-    assert not duck.is_media("com.thebandwagonapp.app")
+    Timer.made[0].fn()
+    assert sent == ["pause", "play"]

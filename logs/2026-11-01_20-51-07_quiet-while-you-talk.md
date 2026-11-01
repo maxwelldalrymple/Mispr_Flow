@@ -55,3 +55,13 @@
   - Measured from press to key press: **3.5 ms**.
   - The per-player AppleScripts and per-tab page scripts are gone.
 - **Tests (`test_duck`, `test_widget`):** playing media paused then played; nothing playing presses nothing; a tap waits and a second tap stays paused; a lone tap plays after the wait; media-source list. All pass.
+
+## Reverse bug: a paused video started on press (owner)
+
+- **Cause:** CoreAudio still reports Chrome making sound for a while after a pause. The play/pause *toggle* was pressed and started the paused video.
+- **Fix:** macOS's MediaRemote (what Control Center uses).
+  - At press it asks "is the now-playing app playing?" (0.1 ms after loading). If so, it sends an **explicit pause** (command 1, never the toggle). On release it sends **explicit play** (0), only if it paused.
+  - A paused or idle player is never started.
+  - The callback runs on a private dispatch queue and returns None without raising. A first version returned a tuple, and PyObjC aborted the process, so that's guarded now.
+- **To confirm live:** the "is playing" answer with a video playing (newer macOS may restrict it; then it would never pause, the safe direction).
+- **Tests (`test_duck`):** playing gives pause then play; a paused video never starts; only explicit commands; double-tap; lone tap.
