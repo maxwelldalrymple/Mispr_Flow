@@ -135,7 +135,9 @@ class FakeRecorder:
 
 
 class FakeTranscriber:
-    def __init__(self):
+    ready = False  # the fast command model "not loaded": commands use the accurate one unless a test says so
+
+    def __init__(self, spec=None):
         self.calls = []  # (audio, on_done, post)
         self.loaded = 0
 
@@ -208,6 +210,20 @@ def controller(monkeypatch, clock):
     })
     monkeypatch.setattr(W.sounds, "Sounds", SpySounds)
     monkeypatch.setattr(W.audio, "input_device", lambda: ("MacBook Pro Microphone", True))
+    monkeypatch.setattr(W.pointer, "text_inputs", lambda pid: [])  # never read the real screen's text boxes
+    monkeypatch.setattr(W.spots, "capture", lambda: None)  # never read which app is really in front
+
+    class FakeDucker:  # never really mute this Mac's sound
+        def __init__(self):
+            self.events = []
+        def duck(self):
+            self.events.append("duck")
+        def restore(self, later=0.0):
+            self.events.append("restore later" if later else "restore")
+        def recover(self):
+            return False
+    monkeypatch.setattr(W, "Ducker", FakeDucker)
+    monkeypatch.setattr(W.pointer, "enable_web_accessibility", lambda pid: None)
     c = W.WidgetController()
     c.pasted, c.copied, c.typed = pasted, copied, typed
     return c

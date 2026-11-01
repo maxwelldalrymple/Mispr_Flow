@@ -201,8 +201,9 @@ def test_reload_applies_a_new_dictation_key(monkeypatch):
     class Widget:
         settings = type("S", (), {"hotkey": {"kind": "key", "keycode": 96, "label": "F5"},
                                   "switch_hotkey": {"kind": "combo", "mods": ["control", "option"]},
-                                  "auto_enter_hotkey": None})()
+                                  "auto_enter_hotkey": None, "invisible_hotkey": None})()
         reload_settings = lambda self: None
+        toggle_invisible = lambda self: None
         begin_meeting = stop_meeting = cleaner = transcriber = meeting_levels = None
 
     class Fn:
@@ -214,6 +215,9 @@ def test_reload_applies_a_new_dictation_key(monkeypatch):
 
         def set_toggle_trigger(self, trigger):
             self.toggle = trigger
+
+        def set_extra_toggle(self, name, trigger, callback):
+            self.extra = (name, trigger)
 
     fn = Fn()
     app._connect_host(object(), Widget(), lambda: None, fn)

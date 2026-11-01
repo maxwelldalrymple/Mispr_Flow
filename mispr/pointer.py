@@ -279,3 +279,195 @@ def press_menu_extra(name):
         if name.lower() in label or (name == "Clock" and "clock" in label):
             return AS.AXUIElementPerformAction(item, "AXPress") == 0
     return False
+
+
+# --- Copying text on screen by voice ("copy You should be able to … the text") ------------------
+
+TEXT_ROLES = {"AXStaticText", "AXTextArea", "AXTextField", "AXSearchField", "AXComboBox", "AXHeading", "AXCell", "AXLink"}
+EDITABLE = {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox"}
+SPAN_MIN = 0.72  # how closely the spoken words must match the words on screen
+COPY_LIMIT = 20000  # characters read from a window (long documents)
+
+
+def visible_text(pid, limit=SCAN_LIMIT, budget=SCAN_SECONDS, clock=time.monotonic):
+    """[(text, element, role)] of the front window's text, in reading order (depth first).
+    Text inside a parent that already gave its whole text isn't repeated."""
+    import ApplicationServices as AS
+    app = AS.AXUIElementCreateApplication(pid)
+    window = _ax(app, "AXFocusedWindow") or _ax(app, "AXMainWindow")
+    if window is None:
+        return []
+    runs, stack, seen, started, total = [], [window], 0, clock(), 0
+    while stack and seen < limit and clock() - started < budget and total < COPY_LIMIT:
+        el = stack.pop()
+        seen += 1
+        role = _ax(el, "AXRole") or ""
+        value = _ax(el, "AXValue") if role in TEXT_ROLES else None
+        if isinstance(value, str) and value.strip():
+            runs.append((value, el, role))
+            total += len(value)
+            if role in EDITABLE:
+                continue  # its children only repeat the same text
+        children = _ax(el, "AXChildren") or []
+        stack.extend(reversed(children))
+    return runs
+
+
+_WORD = re.compile(r"[A-Za-z0-9']+")
+
+
+def _tokens(text):
+    return [(m.group().lower().replace("'", ""), m.start(), m.end()) for m in _WORD.finditer(text)]
+
+
+def _best_window(words, tokens, start_at=0):
+    """(score, first token index, last token index) of the run of on-screen words that best
+    matches `words`, from token `start_at` on."""
+    want = " ".join(words)
+    best = (0.0, -1, -1)
+    n = len(words)
+    for size in {max(1, n - 1), n, n + 1}:
+        for i in range(start_at, len(tokens) - size + 1):
+            got = " ".join(t[0] for t in tokens[i:i + size])
+            score = difflib.SequenceMatcher(None, want, got).ratio()
+            if score > best[0]:
+                best = (score, i, i + size - 1)
+    return best
+
+
+def find_span(document, start, end=None):
+    """The text in `document` from the words `start` through the words `end` (or, with no `end`,
+    to the end of that line or paragraph). Returns (text, first char, last char, score) or None."""
+    tokens = _tokens(document)
+    first = [w.lower().replace("'", "") for w in _WORD.findall(start)]
+    if not tokens or not first:
+        return None
+    score, i, _ = _best_window(first, tokens)
+    if score < SPAN_MIN:
+        return None
+    a = tokens[i][1]
+    if end:
+        last = [w.lower().replace("'", "") for w in _WORD.findall(end)]
+        score2, _, j = _best_window(last, tokens, start_at=i)
+        if score2 < SPAN_MIN:
+            return None
+        b = tokens[j][2]
+        score = min(score, score2)
+    else:
+        b = document.find("\n", a)
+        b = len(document) if b < 0 else b
+    if b < len(document) and document[b:b + 1] in ".!?" and not end:
+        b += 1
+    if end and b < len(document) and document[b] in ".!?":
+        b += 1  # the sentence's own period comes with it
+    return document[a:b].strip(), a, b, score
+
+
+SPAN_WORDS = re.compile(r"\s+(?:to|through|thru|until|till|up\s+to)\s+")
+
+
+def copy_span(runs, spoken):
+    """What "copy …" means on this screen: (text, run index or None, (start, end) in that run, score).
+    "first words to last words" is tried at every "to"/"through" and the best reading kept."""
+    document, offsets = "", []
+    for text, _, _ in runs:
+        offsets.append(len(document))
+        document += text + "\n"
+    candidates = [(spoken, None)]
+    for m in SPAN_WORDS.finditer(spoken):
+        candidates.append((spoken[:m.start()], spoken[m.end():]))
+    best = None
+    for start, end in candidates:
+        found = find_span(document, start, end) if start.strip() and (end is None or end.strip()) else None
+        # Prefer a "from … to …" reading when it fits about as well as the whole phrase.
+        if found and (best is None or found[3] > best[3] + (0.0 if end else 0.05)):
+            best = found
+    if best is None:
+        return None
+    text, a, b, score = best
+    run = next((k for k in range(len(runs) - 1, -1, -1) if offsets[k] <= a), None)
+    inside = run is not None and b <= offsets[run] + len(runs[run][0])
+    return text, (run if inside else None), ((a - offsets[run], b - offsets[run]) if inside else None), score
+
+
+def select_range(element, start, end):
+    """Highlight characters start..end of an editable text element (best effort)."""
+    import ApplicationServices as AS
+    try:
+        value = AS.AXValueCreate(AS.kAXValueCFRangeType, (start, end - start))
+        return AS.AXUIElementSetAttributeValue(element, "AXSelectedTextRange", value) == 0
+    except Exception:
+        return False
+
+
+# --- The window's main text box (dictation with nothing focused) -----------------------------------
+
+INPUT_ROLES = {"AXTextArea", "AXTextField", "AXComboBox"}
+# Never "main": a toolbar's address bar or search, and names in lists and tables (Finder's file names
+# are text fields: pasting there would rename a file).
+SKIP_CONTAINERS = {"AXToolbar", "AXTabGroup", "AXMenuBar", "AXSheet", "AXOutline", "AXTable", "AXList", "AXBrowser",
+                   "AXRow", "AXCell", "AXGrid", "AXColumn"}
+SKIP_WORDS = ("address", "search", "url", "find", "filter")
+
+
+@dataclass
+class Input:
+    element: object
+    role: str
+    frame: tuple
+    in_page: bool  # inside web content (a browser's page, not its toolbar)
+    text: str
+
+    @property
+    def score(self):
+        x, y, w, h = self.frame
+        return (w * h) * (1.4 if self.role == "AXTextArea" else 1.0) * (1.5 if self.in_page else 1.0)
+
+
+def text_inputs(pid, limit=SCAN_LIMIT, budget=SCAN_SECONDS, clock=time.monotonic):
+    """Every visible, enabled, writable text box in the front window, with where it sits."""
+    import ApplicationServices as AS
+    app = AS.AXUIElementCreateApplication(pid)
+    window = _ax(app, "AXFocusedWindow") or _ax(app, "AXMainWindow")
+    bounds = _frame(window) if window is not None else None
+    if bounds is None:
+        return []
+    found, queue, seen, started = [], [(window, False, False)], 0, clock()
+    while queue and seen < limit and clock() - started < budget:
+        el, skipped, in_page = queue.pop(0)
+        seen += 1
+        role = _ax(el, "AXRole") or ""
+        frame = _frame(el)
+        if frame is not None and not _visible(frame, bounds):
+            continue
+        skipped = skipped or role in SKIP_CONTAINERS
+        in_page = in_page or role == "AXWebArea"
+        editable = role in INPUT_ROLES and _ax(el, "AXEnabled") is not False
+        if editable and not skipped and frame is not None and frame[2] >= 40 and frame[3] >= 14:
+            label = " ".join(str(_ax(el, a) or "") for a in ("AXDescription", "AXTitle", "AXPlaceholderValue", "AXIdentifier")).lower()
+            if not any(word in label for word in SKIP_WORDS):
+                value = _ax(el, "AXValue")
+                found.append(Input(el, role, frame, in_page, value if isinstance(value, str) else ""))
+        queue.extend((child, skipped, in_page) for child in (_ax(el, "AXChildren") or []))
+    return found
+
+
+def main_input(found):
+    """The window's main text box: the biggest writable one (a text area counts a bit more, and in
+    a browser one on the page beats the toolbar's)."""
+    return max(found, key=lambda i: i.score) if found else None
+
+
+def focus_input(target, click=None):
+    """Put the cursor at the end of `target`'s text. True if it now has focus."""
+    import ApplicationServices as AS
+    ok = AS.AXUIElementSetAttributeValue(target.element, "AXFocused", True) == 0
+    if not ok:  # some web boxes only take focus from a click
+        x, y, w, h = target.frame
+        (click or click_at)((x + min(w / 2, 40), y + h / 2))
+    try:
+        end = AS.AXValueCreate(AS.kAXValueCFRangeType, (len(target.text), 0))
+        AS.AXUIElementSetAttributeValue(target.element, "AXSelectedTextRange", end)  # after what's already there
+    except Exception:
+        pass
+    return bool(_ax(target.element, "AXFocused"))

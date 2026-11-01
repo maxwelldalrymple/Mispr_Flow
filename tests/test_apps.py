@@ -98,7 +98,8 @@ class TestWindowCommands:
         ("close", ("close", None)),
         ("Minimize the terminal.", ("minimize", "terminal")),
         ("Expand VS Code", ("expand", "vs code")),
-        ("maximize", ("expand", None)),
+        ("maximize", ("maximize", None)),  # fills the screen; "expand" is macOS full screen
+        ("exit full screen", ("unexpand", None)),
         ("Window layout Chrome beside VS Code.", ("beside", "chrome", "vs code", None)),
         ("Chrome 70% beside VS code", ("beside", "chrome", "vs code", 70)),
         ("put chrome next to terminal", ("beside", "chrome", "terminal", None)),

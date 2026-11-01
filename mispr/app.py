@@ -162,10 +162,11 @@ def _connect_host(app, widget, open_setup, fn=None):
     widget.on_setup_finished = lambda: host.send("setup_finished")  # the app shows its window and the tour
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
-    # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
-    # loaded (downloaded the first time) when a meeting first needs them.
+    # The small Whisper (shared with voice commands, loaded at start) for live previews, and the
+    # voice-fingerprint model, loaded (downloaded the first time) when a meeting first needs it.
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
-                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
+                                   preview=getattr(widget, "fast_transcriber", None) or Transcriber(PREVIEW_MODEL),
+                                   embedder=meeting.SpeakerEmbedder(),
                                    speech=getattr(widget, "speech", None) or meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     widget.on_busy = lambda busy: host.send("busy", busy=busy)
@@ -175,6 +176,7 @@ def _connect_host(app, widget, open_setup, fn=None):
             fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
             fn.set_switch_trigger(widget.settings.switch_hotkey)
             fn.set_toggle_trigger(widget.settings.auto_enter_hotkey)
+            fn.set_extra_toggle("invisible", widget.settings.invisible_hotkey, widget.toggle_invisible)
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
@@ -274,6 +276,7 @@ def main():
                           trigger=widget.settings.hotkey, on_note=widget.request_note,
                           on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey,
                           on_toggle=widget.toggle_auto_enter, toggle_trigger=widget.settings.auto_enter_hotkey)
+    fn.set_extra_toggle("invisible", widget.settings.invisible_hotkey, widget.toggle_invisible)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)

@@ -18,7 +18,7 @@ public struct CustomCommand: Equatable, Identifiable {
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true, "live_long_dictations": false]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true, "live_long_dictations": false, "invisible": false, "find_text_box": true, "duck_audio": true]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -62,6 +62,18 @@ public struct SettingsFile {
 
     public func setAutoEnterKey(_ key: DictationKey?) throws {
         try set("auto_enter_hotkey", key?.json ?? NSNull())
+    }
+
+    /// The invisible-mode key (press to hide or show the widget): ⌃⌥I until changed, nil when off.
+    public static let defaultInvisibleKey = DictationKey(kind: .combo, keycode: 34, label: "⌃⌥I", mods: ["control", "option"])
+
+    public var invisibleKey: DictationKey? {
+        guard let value = read()["invisible_hotkey"] else { return Self.defaultInvisibleKey }
+        return DictationKey(json: value)
+    }
+
+    public func setInvisibleKey(_ key: DictationKey?) throws {
+        try set("invisible_hotkey", key?.json ?? NSNull())
     }
 
     /// Spoken nicknames for apps: ["c": "Google Chrome"].

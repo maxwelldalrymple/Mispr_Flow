@@ -288,6 +288,8 @@ class TestKeys:
     @pytest.mark.parametrize("state", [W.IDLE, W.HOVER, W.HOLD, W.PROCESSING, W.MEETING, W.MISTAKE, W.SETUP])
     @pytest.mark.parametrize("key", [W.KEY_SPACE, W.KEY_RETURN, W.KEY_DELETE])
     def test_keys_pass_through_in_other_states(self, controller, state, key):
+        if state == W.PROCESSING and key == W.KEY_DELETE:
+            pytest.skip("delete cancels while processing: TestCancelWhileProcessing")
         controller.state = state
         assert controller.handle_key(key) is False
         assert controller.state == state
@@ -382,16 +384,21 @@ class TestTranscribed:
                                                            "rejected": "invented words: x"})
         assert controller.pasted == ["raw text"]
 
-    def test_cleanup_used_when_enabled(self, controller):
+    def test_cleanup_used_when_enabled(self, controller, monkeypatch):
+        seen = []
+        monkeypatch.setattr(controller.cleaner, "clean", lambda raw: seen.append(raw) or (raw, {"applied": True}))
         controller.begin_handsfree()
         controller.finish()
-        assert controller.transcriber.calls[-1][2] == controller.cleaner.clean
+        post = controller.transcriber.calls[-1][2]
+        assert post("he said quote hi end quote")[0] == "he said “hi”" and seen == ["he said “hi”"]
 
-    def test_cleanup_skipped_when_disabled(self, controller):
+    def test_cleanup_skipped_when_disabled(self, controller, monkeypatch):
+        monkeypatch.setattr(controller.cleaner, "clean", lambda raw: (_ for _ in ()).throw(AssertionError("cleanup ran")))
         controller.settings.cleanup = False
         controller.begin_handsfree()
         controller.finish()
-        assert controller.transcriber.calls[-1][2] is None
+        post = controller.transcriber.calls[-1][2]
+        assert post("quote hi unquote") == ("“hi”", None)  # spoken quotes still, no cleanup
 
     def test_transcriber_gets_the_recorded_audio(self, controller, speech):
         controller.recorder.audio_data = speech
@@ -1598,9 +1605,22 @@ class TestAppSwitcher:
     def test_close_minimize_expand(self, controller, clock, fronted, windows):
         self.say(controller, clock, "Close Chrome.")
         self.say(controller, clock, "minimize")  # the app you're in
-        self.say(controller, clock, "Expand the terminal")
-        assert windows == [(11, "close", None), (99, "minimize", None), (22, "frame", (0, 0, 1000, 800))]
-        assert controller.notice[0] == "Expanded Terminal"
+        self.say(controller, clock, "Expand the terminal")  # macOS full screen
+        assert windows == [(11, "close", None), (99, "minimize", None), (22, "fullscreen", None)]
+        assert controller.notice[0] == "Full screen: Terminal"
+
+    def test_maximize_fills_and_exit_full_screen_leaves(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Maximize.")
+        self.say(controller, clock, "Exit full screen.")
+        assert windows == [(99, "frame", (0, 0, 1000, 800)), (99, "exit fullscreen", None)]
+
+    def test_an_app_without_full_screen_fills_the_screen(self, controller, clock, fronted, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 99)
+        monkeypatch.setattr(W.apps, "window_action", lambda pid, action, frame=None: done.append(action) or action != "fullscreen")
+        self.say(controller, clock, "Expand.")
+        assert done == ["fullscreen", "frame"]
 
     def test_side_by_side_with_a_split(self, controller, clock, fronted, windows):
         self.say(controller, clock, "Chrome 70% beside terminal")
@@ -1858,7 +1878,8 @@ class TestTerminalDictation:
         assert info["terminal"] and text in ("ls -a",)
         controller.settings.cleanup = True
         controller.rec_recorded_in = {"app": "Notes", "bundle_id": "com.apple.Notes"}
-        assert controller._post_processor() == controller.cleaner.clean
+        text, info = controller._post_processor()("plain words")
+        assert text == "plain words" and "terminal" not in (info or {})  # the usual cleanup
 
     def test_auto_enter_runs_the_command_in_terminals_too(self, controller, monkeypatch):
         enters = []
@@ -2187,3 +2208,316 @@ class TestLongDictationSwitch:
         controller.begin_handsfree()
         controller.finish()
         assert not getattr(controller.transcriber, "chunk_calls", None) and controller.transcriber.calls
+
+
+class TestInvisibleMode:
+    class Panel:
+        def __init__(self):
+            self.alpha, self.ignores = 1.0, True
+        def setAlphaValue_(self, a):
+            self.alpha = a
+        def setIgnoresMouseEvents_(self, v):
+            self.ignores = v
+
+    def test_hidden_and_click_through(self, controller):
+        controller.panel = self.Panel()
+        controller.settings.invisible = True
+        controller.accepting_mouse = True
+        controller.apply_invisible()
+        assert controller.panel.alpha == 0.0 and controller.panel.ignores is True and not controller.accepting_mouse
+        controller.settings.invisible = False
+        controller.apply_invisible()
+        assert controller.panel.alpha == 1.0
+
+    def test_dictation_still_works_while_invisible(self, controller):
+        controller.panel = self.Panel()
+        controller.settings.invisible = True
+        controller.apply_invisible()
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."]
+
+    def test_key_and_voice_flip_it(self, controller, monkeypatch):
+        current = W.settings.Settings()
+        monkeypatch.setattr(W.settings, "load", lambda: current)
+        monkeypatch.setattr(W.settings, "save", lambda s: None)
+        controller.panel = self.Panel()
+        controller.toggle_invisible()
+        assert current.invisible is True and controller.panel.alpha == 0.0 and controller.sounds.played[-1] == "lock"
+        controller.set_mode("invisible", False)
+        assert controller.panel.alpha == 1.0 and controller.notice[0] == "Widget visible again"
+
+
+class TestCopyTextCommand:
+    def test_copies_what_was_found_and_highlights_it(self, controller, monkeypatch):
+        copied, selected = [], []
+        monkeypatch.setattr(W, "copy_normally", copied.append)
+        monkeypatch.setattr(W.pointer, "select_range", lambda el, a, b: selected.append((el, a, b)))
+        runs = [("Hello there world.", "el", "AXTextArea")]
+        controller._copy_found((runs, ("there world.", 0, (6, 18), 1.0)), "there to world")
+        assert copied == ["there world."] and selected == [("el", 6, 18)]
+        assert controller.notice[0] == "Copied “there world.”"
+
+    def test_not_found(self, controller):
+        controller._copy_found(([], None), "zebra")
+        assert controller.notice[0] == "Couldn't find “zebra” on screen"
+
+    def test_incognito_never_copies(self, controller, monkeypatch):
+        copied = []
+        monkeypatch.setattr(W, "copy_normally", copied.append)
+        controller.settings.incognito = True
+        controller._copy_found(([("x", None, "AXStaticText")], ("x", None, None, 1.0)), "x")
+        assert copied == []
+
+
+class TestMainTextBox:
+    """Nothing has the cursor: the words go into the window's main text box instead of the clipboard."""
+
+    def finish(self, controller, monkeypatch, found_box):
+        answers = iter([W.context.NO, W.context.YES])  # nothing selected; then, after focusing the box, yes
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (next(answers, W.context.YES), "App"))
+        box = W.pointer.Input("el", "AXTextArea", (0, 0, 400, 30), True, "") if found_box else None
+        monkeypatch.setattr(W.pointer, "text_inputs", lambda pid: [box] if box else [])
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 42)
+        focused = []
+        monkeypatch.setattr(W.pointer, "focus_input", lambda target: focused.append(target) or True)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        return focused
+
+    def test_pasted_into_the_main_box(self, controller, monkeypatch):
+        focused = self.finish(controller, monkeypatch, True)
+        assert len(focused) == 1 and controller.pasted == ["Hello."] and controller.copied == []
+
+    def test_no_box_in_the_window_still_copies(self, controller, monkeypatch):
+        focused = self.finish(controller, monkeypatch, False)
+        assert focused == [] and controller.copied == ["Hello."] and controller.pasted == []
+
+    def test_switched_off_copies_like_before(self, controller, monkeypatch):
+        controller.settings.find_text_box = False
+        focused = self.finish(controller, monkeypatch, True)
+        assert focused == [] and controller.copied == ["Hello."]
+
+
+class TestWordsGoWhereYouStarted:
+    """Switch windows while it transcribes: the words still go to the box you started in, in the
+    background when the box allows it, otherwise the moment you go back. Windows never switch."""
+
+    START = W.spots.Spot(10, "Claude", window="w1", element="box")
+    ELSEWHERE = W.spots.Spot(11, "Chrome", window="w9")
+
+    def finish(self, controller, monkeypatch, quiet, auto_enter=False):
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
+        controller.settings.auto_enter = auto_enter
+        controller.begin_handsfree()  # notes where you started
+        monkeypatch.setattr(W.spots, "capture", lambda: self.ELSEWHERE)
+        self.timers, self.calls = [], []
+        monkeypatch.setattr(W.AppHelper, "callLater", lambda delay, fn, *a: self.timers.append((fn, a)))
+        monkeypatch.setattr(W.spots, "insert_quietly", lambda box, text: self.calls.append(("quiet", box, text)) or quiet)
+        monkeypatch.setattr(W.spots, "focus", lambda box: self.calls.append(("focus", box)))
+        monkeypatch.setattr(W.spots, "settle", lambda *a: None)
+        monkeypatch.setattr(W, "press_enter", lambda *a: self.calls.append(("enter",)))
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+
+    def run_timers(self):
+        timers, self.timers = self.timers, []
+        for fn, args in timers:
+            fn(*args)
+
+    def test_in_the_background_when_the_box_allows_it(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=True)
+        assert self.calls == [("quiet", "box", "Hello.")] and controller.pasted == []
+        assert controller.notice[0] == "Sent to Claude"
+
+    def test_otherwise_it_waits_and_goes_in_when_you_go_back(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=False)
+        assert controller.pasted == [] and controller.notice[0] == "Ready for Claude: goes in when you go back"
+        self.run_timers()  # still elsewhere: keeps waiting, nothing pasted, no window moved
+        assert controller.pasted == [] and self.timers
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)  # you went back
+        self.run_timers()
+        assert ("focus", "box") in self.calls and controller.pasted == ["Hello."] and controller.notice[0] == "In Claude"
+
+    def test_auto_enter_waits_then_sends(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=True, auto_enter=True)
+        assert not any(c[0] == "quiet" for c in self.calls)  # Return can't be pressed in the background
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
+        self.run_timers()
+        assert controller.pasted == ["Hello."]
+        self.run_timers()  # the Return, just after the paste
+        assert ("enter",) in self.calls
+
+    def test_not_back_in_time_goes_to_the_clipboard(self, controller, monkeypatch, clock):
+        self.finish(controller, monkeypatch, quiet=False)
+        clock.advance(W.HOLD_SECONDS + 1)
+        self.run_timers()
+        assert controller.copied == ["Hello."] and controller.pasted == []
+
+    def test_still_there_pastes_as_usual(self, controller, monkeypatch):
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."]
+
+
+class TestBrowserTabInTheBackground:
+    START = W.spots.Spot(10, "Google Chrome", window="w1", element=None, bundle_id="com.google.Chrome", tab=("1", "2"))
+    ELSEWHERE = TestWordsGoWhereYouStarted.ELSEWHERE
+    finish = TestWordsGoWhereYouStarted.finish  # the helpers only, not the other class's tests
+    run_timers = TestWordsGoWhereYouStarted.run_timers
+
+    def test_typed_into_the_tab_without_switching(self, controller, monkeypatch):
+        sent = []
+        monkeypatch.setattr(W.spots, "insert_in_tab", lambda spot, text, enter=False, meta=False: sent.append((text, enter)) or "ok")
+        monkeypatch.setattr(W.spots, "box_for", lambda spot: None)
+        self.finish(controller, monkeypatch, quiet=False, auto_enter=True)
+        assert sent == [("Hello.", True)] and controller.pasted == [] and controller.notice[0] == "Sent to Google Chrome"
+
+    def test_setting_off_says_how_and_waits(self, controller, monkeypatch):
+        monkeypatch.setattr(W.spots, "insert_in_tab", lambda *a, **k: "off")
+        monkeypatch.setattr(W.spots, "box_for", lambda spot: "box")
+        self.finish(controller, monkeypatch, quiet=False)
+        assert controller._told_apple_events and controller.pasted == []
+
+
+class TestQuietWhileYouTalk:
+    def test_muted_while_recording_and_back_when_you_let_go(self, controller):
+        controller.begin_handsfree()
+        assert controller.ducker.events == ["duck"]
+        controller.finish()
+        assert controller.ducker.events == ["duck", "restore"]
+
+    def test_a_tap_resumes_a_moment_later(self, controller):
+        controller.begin_hold("fn")
+        controller.discard_quietly()
+        assert controller.ducker.events[-1] == "restore later"  # it may be the first of a double-tap
+
+    def test_voice_commands_never_pause(self, controller):
+        controller.begin_hold("switch")
+        assert "duck" not in controller.ducker.events
+
+    def test_switched_off(self, controller):
+        controller.settings.duck_audio = False
+        controller.begin_handsfree()
+        assert "duck" not in controller.ducker.events
+
+
+class TestFastCommands(TestAppSwitcher):
+    """Voice commands: the fast model first; fixed commands run at once, precise words get the accurate model."""
+
+    def speak(self, controller, clock, fast_text, accurate_text=None):
+        controller.fast_transcriber.ready = True
+        controller.switch_key("down")
+        clock.advance(1.0)
+        controller.switch_key("up")
+        audio, on_done, _ = controller.fast_transcriber.calls[-1]
+        on_done(fast_text, fast_text, None, 0.1)
+        if accurate_text is not None:
+            _, on_done2, _ = controller.transcriber.calls[-1]
+            on_done2(accurate_text, accurate_text, None, 1.4)
+
+    def test_a_fixed_command_runs_from_the_fast_model(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.speak(controller, clock, "New tab.")
+        assert pressed == ["new tab"] and controller.transcriber.calls == []  # the slow model never ran
+
+    def test_precise_words_get_the_accurate_model(self, controller, clock, fronted):
+        self.speak(controller, clock, "Click the link in the logo.", accurate_text="Open Chrome.")
+        assert len(controller.transcriber.calls) == 1 and fronted == ["/A/Google Chrome.app"]
+
+    def test_an_exact_open_app_is_fast(self, controller, clock, fronted):
+        self.speak(controller, clock, "Terminal.")
+        assert fronted == ["/S/Terminal.app"] and controller.transcriber.calls == []
+
+    def test_quick_command_rules(self):
+        st = W.settings.Settings()
+        running = ["Google Chrome", "Terminal"]
+        assert W.quick_command("Pause.", st, running) and W.quick_command("Left half.", st, running)
+        assert not W.quick_command("Close tab in Chrome.", st, running)  # names an app: check it
+        assert not W.quick_command("Copy the text.", st, running) and not W.quick_command("Chrom.", st, running)
+
+
+class TestCancelWhileProcessing:
+    """Delete, or a quick fn double-tap, while it's processing: the dictation is dropped."""
+
+    def processing(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        assert controller.state == W.PROCESSING
+        return controller.transcriber.calls[-1][1]  # what runs when the words arrive
+
+    def test_delete_cancels_and_the_result_is_dropped(self, controller):
+        on_done = self.processing(controller)
+        assert controller.handle_key(W.KEY_DELETE) is True
+        assert controller.state == W.IDLE and controller.notice[0] == "Cancelled"
+        assert controller.sounds.played[-1] == "cancel" and controller.recorder.wiped
+        on_done("Hello.", "hello", None, 1.0)  # the model finishes later
+        assert controller.pasted == [] and controller.copied == []
+
+    def test_quick_fn_double_tap_cancels(self, controller, clock):
+        on_done = self.processing(controller)
+        controller.fn_down()
+        controller.fn_up()
+        assert controller.state == W.PROCESSING  # one press alone does nothing
+        clock.advance(0.2)
+        controller.fn_down()
+        assert controller.state == W.IDLE
+        on_done("Hello.", "hello", None, 1.0)
+        assert controller.pasted == []
+
+    def test_slow_presses_dont_cancel(self, controller, clock):
+        self.processing(controller)
+        controller.fn_down()
+        controller.fn_up()
+        clock.advance(1.0)
+        controller.fn_down()
+        assert controller.state == W.PROCESSING
+
+    def test_a_new_dictation_isnt_touched_by_the_dropped_one(self, controller, clock):
+        on_done = self.processing(controller)
+        controller.cancel_processing()
+        clock.advance(1.0)
+        controller.begin_handsfree()  # a new dictation, while the old result is still coming
+        wiped = controller.recorder.wiped
+        on_done("Old words.", "old words", None, 1.0)
+        assert controller.state == W.HANDSFREE and controller.recorder.wiped == wiped and controller.pasted == []
+
+    def test_double_tap_to_cancel_hands_free_doesnt_start_a_new_one(self, controller, clock):
+        controller.begin_handsfree()
+        controller.fn_down()  # cancels hands-free
+        controller.fn_up()
+        clock.advance(0.2)
+        controller.fn_down()  # the second tap of the double-tap
+        assert controller.state != W.HOLD and controller.recorder.started == 1
+
+
+class TestClickedOutOfTheBox:
+    def test_back_into_the_box_you_were_in(self, controller, monkeypatch):
+        start = W.spots.Spot(10, "Notes", window="w1", element="my box")
+        monkeypatch.setattr(W.spots, "capture", lambda: start)
+        controller.begin_handsfree()
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(10, "Notes", window="w1", element=None))  # clicked out
+        answers = iter([W.context.NO, W.context.YES])
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (next(answers, W.context.YES), "Notes"))
+        focused = []
+        monkeypatch.setattr(W.spots, "focus", focused.append)
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        assert focused == ["my box"] and controller.pasted == ["Hello."]
+
+
+class TestNewBoxOverrides:
+    def test_a_box_you_clicked_into_elsewhere_gets_the_words(self, controller, monkeypatch):
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(10, "Notes", window="w1", element="my box"))
+        controller.begin_handsfree()
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(11, "Chrome", window="w9", element="chrome box"))
+        sent = []
+        monkeypatch.setattr(W.spots, "insert_quietly", lambda *a: sent.append(a) or True)
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        assert controller.pasted == ["Hello."] and sent == []  # pasted where you are, not sent back

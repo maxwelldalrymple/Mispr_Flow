@@ -116,3 +116,10 @@ def paste_text(text):
             _restore(pb, saved)
 
     AppHelper.callLater(RESTORE_AFTER, restore)
+
+
+def copy_normally(text):
+    """Put `text` on the clipboard like ⌘C would (it shows in clipboard history: you asked for it)."""
+    pb = NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    pb.setString_forType_(text, NSPasteboardTypeString)

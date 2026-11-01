@@ -529,3 +529,31 @@ class TestAutoEnterKey:
                                          {"kind": "combo", "mods": [], "keycode": 36}])
     def test_only_a_key_with_modifiers_is_usable(self, trigger):
         assert hotkey.normalize_toggle_trigger(trigger) is None
+
+
+class TestExtraToggleKeys:
+    """Invisible mode's key (⌃⌥I by default) next to the Auto-Enter key."""
+
+    @pytest.fixture
+    def m(self, monitor):
+        monitor.on_toggle = lambda: monitor.calls.append("auto-enter")
+        monitor.set_toggle_trigger(hotkey.DEFAULT_AUTO_ENTER_KEY)
+        monitor.set_extra_toggle("invisible", {"kind": "combo", "mods": ["control", "option"], "keycode": 34},
+                                 lambda: monitor.calls.append("invisible"))
+        return monitor
+
+    def test_each_key_calls_its_own(self, m):
+        assert cb(m, KEY_DOWN, ev(34, CTRL | OPT)) is None  # swallowed: the app never sees ⌃⌥I
+        assert cb(m, KEY_DOWN, ev(hotkey.KEY_RETURN, CTRL | OPT)) is None
+        assert m.calls == ["invisible", "auto-enter"]
+
+    def test_plain_i_and_ctrl_i_type_as_usual(self, m):
+        for flags in (0, CTRL):  # ⌃I is Tab in terminals: never taken
+            e = ev(34, flags)
+            assert cb(m, KEY_DOWN, e) is e
+        assert "invisible" not in m.calls
+
+    def test_turning_it_off(self, m):
+        m.set_extra_toggle("invisible", None, None)
+        e = ev(34, CTRL | OPT)
+        assert cb(m, KEY_DOWN, e) is e and m.calls == []

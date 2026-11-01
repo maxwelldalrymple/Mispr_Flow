@@ -2,6 +2,19 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Nov 1: v1.3.0
+
+- **Invisible mode:** ⌃⌥I (changeable), "invisible mode" by voice, or Settings → General hides the pill. It can't be seen or clicked, and everything keeps working.
+- **Copy text on screen by voice:** "copy you should be able" (to the end of the passage) or "copy key press was to auto enter does" (from … through …). It reads the text from the app, close words are enough, and editable text gets highlighted. "copy all" = ⌘A ⌘C.
+- **Main text box:** when no text box has the cursor, dictation goes into the window's main text box (chat box, message field, document) instead of only the clipboard. Never an address bar, a search field or a file name. Switch: Settings → General.
+- **Words go where you started:** switch windows or apps while it transcribes, and the text still lands in the box you began in. Windows never switch: it goes in the background where the box allows it (native apps, plain web boxes); Chrome tabs get it by a page script (after turning on the browser's "Allow JavaScript from Apple Events"); apps that block background control (the Claude desktop app) get it the moment you go back.
+- **Pause while you talk:** pressing the dictation key pauses Apple Music, Spotify, TV and videos in Chrome tabs; letting go plays exactly those again. A double-tap keeps them paused for hands-free. Voice commands and meetings never pause anything.
+- **Spoken punctuation:** "question mark", "exclamation point", "forward slash", "backslash", "new line", brackets, symbols… and "quote … end quote" → “…”. Ordinary words ("a period of time") stay.
+- **Faster commands:** the small Whisper hears every command first (~0.1 s instead of ~1.4 s). Fixed commands run at once; precise words (click, copy, type, search, folders, site tabs, app names) get the accurate model.
+- **"expand" is real full screen** (the green button); "maximize" fills the screen; "exit full screen" goes back.
+- **Cancel while processing:** delete, or a quick double-tap of the dictation key, drops the dictation (or command) being processed. Nothing is pasted or saved, and a new dictation can start at once.
+- **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
+
 ## Oct 2: v1.2.0: control your whole Mac by voice
 
 - **Click anything**, in any app: "click Sign in", double / right click, hover, "click" where the mouse is. Read from the app (Accessibility), no OCR. The closest name wins; several matches get **numbers** ("show numbers", then "7"). Plus a **grid** for unnamed spots, **drag**, and scrolling a named area.

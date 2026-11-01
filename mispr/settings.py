@@ -21,6 +21,10 @@ class Settings:
     # Sound cues (start, stop, paste...).
     sounds: bool = True
     auto_update: bool = True  # the app checks GitHub for a new version about 5 times a day
+    # Mute other sound (music, videos) while you dictate or give a command; back on when you let go.
+    duck_audio: bool = True
+    # No text box selected: paste into the window's main text box instead of copying.
+    find_text_box: bool = True
     # Long dictations typed in piece by piece while they're processed (off: all at once at the end).
     live_long_dictations: bool = False
     # Your own voice commands: [{"say": "sign off", "type": "Best, Alex"}, {"say": "next song", "keys": "cmd right"}].
@@ -30,6 +34,10 @@ class Settings:
     # The app switcher key (hold it, say an app, let go): same format as `hotkey`; None = off.
     switch_hotkey: dict = None
     # The Auto-Enter key (press to turn Auto-Enter on/off): a combo like `switch_hotkey`; None = off.
+    # Invisible mode: the pill can't be seen or clicked; dictation and commands work as usual.
+    invisible: bool = False
+    invisible_hotkey: dict = field(default_factory=lambda: {"kind": "combo", "mods": ["control", "option"],
+                                                            "keycode": 34, "label": "⌃⌥I"})
     auto_enter_hotkey: dict = field(default_factory=lambda: {"kind": "combo", "mods": ["control", "option"],
                                                              "keycode": 36, "label": "⌃⌥↩"})
     # Spoken nicknames for apps: {"c": "Google Chrome", "scooby snacks": "Google Chrome"}.

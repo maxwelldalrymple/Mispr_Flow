@@ -55,13 +55,17 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
+from . import target as spots
+from .duck import Ducker
 from . import apps, control, pointer, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import ENTER_DELAY, RESTORE_AFTER, copy_text, paste_text, press_enter, send_with_command, type_text
+from .paste import ENTER_DELAY, RESTORE_AFTER, copy_normally, copy_text, paste_text, press_enter, send_with_command, type_text
 from .threads import start_daemon
+from .cleanup import spoken_punctuation
+from .models import PREVIEW_MODEL
 from .transcribe import DICTATION_VOCABULARY, Transcriber, split_points
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -88,6 +92,8 @@ FPS = 60
 MORPH = 0.3  # per-frame easing factor toward the target shape
 HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
 FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
+CANCEL_DOUBLE_TAP = 0.5  # two fn presses this close while processing cancel it (and the 2nd of a cancelling double-tap is ignored)
+CANCELLED_NOTICE_SECONDS = 1.5
 DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
 
 # Hands-free keyboard shortcuts (macOS virtual keycodes).
@@ -111,7 +117,7 @@ INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
 # Commands handled by control.py (keys, windows, switches, the web…).
-CONTROL_KINDS = {"mode", "keys", "type", "custom", "that", "snap", "other_screen", "desktop", "mission", "dark_mode", "wifi",
+CONTROL_KINDS = {"copy_text", "mode", "keys", "type", "custom", "that", "snap", "other_screen", "desktop", "mission", "dark_mode", "wifi",
                  "brightness", "output", "search", "go_to", "find", "spotlight", "run_shortcut", "grid", "drag", "scroll_in"}
 AGAIN_GAP = 0.35  # seconds between repeats of "do that 3 times"
 FIND_DELAY = 0.25  # ⌘F opens the find bar, then the words are typed
@@ -126,6 +132,9 @@ PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next pa
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
 SPEECH_FLOOR = 0.003  # peak below this: the mic heard nothing
 SPEECH_LEVEL = 0.5  # the speech check listens at this peak level
+HOLD_SECONDS = 600  # words waiting for you to go back to their window; after this, the clipboard
+HOLD_POLL = 0.3  # how often to check whether you're back
+MAIN_INPUT_SETTLE = 0.1  # seconds for focus to land in the main text box before pasting
 TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
@@ -260,6 +269,36 @@ class Ticker(NSObject):
         self.callback()
 
 
+# Voice commands the fast model's words can be trusted for: nothing in them needs exact spelling.
+QUICK_KINDS = {"system", "keys", "mode", "media", "scroll", "scroll_end", "volume", "mic", "snap", "desktop", "mission",
+               "dark_mode", "wifi", "brightness", "again", "number", "show_numbers", "hide_numbers", "grid", "other_screen",
+               "custom"}
+# These too, when they name no app ("close tab", not "close tab in Chrome"): position of the app name.
+QUICK_UNLESS_NAMED = {"shortcut": 2, "close": 1, "minimize": 1, "expand": 1, "maximize": 1, "unexpand": 1, "quit": 1,
+                      "window": 2, "split_tab": 1, "seek": 2, "mute_tab": 1}
+
+
+def quick_command(text, settings_now, running):
+    """True when `text` (from the fast model) is a command with nothing that needs exact words: run
+    it now. Clicking, copying, typing, searching, folders, site tabs and app names that aren't an
+    exact open app get the accurate model."""
+    command = control.custom(text, settings_now.custom_commands) or apps.parse(text)
+    if command is None:
+        return False
+    kind = command[0]
+    if kind in QUICK_KINDS:
+        return True
+    if kind in QUICK_UNLESS_NAMED:
+        i = QUICK_UNLESS_NAMED[kind]
+        return len(command) <= i or command[i] is None
+    if kind == "click":
+        return command[1] is None  # "click" (where the mouse is)
+    if kind == "switch":  # exactly an open app's name, or one of your nicknames
+        name = command[1]
+        return name in {apps.normalize(r) for r in running} or name in (settings_now.app_nicknames or {})
+    return False
+
+
 class WidgetController:
     def __init__(self):
         self.state = IDLE
@@ -284,6 +323,7 @@ class WidgetController:
         self.settings = settings.load()
         self.recorder = Recorder()
         self.transcriber = Transcriber()
+        self.fast_transcriber = Transcriber(PREVIEW_MODEL)  # small Whisper (base.en): commands, meeting previews
         self.cleaner = Cleaner()
         self.apply_prompts()
         self.setup_progress = 0.0
@@ -297,7 +337,9 @@ class WidgetController:
         # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
-        self.on_busy = lambda busy: None  # the Swift app waits for not-busy before installing an update
+        self.ducker = Ducker()
+        self.on_busy = lambda busy: None
+        self._busy_tap_at = self._cancelled_at = None  # the Swift app waits for not-busy before installing an update
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
         self.mic_saved = None  # the mic's level while "mute mic" has it at 0
 
@@ -337,6 +379,7 @@ class WidgetController:
         p.setContentView_(self.view)
         self._poll_screen(force=True)
         p.orderFrontRegardless()
+        self.apply_invisible()
         self.recorder.prepare()
         if setup.missing():
             self.set_state(SETUP)
@@ -386,8 +429,20 @@ class WidgetController:
                 self.show_notice(text, MIC_NOTICE_SECONDS, (HOLD, HANDSFREE))
         # App only (cheap); the browser page is looked up at paste time.
         self.rec_recorded_in = context.frontmost(include_page=False)
+        # Where the words go: this box, even if you switch away before they're ready.
+        try:
+            self._start_spot = spots.capture()
+        except Exception as e:
+            log(f"start spot unknown: {e}")
+            self._start_spot = None
+
+    def _quiet_others(self):
+        """While you talk, whatever is playing (music, videos) pauses; it plays again when you let go."""
+        if self.settings.duck_audio:
+            self.ducker.duck()
 
     def _stop_recording(self):
+        self.ducker.restore()
         self.recorder.stop()
         self.rec_ended_at = datetime.now()
 
@@ -412,6 +467,23 @@ class WidgetController:
         self.on_saved(path)
         return path
 
+    def apply_invisible(self):
+        """Invisible mode: the pill (and its notices) fully transparent, clicks pass through."""
+        panel = getattr(self, "panel", None)
+        if panel is None:
+            return
+        panel.setAlphaValue_(0.0 if self.settings.invisible else 1.0)
+        if self.settings.invisible:
+            self.hovered = self.pressed = None
+            self.accepting_mouse = False
+            panel.setIgnoresMouseEvents_(True)
+            if self.state == HOVER:
+                self.set_state(IDLE)
+
+    def toggle_invisible(self):
+        """The invisible-mode key: flip it, save it, and say so with a sound (there's nothing to see)."""
+        self.set_mode("invisible")
+
     def toggle_auto_enter(self):
         """The Auto-Enter key: flip Auto-Enter, save it, and say so (badge, chime, notice)."""
         current = settings.load()
@@ -422,7 +494,7 @@ class WidgetController:
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
-        was_auto_enter = self.settings.auto_enter
+        was_auto_enter, was_invisible = self.settings.auto_enter, self.settings.invisible
         self.settings = settings.load()
         if self.settings.auto_enter != was_auto_enter:  # say so, by sound and on the widget
             self.sounds.enabled = self.settings.sounds
@@ -430,6 +502,9 @@ class WidgetController:
             self.show_notice("Auto-Enter on ⏎" if self.settings.auto_enter else "Auto-Enter off",
                              AUTO_ENTER_NOTICE_SECONDS, (IDLE, HOVER))
         self.sounds.enabled = self.settings.sounds
+        if self.settings.invisible != was_invisible:
+            self.sounds.play(sounds.LOCK)  # the cue for a mode change; invisible has nothing to show
+        self.apply_invisible()
         self.apply_prompts()
         log(f"settings reloaded: {self.settings}")
 
@@ -440,7 +515,10 @@ class WidgetController:
 
     def begin_hold(self, source):
         self._drop_cancelled()
+        if source != "switch":  # first, so it pauses at once; a voice command ("pause", "play") must not fight with this
+            self._quiet_others()
         if not self.recorder.start():
+            self.ducker.restore()
             self.sounds.play(sounds.ERROR)  # the mic didn't open: don't fail silently
             return
         self._note_context()
@@ -450,7 +528,9 @@ class WidgetController:
 
     def begin_handsfree(self, sound=True):
         self._drop_cancelled()
+        self._quiet_others()
         if not self.recorder.start():
+            self.ducker.restore()
             self.sounds.play(sounds.ERROR)
             return
         self._note_context()
@@ -473,13 +553,113 @@ class WidgetController:
         if (self.settings.live_long_dictations and len(audio) >= CHUNK_FROM_SECONDS * storage.SAMPLE_RATE
                 and not terminal.is_terminal(self.rec_recorded_in)):
             return self._process_in_chunks(audio, reason)
+        job = self._new_job()
         self.transcriber.transcribe_async(
             self.recorder.audio(),
-            lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
+            self._if_current(job, lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason)),
             post=self._post_processor(),
             prompt=DICTATION_VOCABULARY,  # spell ChatGPT, GitHub, YouTube… right
             speech=self._speech_seconds,
         )
+
+    def _deliver_to_start(self, spot, text, raw, info, reason):
+        """You switched away while it was transcribing: the words go where you started."""
+        box = spots.box_for(spot)
+        if box is None and not spot.tab:  # that window has no text box: copy, as when there's no box at all
+            if not self.settings.incognito:
+                copy_text(text)
+            self.sounds.play(sounds.ERROR)
+            self.show_notice(INCOGNITO_NOTICE if self.settings.incognito else COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+            self._save(storage.COPIED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
+            self._wipe(reason)
+            return self.to_idle()
+        how = self._send_to_spot(spot, box, text)
+        self._last_typed = text
+        self.sounds.play(sounds.PASTE if how == "quiet" else sounds.STOP)
+        self.show_notice(f"Sent to {spot.app}" if how == "quiet" else f"Ready for {spot.app}: goes in when you go back",
+                         SWITCH_RESULT_SECONDS if how == "quiet" else COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+        self._save(storage.PASTED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
+        self._wipe(reason)
+        self.to_idle()
+
+    def _send_to_spot(self, spot, box, text):
+        """Put `text` in `box` (the window you started in) without ever switching windows: in the
+        background if the box allows it ("quiet"); otherwise it waits and goes in the moment you go
+        back to that window ("held"). Auto-Enter needs a key press there, so it always waits."""
+        if spot.tab and not self.settings.incognito:  # a browser tab: typed in the background by a page script
+            result = spots.insert_in_tab(spot, text, enter=self.settings.auto_enter,
+                                         meta=send_with_command((self.rec_recorded_in or {}).get("url")))
+            log(f"delivered to the start tab in {spot.app}: {result}")
+            if result == "ok":
+                return "quiet"
+            if result == "off" and not getattr(self, "_told_apple_events", False):
+                self._told_apple_events = True
+                self.show_notice(f"Turn on {spot.app} › View › Developer › Allow JavaScript from Apple Events "
+                                 "to type into tabs in the background", COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+        if box is not None and not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text):
+            log(f"delivered to the start box in {spot.app}: quietly")
+            return "quiet"
+        held = getattr(self, "_held", None)
+        if held is not None and not self.settings.incognito:  # one waits at a time: the older one is copied
+            copy_text(held["text"])
+        self._held = {"spot": spot, "box": box, "text": text, "until": time.monotonic() + HOLD_SECONDS,
+                      "url": (self.rec_recorded_in or {}).get("url")}
+        log(f"held for {spot.app}: goes in when you go back")
+        AppHelper.callLater(HOLD_POLL, self._check_held)
+        return "held"
+
+    def _check_held(self):
+        """Waiting words: in they go once you're back in that window; after HOLD_SECONDS, the clipboard."""
+        held = getattr(self, "_held", None)
+        if held is None:
+            return
+        spot = held["spot"]
+        if time.monotonic() > held["until"]:
+            self._held = None
+            if not self.settings.incognito:
+                copy_text(held["text"])
+            return self.show_notice(f"Not back in {spot.app}: copied instead", COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+        if self.state not in (IDLE, HOVER) or not spots.still_there(spot):
+            return AppHelper.callLater(HOLD_POLL, self._check_held)  # not yet (or you're dictating again)
+        self._held = None
+        spots.focus(held["box"])
+        spots.settle(0.1)
+        (type_text if self.settings.incognito else paste_text)(held["text"])
+        if self.settings.auto_enter:
+            AppHelper.callLater(ENTER_DELAY, press_enter, send_with_command(held["url"]))
+        self.sounds.play(sounds.PASTE)
+        self.show_notice(f"In {spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+
+    def _refocus(self, element):
+        """Put the cursor back in `element` (the box you were in, same window). True if it took it."""
+        try:
+            spots.focus(element)
+            time.sleep(MAIN_INPUT_SETTLE)
+            return context.focused_text_target()[0] != context.NO
+        except Exception as e:
+            log(f"refocus failed: {e}")
+            return False
+
+    def _focus_main_input(self):
+        """Nothing has the cursor: put it in the front window's main text box (a chat box, a
+        document), so the words are pasted there instead of only copied. True if a box now has it.
+        Never a toolbar's address bar or search, or a file name in a list."""
+        pid = apps.frontmost_pid()
+        if not pid:
+            return False
+        try:
+            pointer.enable_web_accessibility(pid)
+            target = pointer.main_input(pointer.text_inputs(pid))
+            if target is None:
+                return False
+            pointer.focus_input(target)
+            time.sleep(MAIN_INPUT_SETTLE)
+            where, _ = context.focused_text_target()
+            log(f"main text box: {target.role} {'on the page' if target.in_page else ''} -> {where}")
+            return where != context.NO
+        except Exception as e:  # never lose the words over this: they're copied instead
+            log(f"main text box failed: {e}")
+            return False
 
     def _speech_seconds(self, audio):
         """Seconds of real speech in `audio` (the speech detector, if the app gave one), else None."""
@@ -506,17 +686,23 @@ class WidgetController:
         if terminal.is_terminal(self.rec_recorded_in):
             cleaner = self.cleaner if self.settings.cleanup else None
             return lambda raw: terminal.clean(raw, cleaner)
-        return self.cleaner.clean if self.settings.cleanup else None
+        # Spoken punctuation ("question mark", "quote … end quote", "new line") becomes the marks,
+        # before cleanup (which keeps them) or instead of it.
+        if self.settings.cleanup:
+            return lambda raw: self.cleaner.clean(spoken_punctuation(raw))
+        return lambda raw: (spoken_punctuation(raw), None)
 
     def _process_in_chunks(self, audio, reason):
         """A long dictation: transcribe it in pieces cut at pauses and type each one in as soon
         as it's ready, so the text grows while the rest is still processing. Auto-Enter presses
         Return once, after the last piece."""
         self._chunks = {"texts": [], "raws": [], "infos": [], "where": None, "target": None, "reason": reason,
-                        "free_at": 0.0}
+                        "free_at": 0.0, "deferred": []}
         bounds = split_points(audio)
         log(f"long dictation: {len(audio) / storage.SAMPLE_RATE:.1f}s in {len(bounds)} pieces")
-        self.transcriber.transcribe_chunks_async(audio, bounds, self._on_chunk, self._on_chunks_done,
+        job = self._new_job()
+        self.transcriber.transcribe_chunks_async(audio, bounds, self._if_current(job, self._on_chunk),
+                                                 self._if_current(job, self._on_chunks_done),
                                                  post=self._post_processor(), speech=self._speech_seconds)
 
     def _on_chunk(self, i, text, raw, info):
@@ -528,9 +714,15 @@ class WidgetController:
         if run["where"] is None:  # the first words: decide once where they all go
             run["target"] = context.frontmost()
             run["where"], why = context.focused_text_target()
+            if run["where"] == context.NO and self.settings.find_text_box and self._focus_main_input():
+                run["where"], why = context.YES, "the window's main text box"
             log(f"text box: {run['where']} ({why})")
         piece = (" " if run["texts"] else "") + text
         run["texts"].append(text)
+        spot = getattr(self, "_start_spot", None)
+        if run["deferred"] or (spot is not None and spots.goes_to_start(spot)):
+            run["deferred"].append(piece)  # you've switched away: the rest goes back where you started
+            return
         if run["where"] != context.NO:
             # Each paste lends the clipboard for RESTORE_AFTER: never start one before the last is done.
             now = time.monotonic()
@@ -549,6 +741,15 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars in {len(run['raws'])} pieces")
         if not text:
             self.sounds.play(sounds.ALERT)
+        elif run["deferred"] and self._start_spot is not None and spots.box_for(self._start_spot) is not None:
+            how = self._send_to_spot(self._start_spot, spots.box_for(self._start_spot), "".join(run["deferred"]).lstrip()
+                                     if len(run["deferred"]) == len(run["texts"]) else "".join(run["deferred"]))
+            self._last_typed = text
+            self.sounds.play(sounds.PASTE if how == "quiet" else sounds.STOP)
+            app = self._start_spot.app
+            self.show_notice(f"Sent to {app}" if how == "quiet" else f"Ready for {app}: goes in when you go back",
+                             COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+            self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
         elif run["where"] == context.NO:
             if not self.settings.incognito:
                 copy_text(text)
@@ -570,6 +771,9 @@ class WidgetController:
         if info:
             cleanup_note = f", cleanup {info['ms']} ms " + ("applied" if info["applied"] else f"rejected ({info['rejected']})")
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
+        spot = getattr(self, "_start_spot", None)
+        if text and spot is not None and spots.goes_to_start(spot):
+            return self._deliver_to_start(spot, text, raw, info, reason)
         if text:
             target = context.frontmost()  # where the text is about to land
             where, why = context.focused_text_target()
@@ -577,6 +781,10 @@ class WidgetController:
                 time.sleep(TEXT_BOX_RECHECK)  # focus may still be moving into the box
                 where, why = context.focused_text_target()
                 why += f" [after a recheck; focused: {context.focus_chain()}]"
+            if where == context.NO and spot is not None and spot.element is not None and self._refocus(spot.element):
+                where, why = context.YES, "the box you were in (you'd clicked out of it)"
+            if where == context.NO and self.settings.find_text_box and self._focus_main_input():
+                where, why = context.YES, "the window's main text box (nothing was selected)"
             log(f"text box: {where} ({why})")
             incognito = self.settings.incognito
             if where == context.NO:
@@ -605,6 +813,34 @@ class WidgetController:
         self._wipe(reason)
         self.to_idle()
 
+    def _new_job(self):
+        """A number for this processing run: cancelling moves on, so its result is dropped."""
+        self._job = getattr(self, "_job", 0) + 1
+        return self._job
+
+    def _if_current(self, job, fn):
+        """`fn`, but only if this run wasn't cancelled meanwhile (then its result is simply dropped:
+        no paste, no save, and no wipe, since a new recording may already be using the buffer)."""
+        def run(*args, **kwargs):
+            if job != getattr(self, "_job", 0):
+                return log("dropped the result of a cancelled dictation")
+            return fn(*args, **kwargs)
+        return run
+
+    def cancel_processing(self):
+        """Delete or a quick fn double-tap while it's still processing: drop this dictation (or command).
+        The speech model can't be stopped mid-sentence, so its result is thrown away when it lands; the
+        audio is wiped now (the model then works on silence)."""
+        if self.state != PROCESSING:
+            return
+        self._job = getattr(self, "_job", 0) + 1
+        self._wipe("cancelled while processing")
+        self.ducker.restore()
+        self.sounds.play(sounds.CANCEL)
+        self.show_notice("Cancelled", CANCELLED_NOTICE_SECONDS, (IDLE, HOVER))
+        self._cancelled_at = time.monotonic()
+        self.to_idle()
+
     def cancel(self):
         """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
         self._stop_recording()
@@ -622,6 +858,7 @@ class WidgetController:
 
     def discard_quietly(self):
         """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
+        self.ducker.restore(later=DOUBLE_TAP_WINDOW)  # a tap may be the first of a double-tap: stay paused for a moment
         self.recorder.stop()
         self._wipe("discarded")
         self.set_state(IDLE)
@@ -631,6 +868,7 @@ class WidgetController:
     def _load_engines(self):
         self.transcriber.load_async()
         self.cleaner.load_async()
+        self.fast_transcriber.load_async()  # voice commands: ~0.1 s instead of ~1.4 s
 
     def _run_setup(self):
         self.setup_error = None
@@ -665,8 +903,17 @@ class WidgetController:
         self.fn_consumed = True
         if self.state == HANDSFREE:
             self.cancel()
+            self._cancelled_at = now
+        elif self.state == PROCESSING:  # a quick double-tap cancels what's being processed
+            if self._busy_tap_at is not None and now - self._busy_tap_at <= CANCEL_DOUBLE_TAP:
+                self._busy_tap_at = None
+                self.cancel_processing()
+            else:
+                self._busy_tap_at = now
         elif self.state not in (IDLE, HOVER, CANCELLED):
-            pass  # busy (processing, meeting, card): ignore fn
+            pass  # busy (meeting, card): ignore fn
+        elif self._cancelled_at is not None and now - self._cancelled_at <= CANCEL_DOUBLE_TAP:
+            pass  # the second tap of the double-tap that just cancelled: not a new recording
         elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
             # The first tap already played the start sound; now confirm the lock.
             self.last_tap_at = None
@@ -716,14 +963,29 @@ class WidgetController:
         self.sounds.play(sounds.STOP)
         self.set_state(PROCESSING)
         # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
-        hint = apps.command_prompt(self.settings.app_nicknames, sorted(apps.running_apps()))
-        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text),
-                                          speech=self._speech_seconds,
-                                          prompt=hint)
+        running = sorted(apps.running_apps())
+        hint = apps.command_prompt(self.settings.app_nicknames, running)
+        audio = self.recorder.audio()
+        job = self._new_job()
+        if not self.fast_transcriber.ready:  # the small model isn't loaded (yet): the accurate one
+            return self.transcriber.transcribe_async(audio, self._if_current(job, lambda text, raw, info, secs: self._on_switch_heard(text)),
+                                                     speech=self._speech_seconds, prompt=hint)
+        # The fast model first; a fixed command runs at once, words that need precision get the accurate model.
+        self.fast_transcriber.transcribe_async(
+            audio, self._if_current(job, lambda text, raw, info, secs: self._on_fast_command(text, audio, hint, running, secs, job)),
+            speech=self._speech_seconds, prompt=hint)
 
     def _remute(self):
         if self.mic_saved is not None:
             apps.set_mic_level(0)
+
+    def _on_fast_command(self, text, audio, hint, running, secs, job=None):
+        if not text or quick_command(text, self.settings, running):
+            log(f"command by the fast model in {secs:.2f}s")
+            return self._on_switch_heard(text)
+        log(f"command checked by the accurate model (fast one took {secs:.2f}s)")
+        self.transcriber.transcribe_async(audio, self._if_current(job if job is not None else getattr(self, "_job", 0),
+                                                                  lambda text, raw, info, secs: self._on_switch_heard(text)), prompt=hint)
 
     def _on_switch_heard(self, text):
         try:
@@ -770,6 +1032,12 @@ class WidgetController:
         kind, args = command[0], command[1:]
         if kind == "mode":
             return self.set_mode(*args)
+        if kind == "copy_text":  # "copy you should be able", "copy key press was to auto enter does"
+            pid = apps.frontmost_pid()
+            if not pid:
+                return self._switch_failed("No app in front")
+            spoken = args[0]
+            return self._in_background(lambda: self._find_text(pid, spoken), lambda found: self._copy_found(found, spoken))
         if kind == "keys":
             keys, times = args
             for key, mods in keys:
@@ -847,6 +1115,25 @@ class WidgetController:
             return self._in_background(lambda: self._scan(pid, what), lambda found: self._scroll_in(found, what, direction))
         return self._switch_failed("Not sure how to do that yet")
 
+    @staticmethod
+    def _find_text(pid, spoken):
+        pointer.enable_web_accessibility(pid)
+        runs = pointer.visible_text(pid)
+        return runs, pointer.copy_span(runs, spoken)
+
+    def _copy_found(self, found, spoken):
+        runs, span = found
+        if span is None:
+            return self._switch_failed(f"Couldn't find “{spoken}” on screen")
+        text, run, where, _ = span
+        if self.settings.incognito:
+            return self._switch_failed("Incognito never uses the clipboard")
+        copy_normally(text)
+        if run is not None and runs[run][2] in pointer.EDITABLE:
+            pointer.select_range(runs[run][1], *where)  # show what was copied
+        preview = text if len(text) <= 40 else text[:18].rstrip() + " … " + text[-18:].lstrip()
+        return self._switch_done(f"Copied “{preview}”")
+
     def set_mode(self, name, on=None):
         """Auto-Enter, Incognito or sounds by voice: on, off, or (None) flip. Saved like the switches."""
         current = settings.load()
@@ -855,7 +1142,11 @@ class WidgetController:
         settings.save(current)
         self.reload_settings()
         self.on_settings_changed()
-        label = {"auto_enter": "Auto-Enter", "incognito": "Incognito", "sounds": "Sounds"}[name]
+        label = {"auto_enter": "Auto-Enter", "incognito": "Incognito", "sounds": "Sounds", "invisible": "Invisible mode"}[name]
+        if name == "invisible":
+            if not value:
+                self.show_notice("Widget visible again", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            return
         if name != "auto_enter":  # Auto-Enter already says so (badge, chime, notice)
             self._switch_done(f"{label} {'on' if value else 'off'}")
 
@@ -1245,16 +1536,23 @@ class WidgetController:
         if kind == "switch":
             apps.bring_to_front(found[0][1])
             return self._switch_done(f"→ {found[0][0]}")
-        if kind in ("close", "minimize", "expand"):
+        if kind in ("close", "minimize", "expand", "maximize", "unexpand"):
             target, path = found[0]
             pid = apps.frontmost_pid() if path is None else apps.pid_for(path)
             if pid is None:
                 return self._switch_failed(f"{target} isn't open")
-            ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand")) if kind == "expand" \
-                else apps.window_action(pid, kind)
-            if kind == "expand" and path:
+            if kind == "expand":  # macOS full screen; an app without it gets the whole screen instead
+                ok = apps.window_action(pid, "fullscreen") or apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand"))
+            elif kind == "maximize":
+                ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand"))
+            elif kind == "unexpand":
+                ok = apps.window_action(pid, "exit fullscreen")
+            else:
+                ok = apps.window_action(pid, kind)
+            if kind in ("expand", "maximize") and path:
                 apps.bring_to_front(path)
-            word = {"close": "Closed", "minimize": "Minimized", "expand": "Expanded"}[kind]
+            word = {"close": "Closed", "minimize": "Minimized", "expand": "Full screen:", "maximize": "Maximized",
+                    "unexpand": "Left full screen:"}[kind]
             return self._switch_done(f"{word} {target or 'the window'}") if ok else self._switch_failed("No window to " + kind)
         screen = apps.screen_frame()
         frames = [apps.layout(screen, "size", command[2])] if kind == "size" else list(apps.layout(screen, "beside", command[3]))
@@ -1303,6 +1601,7 @@ class WidgetController:
         """Called from inside the event tap: decide fast, act on the next run-loop pass.
 
         Hands-free: space / return / enter = finish and paste, delete = cancel.
+        Processing: delete = cancel it (nothing is pasted or saved).
         Cancelled toast: delete = discard now (skip the Undo countdown).
         """
         state = self.state
@@ -1312,6 +1611,7 @@ class WidgetController:
             (HANDSFREE, KEY_KEYPAD_ENTER): self.finish,
             (HANDSFREE, KEY_DELETE): self.cancel,
             (CANCELLED, KEY_DELETE): self._expire_cancel,
+            (PROCESSING, KEY_DELETE): self.cancel_processing,
         }.get((state, keycode))
         if action is None:
             return False
@@ -1420,7 +1720,7 @@ class WidgetController:
                 self.set_state(IDLE)
 
         self.hovered = None if self.hidden else self.hit(px, py)
-        accept = self.hovered is not None or self.pressed is not None
+        accept = (self.hovered is not None or self.pressed is not None) and not self.settings.invisible
         if accept != self.accepting_mouse:
             self.accepting_mouse = accept
             self.panel.setIgnoresMouseEvents_(not accept)

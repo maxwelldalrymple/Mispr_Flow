@@ -12,6 +12,8 @@ Control your Mac by voice.
 
 The widget confirms what happened ("→ Google Chrome", "Volume 55%"). The command, with the real names, is saved in Home → **Commands** history (not in Incognito).
 
+**Speed:** a command is first heard by the small, fast Whisper (base.en, about 0.1 s). Fixed commands run at once: tabs, keys, media, scrolling, window layout, modes, numbers, an exact open app's name. Commands with words that must be exact (click, copy, type, search, folders, site tabs, other app names) are checked by the accurate model (about 1.4 s), so they're never acted on a guess.
+
 **Rules for every command:**
 - With no app named, a command acts on **the app you're in**.
 - Words like "please", "go", "open" in front are ignored.
@@ -46,7 +48,12 @@ Buttons, links, fields, tabs, menu items and labeled pictures in **any app**, by
 | "press command shift t" / "press option left" | Any shortcut: command, shift, option, control + a key |
 | "press tab 3 times" / "down 3" / "left five" | Repeated keys and arrows |
 | "type hello@example.com" | Types exactly what you said (no cleanup; Whisper's closing period dropped) |
+| "copy you should be able" | Copies text on screen from those words to the end of that line or passage |
+| "copy key press was to auto enter does" | Copies from the first words through the last ("to", "through", "until"); a split that fits best wins, so "to" inside the text is fine |
+| "copy all" | ⌘A then ⌘C |
 | "select all" / "copy" / "cut" / "paste" / "undo" / "redo" / "save" / "print" | ⌘A ⌘C ⌘X ⌘V ⌘Z ⇧⌘Z ⌘S ⌘P, in any app |
+
+Copying reads the text from the app (Accessibility), no screenshot; the words only need to be close. In editable text the copied part is also highlighted. Incognito never copies.
 
 ## Editing text
 
@@ -106,6 +113,8 @@ Bluetooth and Do Not Disturb have no built-in switch an app can use: make a Shor
 | Your own phrases | **Settings → General → Your own commands**: a phrase that types text and then presses keys ("sign off" → "Best, Alex"; "send it" → cmd enter) |
 
 ## Apps and windows
+
+"expand" is macOS full screen (the green button); "maximize" / "fill" fill the screen without it; "exit full screen" / "shrink" go back.
 
 | Say | Does |
 |---|---|

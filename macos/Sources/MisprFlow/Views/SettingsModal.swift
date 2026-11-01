@@ -139,6 +139,17 @@ struct GeneralSettings: View {
                 KeyRecorder(slot: .autoEnter)
             }
             Divider()
+            SettingRow(title: "Invisible widget",
+                       detail: "Hides the pill at the bottom of the screen: it can't be seen or clicked. Dictation, commands and sounds work as usual.") {
+                Toggle("", isOn: model.binding("invisible")).toggleStyle(.switch).labelsHidden()
+            }
+            Divider()
+            SettingRow(title: "Invisible mode key",
+                       detail: model.invisibleKey.map { "Press \($0.label) to hide or show the widget. You can also say “invisible mode”." }
+                        ?? "Off. Choose modifiers plus a key (like ⌃⌥I) to hide or show the widget.") {
+                KeyRecorder(slot: .invisible)
+            }
+            Divider()
             SettingRow(title: "Microphone", detail: microphone) {
                 Button("Change…") {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension?input")!)
@@ -147,6 +158,12 @@ struct GeneralSettings: View {
             Divider()
             SettingRow(title: "Dictation language", detail: "English. More languages (including auto-detect) are coming.") {
                 Text("English").foregroundStyle(Theme.secondary)
+            }
+        }
+        SettingsGroup {
+            SettingRow(title: "Paste into the main text box",
+                       detail: "When no text box has the cursor, put it in the window's main one (a chat box, a document) and paste there instead of only copying. Never an address bar, a search field or a file name.") {
+                Toggle("", isOn: model.binding("find_text_box")).toggleStyle(.switch).labelsHidden()
             }
         }
         SettingsGroup {
@@ -191,6 +208,11 @@ struct SystemSettings: View {
         SettingsGroup {
             SettingRow(title: "Dictation and notification sounds", detail: "Start, stop, paste, and alert cues.") {
                 Toggle("", isOn: model.binding("sounds")).toggleStyle(.switch).labelsHidden()
+            }
+            Divider()
+            SettingRow(title: "Pause music and videos while you talk",
+                       detail: "Pressing the dictation key pauses Apple Music, Spotify, TV and videos in Chrome tabs; letting go plays them again. Nothing that wasn't playing is started.") {
+                Toggle("", isOn: model.binding("duck_audio")).toggleStyle(.switch).labelsHidden()
             }
         }
         SettingsGroup {
@@ -361,7 +383,7 @@ struct ThemeCard: View {
 struct KeyRecorder: View {
     /// Which shortcut this picks: the dictation key, or the app switcher key (which can also
     /// be a combo like ⌃⌥ or ⌥S, and can be off).
-    enum Slot { case dictation, appSwitch, autoEnter }
+    enum Slot { case dictation, appSwitch, autoEnter, invisible }
 
     @EnvironmentObject var model: AppModel
     var slot: Slot = .dictation
@@ -375,6 +397,7 @@ struct KeyRecorder: View {
         case .dictation: model.dictationKey.label
         case .appSwitch: model.switchKey?.label ?? "Off"
         case .autoEnter: model.autoEnterKey?.label ?? "Off"
+        case .invisible: model.invisibleKey?.label ?? "Off"
         }
     }
 
@@ -390,6 +413,9 @@ struct KeyRecorder: View {
                 if slot == .autoEnter && model.autoEnterKey != nil && !listening {
                     Button("Turn off") { model.setAutoEnterKey(nil); message = nil }.buttonStyle(.link).font(.system(size: 12))
                 }
+                if slot == .invisible && model.invisibleKey != nil && !listening {
+                    Button("Turn off") { model.setInvisibleKey(nil); message = nil }.buttonStyle(.link).font(.system(size: 12))
+                }
                 Button(action: toggle) {
                     Text(listening ? (slot == .dictation ? "Press a key…" : "Press a key or combo…") : current)
                         .font(.system(size: 13, weight: .semibold))
@@ -401,7 +427,8 @@ struct KeyRecorder: View {
                 .buttonStyle(.plain)
                 .help(listening ? "Press the key you want, or Esc to cancel"
                       : slot == .dictation ? "Click to change the dictation key"
-                      : slot == .appSwitch ? "Click to choose the app switcher key or combo" : "Click to choose the Auto-Enter key")
+                      : slot == .appSwitch ? "Click to choose the app switcher key or combo"
+                      : slot == .invisible ? "Click to choose the invisible-mode key" : "Click to choose the Auto-Enter key")
             }
             if let message {
                 Text(message).font(.system(size: 11)).foregroundStyle(Theme.secondary)
@@ -419,6 +446,7 @@ struct KeyRecorder: View {
         listening = true
         combo = ComboPicker()
         message = slot == .autoEnter ? "Hold modifiers and press a key, like ⌃⌥↩. Esc cancels."
+            : slot == .invisible ? "Hold modifiers and press a key, like ⌃⌥I. Esc cancels."
             : slot == .appSwitch ? "Press one key, hold a combo like ⌃⌥ and let go, or press ⌥ plus a letter. Esc cancels."
             : model.dictationKey == .fn ? "To keep fn, press Esc. fn itself can't be picked here while it's the dictation key." : nil
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
@@ -436,7 +464,7 @@ struct KeyRecorder: View {
     private func handle(_ event: NSEvent) {
         let keyDown = event.type == .keyDown, code = Int(event.keyCode)
         let characters = keyDown ? event.charactersIgnoringModifiers : nil
-        let pick = slot == .autoEnter
+        let pick = slot == .autoEnter || slot == .invisible
             ? Self.pickAutoEnter(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags)
             : slot == .appSwitch
             ? combo.feed(keyDown: keyDown, keyCode: code, characters: characters, flags: event.modifierFlags, dictation: model.dictationKey)
@@ -502,6 +530,7 @@ struct KeyRecorder: View {
         case .dictation: model.setDictationKey(key)
         case .appSwitch: model.setSwitchKey(key)
         case .autoEnter: model.setAutoEnterKey(key)
+        case .invisible: model.setInvisibleKey(key)
         }
         message = nil
         stop()

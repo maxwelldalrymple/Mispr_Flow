@@ -11,6 +11,7 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 | `space` / `return` / `enter` while hands-free | Finish and paste |
 | `delete` or the key while hands-free | Cancel ("Transcript cancelled · Undo" for 5 s) |
 | `delete` on the Undo toast | Discard now |
+| `delete`, or a quick double-tap of the key, **while it's processing** | Cancel it: nothing is pasted or saved, and the audio is wiped at once ("Cancelled"). The speech model finishes in the background and its result is dropped, so you can start a new dictation right away |
 | Click the widget's mic / long-press it | Hands-free / push-to-talk with the mouse |
 
 - A quick tap does nothing, and `fn` + another key (fn + arrow) works as normal.
@@ -25,7 +26,15 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 2. **Cleanup:** Gemma-3-4B removes "um/uh/like", repeats and retracted phrases ("Tuesday, no wait, Wednesday" → "Wednesday"), and fixes punctuation. A code-level guard rejects any output with a word you didn't say; then the raw transcript is pasted instead. Edit the cleanup instructions on the **Prompts** page. Hesitation sounds the model leaves in ("Uhh…", "um,", "erm") are always removed afterwards, however Whisper spells them.
 3. **Where it goes:**
    - **A text box is focused:** it pastes, then restores your clipboard (the dictated text is marked private so clipboard managers skip it).
-   - **No text box** (Finder, the desktop, a page with nothing focused): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
+   - **You clicked out of the box you were in (same window):** the cursor goes back into that box and the text is pasted there.
+   - **No text box had the cursor:** it finds the window's **main text box** and pastes there. That's the biggest writable box: a chat box, a message field, a document. It never picks a toolbar's address bar or search, or a file name in a list. The cursor goes to the end of what's already in the box, and Auto-Enter works as usual. Turn this off in Settings → General → **Paste into the main text box**.
+   - **The rule:** the words go to the box you **started** in, unless you've put the cursor in a **new text box** since (in any window), which then gets them instead.
+   - **You switched away while it was transcribing:** the words still go to the box you **started** in (that box, or the main box of that window), and **your windows are never switched**.
+     - **Chrome tabs** (also Brave, Edge, Vivaldi): a tiny script types the words into the tab you started in, with the browser left in the background, and Auto-Enter's Enter goes the same way. This covers claude.ai, ChatGPT, Gmail, LinkedIn, Slack on the web and so on. It needs one browser setting, turned on once: **View → Developer → Allow JavaScript from Apple Events**. Until then, the app says so once and the text waits as below.
+     - Boxes that allow it (normal Mac apps like Notes, TextEdit and Mail, and plain web text boxes) get the text in the background: "Sent to <app>".
+     - Desktop apps that lock this down (the Claude desktop app deliberately blocks every debugging and background-control route) can't be typed into from the background, and nor can rich editors outside a scriptable browser. Auto-Enter there needs a key press. So the text waits ("Ready for <app>: goes in when you go back") and is pasted, and sent with Auto-Enter, the moment you go back to that window.
+     - Not back within 10 minutes: it's left on the clipboard. Long dictations in pieces do the same once you switch.
+   - **No text box at all** (Finder, the desktop): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
    - **Browsers:** if a browser says "no text box", it checks once more 0.15 s later (YouTube's comment box takes focus as it opens). The log records what was focused.
 4. **History:** audio plus a JSON record is saved under `voice-recordings/YYYY-MM-DD/`, unless Incognito is on.
 
@@ -46,6 +55,30 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - **Cues:** a blue ⏎ badge on the widget's corner while it's on, and a chime with an "Auto-Enter on/off" notice when it changes.
 - **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
 - **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
+
+## Spoken punctuation
+
+Say the mark and it's written: "is it done **question mark**" → "is it done?". Also exclamation mark, comma, full stop, period (at a sentence's end), colon, semicolon, dot dot dot, forward slash and backslash ("and/or", "C:\Users"), open/close paren or bracket, hyphen, dash, at sign, hash sign, dollar sign, percent sign, ampersand, asterisk, underscore, **new line** and **new paragraph**.
+
+**Quotation marks:** "he said **quote** I'm hungry **end quote**" → he said “I'm hungry”. Also "open quote … close quote", "quote … unquote", and "quote unquote fine" → “fine”.
+
+Words that are also ordinary English stay as they are: "a period of time", "the colon", "get a quote".
+
+## Pause while you talk
+
+The moment you press the dictation key, whatever is playing pauses (about 4 ms, before the mic even opens), and it plays again when you let go. macOS reports which apps are making sound; if one is a music or video source (Chrome, Safari, Firefox and other browsers, Apple Music, Spotify, TV, Podcasts, VLC, IINA, QuickTime…), the play/pause media key is pressed, just like the keyboard's own key.
+- **Double-tap (hands-free):** after a quick first tap it waits a second before resuming. If the second tap comes, everything stays paused until you finish.
+- When nothing is playing, nothing is pressed, so it never starts music on its own.
+- **Voice commands** (switch key) don't pause anything, so "pause" and "play" keep working.
+- Meetings never pause anything.
+- Turn it off in **Settings → System → Pause music and videos while you talk**.
+
+## Invisible mode
+
+Hides the pill completely: it can't be seen or clicked (clicks go through to whatever is underneath). Everything else works the same: dictation, commands, pasting, Auto-Enter and sounds. Turning it on or off plays the mode chime.
+
+- **⌃⌥I** (Control-Option-I) turns it on or off. Plain ⌃I is left alone because terminals use it as Tab. Change the key, or turn it off, in **Settings → General → Invisible mode key**.
+- Or say "invisible mode" (on/off, or no word to flip) with the switch key held, or use the **Invisible widget** switch in Settings → General.
 
 ## Terminal mode
 
