@@ -2281,42 +2281,62 @@ class TestMainTextBox:
 
 
 class TestWordsGoWhereYouStarted:
-    """Switch windows while it transcribes: the words still go to the box you started in."""
+    """Switch windows while it transcribes: the words still go to the box you started in, in the
+    background when the box allows it, otherwise the moment you go back. Windows never switch."""
 
-    def run(self, controller, monkeypatch, quiet, auto_enter=False):
-        start = W.spots.Spot(10, "Slack", window="w1", element="box")
-        monkeypatch.setattr(W.spots, "capture", lambda: start)
+    START = W.spots.Spot(10, "Claude", window="w1", element="box")
+    ELSEWHERE = W.spots.Spot(11, "Chrome", window="w9")
+
+    def finish(self, controller, monkeypatch, quiet, auto_enter=False):
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
         controller.settings.auto_enter = auto_enter
-        controller.begin_handsfree()  # notes the start spot
-        now = W.spots.Spot(11, "Chrome", window="w9")
-        monkeypatch.setattr(W.spots, "capture", lambda: now)
-        calls = []
-        monkeypatch.setattr(W.spots, "insert_quietly", lambda box, text: calls.append(("quiet", box, text)) or quiet)
-        monkeypatch.setattr(W.spots, "bring_back", lambda spot, box: calls.append(("back", spot.app, box)))
+        controller.begin_handsfree()  # notes where you started
+        monkeypatch.setattr(W.spots, "capture", lambda: self.ELSEWHERE)
+        self.timers, self.calls = [], []
+        monkeypatch.setattr(W.AppHelper, "callLater", lambda delay, fn, *a: self.timers.append((fn, a)))
+        monkeypatch.setattr(W.spots, "insert_quietly", lambda box, text: self.calls.append(("quiet", box, text)) or quiet)
+        monkeypatch.setattr(W.spots, "focus", lambda box: self.calls.append(("focus", box)))
         monkeypatch.setattr(W.spots, "settle", lambda *a: None)
-        monkeypatch.setattr(W.spots, "return_to", lambda spot: calls.append(("return", spot.app)))
-        monkeypatch.setattr(W, "press_enter", lambda *a: calls.append(("enter",)))
+        monkeypatch.setattr(W, "press_enter", lambda *a: self.calls.append(("enter",)))
         controller.finish()
         controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
-        return calls
 
-    def test_inserted_quietly_without_switching(self, controller, monkeypatch):
-        calls = self.run(controller, monkeypatch, quiet=True)
-        assert calls == [("quiet", "box", "Hello.")] and controller.pasted == []
-        assert controller.notice[0] == "Sent to Slack"
+    def run_timers(self):
+        timers, self.timers = self.timers, []
+        for fn, args in timers:
+            fn(*args)
 
-    def test_otherwise_switches_back_pastes_and_returns(self, controller, monkeypatch):
-        calls = self.run(controller, monkeypatch, quiet=False)
-        assert ("back", "Slack", "box") in calls and controller.pasted == ["Hello."]
-        assert calls[-1] == ("return", "Chrome")  # you're put back where you were
+    def test_in_the_background_when_the_box_allows_it(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=True)
+        assert self.calls == [("quiet", "box", "Hello.")] and controller.pasted == []
+        assert controller.notice[0] == "Sent to Claude"
 
-    def test_auto_enter_always_switches_back_to_send(self, controller, monkeypatch):
-        calls = self.run(controller, monkeypatch, quiet=True, auto_enter=True)
-        assert not any(c[0] == "quiet" for c in calls) and ("enter",) in calls and controller.pasted == ["Hello."]
+    def test_otherwise_it_waits_and_goes_in_when_you_go_back(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=False)
+        assert controller.pasted == [] and controller.notice[0] == "Ready for Claude: goes in when you go back"
+        self.run_timers()  # still elsewhere: keeps waiting, nothing pasted, no window moved
+        assert controller.pasted == [] and self.timers
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)  # you went back
+        self.run_timers()
+        assert ("focus", "box") in self.calls and controller.pasted == ["Hello."] and controller.notice[0] == "In Claude"
+
+    def test_auto_enter_waits_then_sends(self, controller, monkeypatch):
+        self.finish(controller, monkeypatch, quiet=True, auto_enter=True)
+        assert not any(c[0] == "quiet" for c in self.calls)  # Return can't be pressed in the background
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
+        self.run_timers()
+        assert controller.pasted == ["Hello."]
+        self.run_timers()  # the Return, just after the paste
+        assert ("enter",) in self.calls
+
+    def test_not_back_in_time_goes_to_the_clipboard(self, controller, monkeypatch, clock):
+        self.finish(controller, monkeypatch, quiet=False)
+        clock.advance(W.HOLD_SECONDS + 1)
+        self.run_timers()
+        assert controller.copied == ["Hello."] and controller.pasted == []
 
     def test_still_there_pastes_as_usual(self, controller, monkeypatch):
-        start = W.spots.Spot(10, "Slack", window="w1", element="box")
-        monkeypatch.setattr(W.spots, "capture", lambda: start)
+        monkeypatch.setattr(W.spots, "capture", lambda: self.START)
         controller.begin_handsfree()
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")

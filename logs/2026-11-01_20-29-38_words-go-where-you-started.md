@@ -18,3 +18,20 @@
 - `test_entrypoints`, `test_host`.
 - The shared fixture now stubs `capture()`, so tests never read the real front app.
 - All pass.
+
+## Change: never switch windows (owner: "I don't want you to move the window back… do it in the background")
+
+**Background test** in a throwaway Chrome tab (opened, tested, closed; Chrome came to the front on opening despite `open -g`, and the Claude window was put back in front):
+
+| Box | AXSelectedText | AXValue set | Keystrokes posted to Chrome's process |
+|---|---|---|---|
+| `<textarea>` | no | **yes** (applied about 0.2 s later) | no |
+| `contenteditable` (Claude, ChatGPT, Slack style) | no | no | no |
+
+**Now:**
+- `insert_quietly` tries `AXSelectedText`, then `AXValue` with the words placed at the cursor. Either is verified after 0.25 s.
+- If neither works, or Auto-Enter is on, the text is **held**. Every 0.3 s it checks whether you're back in that window, and not dictating. Once you are, it focuses the box, pastes, and presses Enter with Auto-Enter.
+- After 10 minutes it goes to the clipboard. One held text at a time (an older one is copied).
+- `bring_back` and `return_to` are removed.
+
+**Tests:** in the background when allowed; otherwise waits with nothing pasted while elsewhere, then pasted on return; Auto-Enter waits then sends; timeout copies; still there pastes as usual; `_landed` verification. Affected files pass.

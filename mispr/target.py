@@ -1,17 +1,17 @@
 """Where a dictation goes: the text box you were in when you started talking, even if you've
-switched windows or apps while it was being transcribed.
+switched windows or apps while it was being transcribed. Windows are never switched for you.
 
 At the start, `capture()` notes the app, its window, and the focused text box (if one has the
-cursor). At the end, if you're still there nothing changes; otherwise `deliver()`:
-  1. quietly inserts the text into that box (Accessibility, no window switch), or
-  2. when that isn't possible (or Auto-Enter must press Return there), brings that window back,
-     pastes, sends, and returns you to where you were.
+cursor). At the end, if you're still there nothing changes; otherwise:
+  1. the text is inserted into that box in the background (`insert_quietly`), or
+  2. where the box doesn't allow that (rich web editors) or Auto-Enter must press Return, it
+     waits, and goes in the moment you go back to that window.
 """
 
 import time
 from dataclasses import dataclass
 
-from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication, NSWorkspace
+from AppKit import NSWorkspace
 
 from . import context, pointer
 
@@ -74,41 +74,46 @@ def box_for(spot):
     return found.element if found else None
 
 
-def insert_quietly(element, text):
-    """Put `text` at the cursor of `element` without switching windows. True if it landed."""
+def _value(element):
+    value = pointer._ax(element, "AXValue")
+    return value if isinstance(value, str) else None
+
+
+def insert_quietly(element, text, wait=0.25, pause=time.sleep):
+    """Put `text` at the cursor of `element` in the background, without switching windows.
+    Tries the box's own "insert" (native Mac text boxes), then setting its whole text with the
+    words added at the cursor (plain web text boxes). Rich web editors (Claude, ChatGPT, Slack…)
+    refuse both: False. Chrome applies changes a moment later, hence the short wait."""
     import ApplicationServices as AS
-    before = pointer._ax(element, "AXValue")
-    if AS.AXUIElementSetAttributeValue(element, "AXSelectedText", text) != 0:
+    before = _value(element)
+    if before is None:
         return False
-    after = pointer._ax(element, "AXValue")
-    # Some boxes accept the call but change nothing: check the text is really there now.
-    return isinstance(after, str) and after != before and text.strip()[:20] in after
-
-
-def bring_back(spot, element):
-    """Bring the start window to the front with the cursor in `element`."""
-    import ApplicationServices as AS
-    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(spot.pid)
-    if app is None:
+    if AS.AXUIElementSetAttributeValue(element, "AXSelectedText", text) == 0:
+        pause(wait)
+        if _landed(element, before, text):
+            return True
+    cursor = len(before)
+    selected = pointer._ax(element, "AXSelectedTextRange")
+    if selected is not None:
+        ok, rng = AS.AXValueGetValue(selected, AS.kAXValueCFRangeType, None)
+        if ok and 0 <= rng.location <= len(before):
+            cursor = rng.location
+    spaced = text if cursor == 0 or before[cursor - 1:cursor].isspace() else " " + text
+    if AS.AXUIElementSetAttributeValue(element, "AXValue", before[:cursor] + spaced + before[cursor:]) != 0:
         return False
-    app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-    if spot.window is not None:
-        AS.AXUIElementPerformAction(spot.window, "AXRaise")
-    if element is not None:
-        AS.AXUIElementSetAttributeValue(element, "AXFocused", True)
-    return True
+    pause(wait)
+    return _landed(element, before, text)
 
 
-def return_to(spot):
-    """Go back to where you were (the app and window you'd switched to)."""
-    if spot is None:
-        return
+def _landed(element, before, text):
+    after = _value(element)
+    return after is not None and after != before and text.strip()[:20] in after
+
+
+def focus(element):
+    """Put the cursor in `element` (the window is already in front: you came back to it)."""
     import ApplicationServices as AS
-    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(spot.pid)
-    if app is not None:
-        app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-        if spot.window is not None:
-            AS.AXUIElementPerformAction(spot.window, "AXRaise")
+    return AS.AXUIElementSetAttributeValue(element, "AXFocused", True) == 0
 
 
 def settle(seconds=0.15):

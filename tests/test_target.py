@@ -29,3 +29,10 @@ def test_box_for_prefers_the_box_with_the_cursor(monkeypatch):
     assert target.box_for(Spot(1, "x")) == "main"
     monkeypatch.setattr(target.pointer, "text_inputs", lambda pid: [])
     assert target.box_for(Spot(1, "x")) is None
+
+
+def test_landed_needs_the_words_really_there(monkeypatch):
+    monkeypatch.setattr(target.pointer, "_ax", lambda el, attr: el)
+    assert target._landed("Hi there. Hello.", "Hi there.", "Hello.")
+    assert not target._landed("Hi there.", "Hi there.", "Hello.")  # accepted the call, changed nothing
+    assert not target._landed(None, "", "Hello.")

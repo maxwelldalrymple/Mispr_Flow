@@ -127,7 +127,8 @@ PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next pa
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
 SPEECH_FLOOR = 0.003  # peak below this: the mic heard nothing
 SPEECH_LEVEL = 0.5  # the speech check listens at this peak level
-RETURN_AFTER = 0.9  # seconds after pasting back in the start window before returning you to where you were
+HOLD_SECONDS = 600  # words waiting for you to go back to their window; after this, the clipboard
+HOLD_POLL = 0.3  # how often to check whether you're back
 MAIN_INPUT_SETTLE = 0.1  # seconds for focus to land in the main text box before pasting
 TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
@@ -522,28 +523,52 @@ class WidgetController:
             self._save(storage.COPIED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
             self._wipe(reason)
             return self.to_idle()
-        self._send_to_spot(spot, box, text)
+        how = self._send_to_spot(spot, box, text)
         self._last_typed = text
-        self.sounds.play(sounds.PASTE)
-        self.show_notice(f"Sent to {spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self.sounds.play(sounds.PASTE if how == "quiet" else sounds.STOP)
+        self.show_notice(f"Sent to {spot.app}" if how == "quiet" else f"Ready for {spot.app}: goes in when you go back",
+                         SWITCH_RESULT_SECONDS if how == "quiet" else COPIED_NOTICE_SECONDS, (IDLE, HOVER))
         self._save(storage.PASTED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
         self._wipe(reason)
         self.to_idle()
 
     def _send_to_spot(self, spot, box, text):
-        """Put `text` in `box` (in the window you started in): quietly if it allows, otherwise by
-        bringing that window back, pasting (and Auto-Enter), then returning you to where you are."""
-        quiet = not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text)
-        log(f"delivered to the start box in {spot.app}: {'quietly' if quiet else 'by switching back'}")
-        if quiet:
+        """Put `text` in `box` (the window you started in) without ever switching windows: in the
+        background if the box allows it ("quiet"); otherwise it waits and goes in the moment you go
+        back to that window ("held"). Auto-Enter needs a key press there, so it always waits."""
+        if not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text):
+            log(f"delivered to the start box in {spot.app}: quietly")
+            return "quiet"
+        held = getattr(self, "_held", None)
+        if held is not None and not self.settings.incognito:  # one waits at a time: the older one is copied
+            copy_text(held["text"])
+        self._held = {"spot": spot, "box": box, "text": text, "until": time.monotonic() + HOLD_SECONDS,
+                      "url": (self.rec_recorded_in or {}).get("url")}
+        log(f"held for {spot.app}: goes in when you go back")
+        AppHelper.callLater(HOLD_POLL, self._check_held)
+        return "held"
+
+    def _check_held(self):
+        """Waiting words: in they go once you're back in that window; after HOLD_SECONDS, the clipboard."""
+        held = getattr(self, "_held", None)
+        if held is None:
             return
-        here = spots.capture()  # where you are now, to come back to
-        spots.bring_back(spot, box)
-        spots.settle()
-        (type_text if self.settings.incognito else paste_text)(text)
+        spot = held["spot"]
+        if time.monotonic() > held["until"]:
+            self._held = None
+            if not self.settings.incognito:
+                copy_text(held["text"])
+            return self.show_notice(f"Not back in {spot.app}: copied instead", COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+        if self.state not in (IDLE, HOVER) or not spots.still_there(spot):
+            return AppHelper.callLater(HOLD_POLL, self._check_held)  # not yet (or you're dictating again)
+        self._held = None
+        spots.focus(held["box"])
+        spots.settle(0.1)
+        (type_text if self.settings.incognito else paste_text)(held["text"])
         if self.settings.auto_enter:
-            AppHelper.callLater(ENTER_DELAY, press_enter, send_with_command((self.rec_recorded_in or {}).get("url")))
-        AppHelper.callLater(RETURN_AFTER, spots.return_to, here)
+            AppHelper.callLater(ENTER_DELAY, press_enter, send_with_command(held["url"]))
+        self.sounds.play(sounds.PASTE)
+        self.show_notice(f"In {spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
     def _focus_main_input(self):
         """Nothing has the cursor: put it in the front window's main text box (a chat box, a
@@ -641,11 +666,13 @@ class WidgetController:
         if not text:
             self.sounds.play(sounds.ALERT)
         elif run["deferred"] and self._start_spot is not None and spots.box_for(self._start_spot) is not None:
-            self._send_to_spot(self._start_spot, spots.box_for(self._start_spot), "".join(run["deferred"]).lstrip()
-                               if len(run["deferred"]) == len(run["texts"]) else "".join(run["deferred"]))
+            how = self._send_to_spot(self._start_spot, spots.box_for(self._start_spot), "".join(run["deferred"]).lstrip()
+                                     if len(run["deferred"]) == len(run["texts"]) else "".join(run["deferred"]))
             self._last_typed = text
-            self.sounds.play(sounds.PASTE)
-            self.show_notice(f"Sent to {self._start_spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            self.sounds.play(sounds.PASTE if how == "quiet" else sounds.STOP)
+            app = self._start_spot.app
+            self.show_notice(f"Sent to {app}" if how == "quiet" else f"Ready for {app}: goes in when you go back",
+                             COPIED_NOTICE_SECONDS, (IDLE, HOVER))
             self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
         elif run["where"] == context.NO:
             if not self.settings.incognito:
