@@ -337,6 +337,7 @@ class WidgetController:
         p.setContentView_(self.view)
         self._poll_screen(force=True)
         p.orderFrontRegardless()
+        self.apply_invisible()
         self.recorder.prepare()
         if setup.missing():
             self.set_state(SETUP)
@@ -412,6 +413,23 @@ class WidgetController:
         self.on_saved(path)
         return path
 
+    def apply_invisible(self):
+        """Invisible mode: the pill (and its notices) fully transparent, clicks pass through."""
+        panel = getattr(self, "panel", None)
+        if panel is None:
+            return
+        panel.setAlphaValue_(0.0 if self.settings.invisible else 1.0)
+        if self.settings.invisible:
+            self.hovered = self.pressed = None
+            self.accepting_mouse = False
+            panel.setIgnoresMouseEvents_(True)
+            if self.state == HOVER:
+                self.set_state(IDLE)
+
+    def toggle_invisible(self):
+        """The invisible-mode key: flip it, save it, and say so with a sound (there's nothing to see)."""
+        self.set_mode("invisible")
+
     def toggle_auto_enter(self):
         """The Auto-Enter key: flip Auto-Enter, save it, and say so (badge, chime, notice)."""
         current = settings.load()
@@ -422,7 +440,7 @@ class WidgetController:
 
     def reload_settings(self):
         """Pick up settings.json after the main window changed it."""
-        was_auto_enter = self.settings.auto_enter
+        was_auto_enter, was_invisible = self.settings.auto_enter, self.settings.invisible
         self.settings = settings.load()
         if self.settings.auto_enter != was_auto_enter:  # say so, by sound and on the widget
             self.sounds.enabled = self.settings.sounds
@@ -430,6 +448,9 @@ class WidgetController:
             self.show_notice("Auto-Enter on ⏎" if self.settings.auto_enter else "Auto-Enter off",
                              AUTO_ENTER_NOTICE_SECONDS, (IDLE, HOVER))
         self.sounds.enabled = self.settings.sounds
+        if self.settings.invisible != was_invisible:
+            self.sounds.play(sounds.LOCK)  # the cue for a mode change; invisible has nothing to show
+        self.apply_invisible()
         self.apply_prompts()
         log(f"settings reloaded: {self.settings}")
 
@@ -855,7 +876,11 @@ class WidgetController:
         settings.save(current)
         self.reload_settings()
         self.on_settings_changed()
-        label = {"auto_enter": "Auto-Enter", "incognito": "Incognito", "sounds": "Sounds"}[name]
+        label = {"auto_enter": "Auto-Enter", "incognito": "Incognito", "sounds": "Sounds", "invisible": "Invisible mode"}[name]
+        if name == "invisible":
+            if not value:
+                self.show_notice("Widget visible again", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            return
         if name != "auto_enter":  # Auto-Enter already says so (badge, chime, notice)
             self._switch_done(f"{label} {'on' if value else 'off'}")
 
@@ -1420,7 +1445,7 @@ class WidgetController:
                 self.set_state(IDLE)
 
         self.hovered = None if self.hidden else self.hit(px, py)
-        accept = self.hovered is not None or self.pressed is not None
+        accept = (self.hovered is not None or self.pressed is not None) and not self.settings.invisible
         if accept != self.accepting_mouse:
             self.accepting_mouse = accept
             self.panel.setIgnoresMouseEvents_(not accept)

@@ -339,7 +339,7 @@ _SOUND = (
 # Menu items by voice: "click save", "file new window", "edit find".
 # The app's own modes by voice: on, off, or (no state) flip.
 _MODE_NAMES = {"auto_enter": r"auto\s*-?\s*enter|automatic\s+enter|auto\s+send", "incognito": r"incognito|private",
-               "sounds": r"sounds?|sound\s+effects"}
+               "sounds": r"sounds?|sound\s+effects", "invisible": r"invisible|hidden\s+widget|invisible\s+widget"}
 _MODE_WORDS = "|".join(_MODE_NAMES.values())
 _MODE = re.compile(rf"^(?:(?P<verb>turn\s+on|turn\s+off|switch\s+on|switch\s+off|enable|disable)\s+)?(?:the\s+)?"
                    rf"(?P<mode>{_MODE_WORDS})(?:\s+mode)?(?:\s+(?P<state>on|off))?$")

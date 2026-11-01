@@ -175,6 +175,7 @@ def _connect_host(app, widget, open_setup, fn=None):
             fn.set_trigger(widget.settings.hotkey)  # a new dictation key applies right away
             fn.set_switch_trigger(widget.settings.switch_hotkey)
             fn.set_toggle_trigger(widget.settings.auto_enter_hotkey)
+            fn.set_extra_toggle("invisible", widget.settings.invisible_hotkey, widget.toggle_invisible)
 
     host.listen({"open_setup": open_setup, "reload_settings": reload_settings, "quit": quit_app,
                  "start_meeting": widget.begin_meeting, "stop_meeting": widget.stop_meeting,
@@ -274,6 +275,7 @@ def main():
                           trigger=widget.settings.hotkey, on_note=widget.request_note,
                           on_switch=widget.switch_key, switch_trigger=widget.settings.switch_hotkey,
                           on_toggle=widget.toggle_auto_enter, toggle_trigger=widget.settings.auto_enter_hotkey)
+    fn.set_extra_toggle("invisible", widget.settings.invisible_hotkey, widget.toggle_invisible)
     status_item = _status_item()
     _keepalive.extend([lock, status_item, widget, fn])
     _install_shutdown(status_item, widget)

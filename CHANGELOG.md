@@ -2,6 +2,11 @@
 
 All notable changes to Mispr Flow. Dates are 2026.
 
+## Nov 1: invisible mode (unreleased)
+
+- **Invisible mode:** ⌃⌥I (changeable), "invisible mode" by voice, or Settings → General hides the pill. It can't be seen or clicked, and everything keeps working.
+- **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
+
 ## Oct 2: v1.2.0: control your whole Mac by voice
 
 - **Click anything**, in any app: "click Sign in", double / right click, hover, "click" where the mouse is. Read from the app (Accessibility), no OCR. The closest name wins; several matches get **numbers** ("show numbers", then "7"). Plus a **grid** for unnamed spots, **drag**, and scrolling a named area.

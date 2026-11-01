@@ -50,6 +50,8 @@ def parse(text):
     ("Auto enter on.", ("mode", "auto_enter", True)),
     ("incognito mode", ("mode", "incognito", None)),
     ("turn off sounds", ("mode", "sounds", False)),
+    ("invisible mode", ("mode", "invisible", None)),
+    ("Invisible mode off.", ("mode", "invisible", False)),
 ])
 def test_parse(said, expected):
     assert parse(said) == expected

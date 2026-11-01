@@ -141,6 +141,7 @@ enum CommandCatalog {
             Say(words: "auto enter on", does: "Auto-Enter on (off, or “auto enter mode” to flip)", kind: "mode"),
             Say(words: "incognito mode", does: "Incognito on or off", kind: "mode"),
             Say(words: "sounds off", does: "The app's sounds", kind: "mode"),
+            Say(words: "invisible mode", does: "Hides the widget (⌃⌥I too); say it again to bring it back", kind: "mode"),
             Say(words: "run shortcut morning", does: "Runs a shortcut from the Shortcuts app", kind: "run_shortcut"),
             Say(words: "again", does: "Repeats the last command", kind: "again"),
             Say(words: "do that 3 times", does: "Repeats it 3 times", kind: "again"),

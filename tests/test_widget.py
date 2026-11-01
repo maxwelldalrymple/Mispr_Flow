@@ -2187,3 +2187,42 @@ class TestLongDictationSwitch:
         controller.begin_handsfree()
         controller.finish()
         assert not getattr(controller.transcriber, "chunk_calls", None) and controller.transcriber.calls
+
+
+class TestInvisibleMode:
+    class Panel:
+        def __init__(self):
+            self.alpha, self.ignores = 1.0, True
+        def setAlphaValue_(self, a):
+            self.alpha = a
+        def setIgnoresMouseEvents_(self, v):
+            self.ignores = v
+
+    def test_hidden_and_click_through(self, controller):
+        controller.panel = self.Panel()
+        controller.settings.invisible = True
+        controller.accepting_mouse = True
+        controller.apply_invisible()
+        assert controller.panel.alpha == 0.0 and controller.panel.ignores is True and not controller.accepting_mouse
+        controller.settings.invisible = False
+        controller.apply_invisible()
+        assert controller.panel.alpha == 1.0
+
+    def test_dictation_still_works_while_invisible(self, controller):
+        controller.panel = self.Panel()
+        controller.settings.invisible = True
+        controller.apply_invisible()
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."]
+
+    def test_key_and_voice_flip_it(self, controller, monkeypatch):
+        current = W.settings.Settings()
+        monkeypatch.setattr(W.settings, "load", lambda: current)
+        monkeypatch.setattr(W.settings, "save", lambda s: None)
+        controller.panel = self.Panel()
+        controller.toggle_invisible()
+        assert current.invisible is True and controller.panel.alpha == 0.0 and controller.sounds.played[-1] == "lock"
+        controller.set_mode("invisible", False)
+        assert controller.panel.alpha == 1.0 and controller.notice[0] == "Widget visible again"

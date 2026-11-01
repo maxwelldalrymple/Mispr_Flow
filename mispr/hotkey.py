@@ -146,6 +146,8 @@ class FnMonitor:
         # The Auto-Enter key: on_toggle() once per press. Off when toggle_trigger is None.
         self.on_toggle = on_toggle
         self.toggle_trigger = normalize_toggle_trigger(toggle_trigger)
+        # More on/off keys (invisible mode): name -> (trigger, callback).
+        self.extra_toggles = {}
         self._swallowed_keys = set()  # swallow the key-up of keys whose key-down we took
         self.active = False  # True when fn presses are swallowed
         self._tap = None
@@ -174,6 +176,24 @@ class FnMonitor:
     def set_toggle_trigger(self, trigger):
         """Change (or turn off, with None) the Auto-Enter key."""
         self.toggle_trigger = normalize_toggle_trigger(trigger)
+
+    def set_extra_toggle(self, name, trigger, callback):
+        """Another on/off key (e.g. invisible mode); a None or unusable trigger turns it off."""
+        trigger = normalize_toggle_trigger(trigger)
+        if trigger is None:
+            self.extra_toggles.pop(name, None)
+        else:
+            self.extra_toggles[name] = (trigger, callback)
+
+    def _toggle_for(self, event, keycode):
+        """The callback for the on/off key just pressed (Auto-Enter, invisible mode…), or None."""
+        if self._is_toggle(event, keycode):
+            return self.on_toggle
+        held = Quartz.CGEventGetFlags(event) & _ALL_COMBO_FLAGS
+        for trigger, callback in self.extra_toggles.values():
+            if keycode == trigger["keycode"] and held == combo_mask(trigger):
+                return callback
+        return None
 
     def _is_toggle(self, event, keycode):
         t = self.toggle_trigger
@@ -313,9 +333,10 @@ class FnMonitor:
                     self._swallowed_keys.add(keycode)
                     return None  # ⌥M would otherwise type "µ"
                 return event
-            if self._is_toggle(event, keycode):  # the Auto-Enter key: on/off, and the app never sees it
+            toggle = self._toggle_for(event, keycode)
+            if toggle is not None:  # an on/off key (Auto-Enter, invisible mode): the app never sees it
                 if not Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
-                    AppHelper.callAfter(self.on_toggle)
+                    AppHelper.callAfter(toggle)
                 if self.active:
                     self._swallowed_keys.add(keycode)
                     return None

@@ -237,6 +237,18 @@ final class AppModel: ObservableObject {
 
     /// The app switcher key (nil turns it off).
     var autoEnterKey: DictationKey? { settingsFile.autoEnterKey }
+    var invisibleKey: DictationKey? { settingsFile.invisibleKey }
+
+    func setInvisibleKey(_ key: DictationKey?) {
+        do {
+            try settingsFile.setInvisibleKey(key)
+            settingsError = nil
+            engine.send(.reloadSettings)
+        } catch {
+            settingsError = "Couldn't save the shortcut: \(error.localizedDescription)"
+        }
+        objectWillChange.send()
+    }
     var customCommands: [CustomCommand] { settingsFile.customCommands }
 
     func setCustomCommands(_ commands: [CustomCommand]) {

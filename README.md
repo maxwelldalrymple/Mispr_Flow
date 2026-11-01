@@ -103,6 +103,8 @@ In the app (Settings), or `~/Library/Application Support/Mispr_Flow/settings.jso
 | `incognito` | `false` | Save nothing; type instead of paste |
 | `auto_enter` | `false` | Press Return after dictated text is pasted (also in terminals; ⌘Return on LinkedIn, Gmail, Outlook) |
 | `auto_enter_hotkey` | ⌃⌥↩ | The key that turns Auto-Enter on/off; `null` = off |
+| `invisible` | `false` | Invisible mode: the pill can't be seen or clicked; dictation and commands work as usual |
+| `invisible_hotkey` | ⌃⌥I | The key that turns invisible mode on/off; `null` = off |
 | `auto_update` | `true` | Check GitHub for a new version ~5×/day and install stable ones when idle (betas are only offered) |
 | `live_long_dictations` | `false` | Type long dictations in piece by piece while processing |
 | `custom_commands` | `[]` | Your own voice commands: `[{"say": "sign off", "type": "Best, Alex", "keys": "enter"}]` |

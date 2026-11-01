@@ -35,19 +35,22 @@ def wired(monkeypatch):
     fake_app = FakeNSApp()
 
     class Widget:
-        settings = type("S", (), {"hotkey": {"kind": "fn"}, "switch_hotkey": {"kind": "key", "keycode": 96}, "auto_enter_hotkey": None})()
+        settings = type("S", (), {"hotkey": {"kind": "fn"}, "switch_hotkey": {"kind": "key", "keycode": 96}, "auto_enter_hotkey": None, "invisible_hotkey": None})()
         sounds = type("Snd", (), {"play": lambda self, name: None})()
         started = 0
 
         def start(self):
             Widget.started += 1
 
-        fn_down = fn_up = fn_combo = handle_key = request_note = switch_key = toggle_auto_enter = lambda self, *a: None
+        fn_down = fn_up = fn_combo = handle_key = request_note = switch_key = toggle_auto_enter = toggle_invisible = lambda self, *a: None
 
     class Fn:
         def __init__(self, *args, trigger=None, on_note=None, **kw):
             self.args, self.trigger, self.on_note = args, trigger, on_note
             self._tap, self.active = object(), True
+
+        def set_extra_toggle(self, name, trigger, callback):
+            self.extra = (name, trigger, callback)
 
     monkeypatch.setattr(app, "_single_instance_lock", lambda: "lock")
     monkeypatch.setattr(app, "_brand_process", lambda: None)
@@ -117,6 +120,9 @@ class TestMain:
         class NoTap:
             def __init__(self, *a, **kw):
                 self._tap, self.active = None, False
+
+            def set_extra_toggle(self, *a):
+                pass
 
         monkeypatch.setattr(app.hotkey, "FnMonitor", NoTap)
         app.main()

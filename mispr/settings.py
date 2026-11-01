@@ -30,6 +30,10 @@ class Settings:
     # The app switcher key (hold it, say an app, let go): same format as `hotkey`; None = off.
     switch_hotkey: dict = None
     # The Auto-Enter key (press to turn Auto-Enter on/off): a combo like `switch_hotkey`; None = off.
+    # Invisible mode: the pill can't be seen or clicked; dictation and commands work as usual.
+    invisible: bool = False
+    invisible_hotkey: dict = field(default_factory=lambda: {"kind": "combo", "mods": ["control", "option"],
+                                                            "keycode": 34, "label": "⌃⌥I"})
     auto_enter_hotkey: dict = field(default_factory=lambda: {"kind": "combo", "mods": ["control", "option"],
                                                              "keycode": 36, "label": "⌃⌥↩"})
     # Spoken nicknames for apps: {"c": "Google Chrome", "scooby snacks": "Google Chrome"}.

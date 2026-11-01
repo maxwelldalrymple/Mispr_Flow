@@ -47,6 +47,13 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
 - **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
 
+## Invisible mode
+
+Hides the pill completely: it can't be seen or clicked (clicks go through to whatever is underneath). Everything else works the same: dictation, commands, pasting, Auto-Enter and sounds. Turning it on or off plays the mode chime.
+
+- **⌃⌥I** (Control-Option-I) turns it on or off. Plain ⌃I is left alone because terminals use it as Tab. Change the key, or turn it off, in **Settings → General → Invisible mode key**.
+- Or say "invisible mode" (on/off, or no word to flip) with the switch key held, or use the **Invisible widget** switch in Settings → General.
+
 ## Terminal mode
 
 Dictating into Terminal, iTerm, Warp, Ghostty, kitty, Alacritty, WezTerm, Hyper, Tabby or Rio turns spoken syntax into shell syntax:
