@@ -64,6 +64,7 @@ from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
 from .paste import ENTER_DELAY, RESTORE_AFTER, copy_normally, copy_text, paste_text, press_enter, send_with_command, type_text
 from .threads import start_daemon
+from .cleanup import spoken_punctuation
 from .transcribe import DICTATION_VOCABULARY, Transcriber, split_points
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -639,7 +640,11 @@ class WidgetController:
         if terminal.is_terminal(self.rec_recorded_in):
             cleaner = self.cleaner if self.settings.cleanup else None
             return lambda raw: terminal.clean(raw, cleaner)
-        return self.cleaner.clean if self.settings.cleanup else None
+        # Spoken punctuation ("question mark", "quote … end quote", "new line") becomes the marks,
+        # before cleanup (which keeps them) or instead of it.
+        if self.settings.cleanup:
+            return lambda raw: self.cleaner.clean(spoken_punctuation(raw))
+        return lambda raw: (spoken_punctuation(raw), None)
 
     def _process_in_chunks(self, audio, reason):
         """A long dictation: transcribe it in pieces cut at pauses and type each one in as soon

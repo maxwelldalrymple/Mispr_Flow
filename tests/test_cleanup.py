@@ -378,3 +378,48 @@ class TestStripFillers:
     def test_guard_counts_long_fillers_as_fillers(self):
         from mispr.cleanup import check
         assert check("Uhh... YouTube?", "YouTube?") is None  # used to be "dropped too much"
+
+
+class TestSpokenQuotes:
+    @pytest.mark.parametrize("said, written", [
+        ("He said quote I'm hungry end quote and left.", "He said “I'm hungry” and left."),
+        ("He said, quote, I'm hungry, end quote.", "He said, “I'm hungry”."),
+        ("open quote to be or not to be close quote", "“to be or not to be”"),
+        ("It was quote unquote fine.", "It was “fine”."),
+        ("She said quote see you tomorrow.", "She said “see you tomorrow.”"),
+        ("He wrote quote hello world unquote in the code", "He wrote “hello world” in the code"),
+    ])
+    def test_marks(self, said, written):
+        from mispr.cleanup import spoken_quotes
+        assert spoken_quotes(said) == written
+
+    @pytest.mark.parametrize("text", ["Can you get me a quote for the job?", "Quote of the day is great.",
+                                      "The quote was expensive.", "No quotes here."])
+    def test_the_noun_is_left_alone(self, text):
+        from mispr.cleanup import spoken_quotes
+        assert spoken_quotes(text) == text
+
+
+class TestSpokenPunctuation:
+    @pytest.mark.parametrize("said, written", [
+        ("Is it done question mark.", "Is it done?"),
+        ("That is great exclamation point.", "That is great!"),
+        ("Use and forward slash or here.", "Use and/or here."),
+        ("The path is C colon backslash Users backslash max", "The path is C:\\Users\\max"),
+        ("Time is 5 colon 30", "Time is 5:30"),
+        ("Note colon Buy milk", "Note: Buy milk"),
+        ("Call me open paren maybe close paren.", "Call me (maybe)."),
+        ("Stop here period", "Stop here."),
+        ("First line new line second line", "First line\nSecond line"),
+        ("Wait dot dot dot what", "Wait… what"),
+        ("He said quote hello end quote comma then left period", "He said “hello”, then left."),
+        ("Price is dollar sign 5", "Price is $5"),
+    ])
+    def test_marks(self, said, written):
+        from mispr.cleanup import spoken_punctuation
+        assert spoken_punctuation(said) == written
+
+    @pytest.mark.parametrize("text", ["It took a period of time.", "The colon is fine.", "What time is it?"])
+    def test_ordinary_words_stay(self, text):
+        from mispr.cleanup import spoken_punctuation
+        assert spoken_punctuation(text) == text

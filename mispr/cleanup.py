@@ -195,3 +195,76 @@ class Cleaner:
             return (strip_fillers(raw) if guard else raw), info
         info["applied"] = True
         return (strip_fillers(cleaned) if guard else cleaned), info
+
+
+# --- Spoken quotation marks ("quote … end quote") -------------------------------------------------
+
+_END = r"(?:end\s+(?:of\s+)?quote|close\s+quote|unquote|end\s+quotes?)"
+_START = r"(?:open\s+quotes?|quote)"
+# "a quote", "the quote", "get a quote": the noun, never a quotation mark.
+_NOUN_BEFORE = r"(?<!\ba\s)(?<!\ban\s)(?<!\bthe\s)(?<!\bthis\s)(?<!\bthat\s)(?<!\bmy\s)(?<!\byour\s)(?<!\bour\s)(?<!\bhis\s)(?<!\bher\s)(?<!\bfor\s)(?<!\bno\s)"
+_PAIR = re.compile(rf"{_NOUN_BEFORE}\b{_START}\b[,:]?\s*(?P<inner>.+?)[,]?\s*\b{_END}\b", re.IGNORECASE)
+_SCARE = re.compile(r"\bquote[,]?\s+unquote\b[,]?\s+(?P<word>[\w'’-]+)", re.IGNORECASE)
+_TO_SENTENCE_END = re.compile(rf"{_NOUN_BEFORE}\b{_START}\b(?!\s+of\b)[,:]?\s+(?P<inner>[^.?!]+?)(?P<end>[.?!]|$)", re.IGNORECASE)
+
+
+def spoken_quotes(text):
+    """ "he said quote I'm hungry end quote" -> 'he said “I'm hungry”'. Also "open quote … close
+    quote", "quote … unquote", "quote unquote fine" -> “fine”, and a lone "quote …" to the end of
+    the sentence. "a quote", "get a quote" (the noun) are left alone."""
+    if not text or "quote" not in text.lower():
+        return text
+    out = _SCARE.sub(lambda m: f"“{m['word']}”", text)
+    out = _PAIR.sub(lambda m: f"“{m['inner'].strip(' ,')}”", out)
+    out = _TO_SENTENCE_END.sub(lambda m: f"“{m['inner'].strip(' ,')}{m['end']}”" if m["end"] else f"“{m['inner'].strip(' ,')}”", out)
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    out = re.sub(r"“\s*([a-z])", lambda m: "“" + m[1], out)
+    return re.sub(r"\s{2,}", " ", out).strip()
+
+
+# --- Spoken punctuation ("question mark", "forward slash", "new line"…) -------------------------------
+
+# (pattern, symbol, how it sits): "after" hugs the word before ("hi ?" -> "hi?"), "before" hugs the
+# word after ("( a" -> "(a"), "both" joins the two ("and / or" -> "and/or"), "space" keeps spaces.
+_MARKS = [
+    (r"question\s+mark", "?", "after"), (r"exclamation\s+(?:mark|point)", "!", "after"),
+    (r"full\s+stop", ".", "after"), (r"comma", ",", "after"), (r"semi\s*-?\s*colon", ";", "after"),
+    (r"period(?=\s*$|\s+(?-i:[A-Z]))", ".", "after"),  # at a sentence's end, not "a period of time"
+    (r"ellipsis|dot\s+dot\s+dot", "…", "after"),
+    (r"back\s*-?\s*slash", "\\", "both"), (r"(?:forward\s+)?slash", "/", "both"),
+    (r"colon(?=\s*(?-i:[A-Z\d\\])|\s*$)", ":", "after"),  # "C colon backslash", not "the colon is"
+    (r"open\s+(?:paren(?:thesis)?|bracket\s+round)", "(", "before"), (r"close\s+paren(?:thesis)?", ")", "after"),
+    (r"open\s+(?:square\s+)?bracket", "[", "before"), (r"close\s+(?:square\s+)?bracket", "]", "after"),
+    (r"open\s+(?:curly\s+)?brace", "{", "before"), (r"close\s+(?:curly\s+)?brace", "}", "after"),
+    (r"hyphen", "-", "both"), (r"em\s+dash|dash", "–", "space"),
+    (r"ampersand", "&", "space"), (r"at\s+sign", "@", "both"), (r"hash\s*(?:sign|tag\s+sign)|pound\s+sign", "#", "before"),
+    (r"dollar\s+sign", "$", "before"), (r"percent\s+sign", "%", "after"), (r"asterisk", "*", "both"),
+    (r"underscore", "_", "both"), (r"new\s+paragraph", "\n\n", "newline"), (r"new\s+line", "\n", "newline"),
+]
+# After a spoken punctuation mark, Whisper often adds its own "," or "." ("question mark."): swallowed.
+_MARK_RES = [(re.compile(rf"\b(?:{pattern})\b" + ("[,.]?" if symbol in "?!.,;:…" else ""), re.IGNORECASE), symbol, how)
+             for pattern, symbol, how in _MARKS]
+
+
+def spoken_punctuation(text):
+    """Punctuation said aloud, written: "is it done question mark" -> "is it done?",
+    "and forward slash or" -> "and/or", "new line" -> a line break. Words that are also ordinary
+    English only count where they can't be: "a period of time", "the colon" stay as they are."""
+    if not text:
+        return text
+    out = spoken_quotes(text)
+    for pattern, symbol, how in _MARK_RES:
+        marked = pattern.sub(lambda m: "\x00", out)
+        if marked == out:
+            continue
+        mark = {
+            "after": r"[ \t,]*\x00",  # hugs the word before
+            "before": r"\x00[ \t]*",  # hugs the word after
+            "both": r"[ \t]*\x00[ \t]*",  # joins them
+            "newline": r"[ \t,.]*\x00[ \t]*",
+        }.get(how, r"\x00")
+        out = re.sub(mark, lambda m: symbol, marked)
+    out = re.sub(r"([?!])[.,]", lambda m: m[1], out)  # Whisper's own period after a spoken "question mark"
+    out = re.sub(r"(\d):\s+(\d)", lambda m: f"{m[1]}:{m[2]}", out)  # "5 colon 30" is a time: 5:30
+    out = re.sub(r"\n([a-z])", lambda m: "\n" + m[1].upper(), out)  # a new line starts a sentence
+    return re.sub(r"[ \t]{2,}", " ", out).strip()

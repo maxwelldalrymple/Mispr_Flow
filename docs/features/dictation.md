@@ -53,6 +53,14 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
 - **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
 
+## Spoken punctuation
+
+Say the mark and it's written: "is it done **question mark**" → "is it done?". Also exclamation mark, comma, full stop, period (at a sentence's end), colon, semicolon, dot dot dot, forward slash and backslash ("and/or", "C:\Users"), open/close paren or bracket, hyphen, dash, at sign, hash sign, dollar sign, percent sign, ampersand, asterisk, underscore, **new line** and **new paragraph**.
+
+**Quotation marks:** "he said **quote** I'm hungry **end quote**" → he said “I'm hungry”. Also "open quote … close quote", "quote … unquote", and "quote unquote fine" → “fine”.
+
+Words that are also ordinary English stay as they are: "a period of time", "the colon", "get a quote".
+
 ## Pause while you talk
 
 The moment you press the dictation key, whatever is playing pauses (about 4 ms, before the mic even opens), and it plays again when you let go. macOS reports which apps are making sound; if one is a music or video source (Chrome, Safari, Firefox and other browsers, Apple Music, Spotify, TV, Podcasts, VLC, IINA, QuickTime…), the play/pause media key is pressed, just like the keyboard's own key.

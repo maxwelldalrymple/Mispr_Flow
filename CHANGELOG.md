@@ -9,6 +9,7 @@ All notable changes to Mispr Flow. Dates are 2026.
 - **Main text box:** when no text box has the cursor, dictation goes into the window's main text box (chat box, message field, document) instead of only the clipboard. Never an address bar, a search field or a file name. Switch: Settings → General.
 - **Words go where you started:** switch windows or apps while it transcribes, and the text still lands in the box you began in. Windows never switch: it goes in the background where the box allows it (native apps, plain web boxes); Chrome tabs get it by a page script (after turning on the browser's "Allow JavaScript from Apple Events"); apps that block background control (the Claude desktop app) get it the moment you go back.
 - **Pause while you talk:** pressing the dictation key pauses Apple Music, Spotify, TV and videos in Chrome tabs; letting go plays exactly those again. A double-tap keeps them paused for hands-free. Voice commands and meetings never pause anything.
+- **Spoken punctuation:** "question mark", "exclamation point", "forward slash", "backslash", "new line", brackets, symbols… and "quote … end quote" → “…”. Ordinary words ("a period of time") stay.
 - **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
 
 ## Oct 2: v1.2.0: control your whole Mac by voice

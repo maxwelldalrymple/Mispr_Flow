@@ -382,16 +382,21 @@ class TestTranscribed:
                                                            "rejected": "invented words: x"})
         assert controller.pasted == ["raw text"]
 
-    def test_cleanup_used_when_enabled(self, controller):
+    def test_cleanup_used_when_enabled(self, controller, monkeypatch):
+        seen = []
+        monkeypatch.setattr(controller.cleaner, "clean", lambda raw: seen.append(raw) or (raw, {"applied": True}))
         controller.begin_handsfree()
         controller.finish()
-        assert controller.transcriber.calls[-1][2] == controller.cleaner.clean
+        post = controller.transcriber.calls[-1][2]
+        assert post("he said quote hi end quote")[0] == "he said “hi”" and seen == ["he said “hi”"]
 
-    def test_cleanup_skipped_when_disabled(self, controller):
+    def test_cleanup_skipped_when_disabled(self, controller, monkeypatch):
+        monkeypatch.setattr(controller.cleaner, "clean", lambda raw: (_ for _ in ()).throw(AssertionError("cleanup ran")))
         controller.settings.cleanup = False
         controller.begin_handsfree()
         controller.finish()
-        assert controller.transcriber.calls[-1][2] is None
+        post = controller.transcriber.calls[-1][2]
+        assert post("quote hi unquote") == ("“hi”", None)  # spoken quotes still, no cleanup
 
     def test_transcriber_gets_the_recorded_audio(self, controller, speech):
         controller.recorder.audio_data = speech
@@ -1858,7 +1863,8 @@ class TestTerminalDictation:
         assert info["terminal"] and text in ("ls -a",)
         controller.settings.cleanup = True
         controller.rec_recorded_in = {"app": "Notes", "bundle_id": "com.apple.Notes"}
-        assert controller._post_processor() == controller.cleaner.clean
+        text, info = controller._post_processor()("plain words")
+        assert text == "plain words" and "terminal" not in (info or {})  # the usual cleanup
 
     def test_auto_enter_runs_the_command_in_terminals_too(self, controller, monkeypatch):
         enters = []
