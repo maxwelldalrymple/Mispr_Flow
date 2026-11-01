@@ -162,10 +162,11 @@ def _connect_host(app, widget, open_setup, fn=None):
     widget.on_setup_finished = lambda: host.send("setup_finished")  # the app shows its window and the tour
     pushed = levels.PushedLevelSource()
     widget.meeting_levels = pushed  # the app streams real levels while it records
-    # Meetings only: a small Whisper for live previews and the voice-fingerprint model, both
-    # loaded (downloaded the first time) when a meeting first needs them.
+    # The small Whisper (shared with voice commands, loaded at start) for live previews, and the
+    # voice-fingerprint model, loaded (downloaded the first time) when a meeting first needs it.
     worker = meeting.MeetingWorker(widget.transcriber, widget.cleaner, host.send,
-                                   preview=Transcriber(PREVIEW_MODEL), embedder=meeting.SpeakerEmbedder(),
+                                   preview=getattr(widget, "fast_transcriber", None) or Transcriber(PREVIEW_MODEL),
+                                   embedder=meeting.SpeakerEmbedder(),
                                    speech=getattr(widget, "speech", None) or meeting.SpeechDetector())
     widget.on_meeting_changed = lambda active: host.send("meeting", active=active)
     widget.on_busy = lambda busy: host.send("busy", busy=busy)

@@ -65,6 +65,7 @@ from .models import DEFAULT_MODEL
 from .paste import ENTER_DELAY, RESTORE_AFTER, copy_normally, copy_text, paste_text, press_enter, send_with_command, type_text
 from .threads import start_daemon
 from .cleanup import spoken_punctuation
+from .models import PREVIEW_MODEL
 from .transcribe import DICTATION_VOCABULARY, Transcriber, split_points
 from .levels import FakeLevelSource
 from .screens import active_screen
@@ -266,6 +267,36 @@ class Ticker(NSObject):
         self.callback()
 
 
+# Voice commands the fast model's words can be trusted for: nothing in them needs exact spelling.
+QUICK_KINDS = {"system", "keys", "mode", "media", "scroll", "scroll_end", "volume", "mic", "snap", "desktop", "mission",
+               "dark_mode", "wifi", "brightness", "again", "number", "show_numbers", "hide_numbers", "grid", "other_screen",
+               "custom"}
+# These too, when they name no app ("close tab", not "close tab in Chrome"): position of the app name.
+QUICK_UNLESS_NAMED = {"shortcut": 2, "close": 1, "minimize": 1, "expand": 1, "maximize": 1, "unexpand": 1, "quit": 1,
+                      "window": 2, "split_tab": 1, "seek": 2, "mute_tab": 1}
+
+
+def quick_command(text, settings_now, running):
+    """True when `text` (from the fast model) is a command with nothing that needs exact words: run
+    it now. Clicking, copying, typing, searching, folders, site tabs and app names that aren't an
+    exact open app get the accurate model."""
+    command = control.custom(text, settings_now.custom_commands) or apps.parse(text)
+    if command is None:
+        return False
+    kind = command[0]
+    if kind in QUICK_KINDS:
+        return True
+    if kind in QUICK_UNLESS_NAMED:
+        i = QUICK_UNLESS_NAMED[kind]
+        return len(command) <= i or command[i] is None
+    if kind == "click":
+        return command[1] is None  # "click" (where the mouse is)
+    if kind == "switch":  # exactly an open app's name, or one of your nicknames
+        name = command[1]
+        return name in {apps.normalize(r) for r in running} or name in (settings_now.app_nicknames or {})
+    return False
+
+
 class WidgetController:
     def __init__(self):
         self.state = IDLE
@@ -290,6 +321,7 @@ class WidgetController:
         self.settings = settings.load()
         self.recorder = Recorder()
         self.transcriber = Transcriber()
+        self.fast_transcriber = Transcriber(PREVIEW_MODEL)  # small Whisper (base.en): commands, meeting previews
         self.cleaner = Cleaner()
         self.apply_prompts()
         self.setup_progress = 0.0
@@ -790,6 +822,7 @@ class WidgetController:
     def _load_engines(self):
         self.transcriber.load_async()
         self.cleaner.load_async()
+        self.fast_transcriber.load_async()  # voice commands: ~0.1 s instead of ~1.4 s
 
     def _run_setup(self):
         self.setup_error = None
@@ -875,14 +908,27 @@ class WidgetController:
         self.sounds.play(sounds.STOP)
         self.set_state(PROCESSING)
         # Raw Whisper text: an app name needs no cleanup, and skipping it is faster.
-        hint = apps.command_prompt(self.settings.app_nicknames, sorted(apps.running_apps()))
-        self.transcriber.transcribe_async(self.recorder.audio(), lambda text, raw, info, secs: self._on_switch_heard(text),
-                                          speech=self._speech_seconds,
-                                          prompt=hint)
+        running = sorted(apps.running_apps())
+        hint = apps.command_prompt(self.settings.app_nicknames, running)
+        audio = self.recorder.audio()
+        if not self.fast_transcriber.ready:  # the small model isn't loaded (yet): the accurate one
+            return self.transcriber.transcribe_async(audio, lambda text, raw, info, secs: self._on_switch_heard(text),
+                                                     speech=self._speech_seconds, prompt=hint)
+        # The fast model first; a fixed command runs at once, words that need precision get the accurate model.
+        self.fast_transcriber.transcribe_async(
+            audio, lambda text, raw, info, secs: self._on_fast_command(text, audio, hint, running, secs),
+            speech=self._speech_seconds, prompt=hint)
 
     def _remute(self):
         if self.mic_saved is not None:
             apps.set_mic_level(0)
+
+    def _on_fast_command(self, text, audio, hint, running, secs):
+        if not text or quick_command(text, self.settings, running):
+            log(f"command by the fast model in {secs:.2f}s")
+            return self._on_switch_heard(text)
+        log(f"command checked by the accurate model (fast one took {secs:.2f}s)")
+        self.transcriber.transcribe_async(audio, lambda text, raw, info, secs: self._on_switch_heard(text), prompt=hint)
 
     def _on_switch_heard(self, text):
         try:
@@ -1433,16 +1479,23 @@ class WidgetController:
         if kind == "switch":
             apps.bring_to_front(found[0][1])
             return self._switch_done(f"→ {found[0][0]}")
-        if kind in ("close", "minimize", "expand"):
+        if kind in ("close", "minimize", "expand", "maximize", "unexpand"):
             target, path = found[0]
             pid = apps.frontmost_pid() if path is None else apps.pid_for(path)
             if pid is None:
                 return self._switch_failed(f"{target} isn't open")
-            ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand")) if kind == "expand" \
-                else apps.window_action(pid, kind)
-            if kind == "expand" and path:
+            if kind == "expand":  # macOS full screen; an app without it gets the whole screen instead
+                ok = apps.window_action(pid, "fullscreen") or apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand"))
+            elif kind == "maximize":
+                ok = apps.window_action(pid, "frame", apps.layout(apps.screen_frame(), "expand"))
+            elif kind == "unexpand":
+                ok = apps.window_action(pid, "exit fullscreen")
+            else:
+                ok = apps.window_action(pid, kind)
+            if kind in ("expand", "maximize") and path:
                 apps.bring_to_front(path)
-            word = {"close": "Closed", "minimize": "Minimized", "expand": "Expanded"}[kind]
+            word = {"close": "Closed", "minimize": "Minimized", "expand": "Full screen:", "maximize": "Maximized",
+                    "unexpand": "Left full screen:"}[kind]
             return self._switch_done(f"{word} {target or 'the window'}") if ok else self._switch_failed("No window to " + kind)
         screen = apps.screen_frame()
         frames = [apps.layout(screen, "size", command[2])] if kind == "size" else list(apps.layout(screen, "beside", command[3]))

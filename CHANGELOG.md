@@ -10,6 +10,8 @@ All notable changes to Mispr Flow. Dates are 2026.
 - **Words go where you started:** switch windows or apps while it transcribes, and the text still lands in the box you began in. Windows never switch: it goes in the background where the box allows it (native apps, plain web boxes); Chrome tabs get it by a page script (after turning on the browser's "Allow JavaScript from Apple Events"); apps that block background control (the Claude desktop app) get it the moment you go back.
 - **Pause while you talk:** pressing the dictation key pauses Apple Music, Spotify, TV and videos in Chrome tabs; letting go plays exactly those again. A double-tap keeps them paused for hands-free. Voice commands and meetings never pause anything.
 - **Spoken punctuation:** "question mark", "exclamation point", "forward slash", "backslash", "new line", brackets, symbols… and "quote … end quote" → “…”. Ordinary words ("a period of time") stay.
+- **Faster commands:** the small Whisper hears every command first (~0.1 s instead of ~1.4 s). Fixed commands run at once; precise words (click, copy, type, search, folders, site tabs, app names) get the accurate model.
+- **"expand" is real full screen** (the green button); "maximize" fills the screen; "exit full screen" goes back.
 - **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
 
 ## Oct 2: v1.2.0: control your whole Mac by voice

@@ -1603,9 +1603,22 @@ class TestAppSwitcher:
     def test_close_minimize_expand(self, controller, clock, fronted, windows):
         self.say(controller, clock, "Close Chrome.")
         self.say(controller, clock, "minimize")  # the app you're in
-        self.say(controller, clock, "Expand the terminal")
-        assert windows == [(11, "close", None), (99, "minimize", None), (22, "frame", (0, 0, 1000, 800))]
-        assert controller.notice[0] == "Expanded Terminal"
+        self.say(controller, clock, "Expand the terminal")  # macOS full screen
+        assert windows == [(11, "close", None), (99, "minimize", None), (22, "fullscreen", None)]
+        assert controller.notice[0] == "Full screen: Terminal"
+
+    def test_maximize_fills_and_exit_full_screen_leaves(self, controller, clock, fronted, windows):
+        self.say(controller, clock, "Maximize.")
+        self.say(controller, clock, "Exit full screen.")
+        assert windows == [(99, "frame", (0, 0, 1000, 800)), (99, "exit fullscreen", None)]
+
+    def test_an_app_without_full_screen_fills_the_screen(self, controller, clock, fronted, monkeypatch):
+        done = []
+        monkeypatch.setattr(W.apps, "screen_frame", lambda: (0, 0, 1000, 800))
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 99)
+        monkeypatch.setattr(W.apps, "window_action", lambda pid, action, frame=None: done.append(action) or action != "fullscreen")
+        self.say(controller, clock, "Expand.")
+        assert done == ["fullscreen", "frame"]
 
     def test_side_by_side_with_a_split(self, controller, clock, fronted, windows):
         self.say(controller, clock, "Chrome 70% beside terminal")
@@ -2389,3 +2402,39 @@ class TestQuietWhileYouTalk:
         controller.settings.duck_audio = False
         controller.begin_handsfree()
         assert "duck" not in controller.ducker.events
+
+
+class TestFastCommands(TestAppSwitcher):
+    """Voice commands: the fast model first; fixed commands run at once, precise words get the accurate model."""
+
+    def speak(self, controller, clock, fast_text, accurate_text=None):
+        controller.fast_transcriber.ready = True
+        controller.switch_key("down")
+        clock.advance(1.0)
+        controller.switch_key("up")
+        audio, on_done, _ = controller.fast_transcriber.calls[-1]
+        on_done(fast_text, fast_text, None, 0.1)
+        if accurate_text is not None:
+            _, on_done2, _ = controller.transcriber.calls[-1]
+            on_done2(accurate_text, accurate_text, None, 1.4)
+
+    def test_a_fixed_command_runs_from_the_fast_model(self, controller, clock, fronted, monkeypatch):
+        pressed = []
+        monkeypatch.setattr(W.apps, "press_shortcut", pressed.append)
+        self.speak(controller, clock, "New tab.")
+        assert pressed == ["new tab"] and controller.transcriber.calls == []  # the slow model never ran
+
+    def test_precise_words_get_the_accurate_model(self, controller, clock, fronted):
+        self.speak(controller, clock, "Click the link in the logo.", accurate_text="Open Chrome.")
+        assert len(controller.transcriber.calls) == 1 and fronted == ["/A/Google Chrome.app"]
+
+    def test_an_exact_open_app_is_fast(self, controller, clock, fronted):
+        self.speak(controller, clock, "Terminal.")
+        assert fronted == ["/S/Terminal.app"] and controller.transcriber.calls == []
+
+    def test_quick_command_rules(self):
+        st = W.settings.Settings()
+        running = ["Google Chrome", "Terminal"]
+        assert W.quick_command("Pause.", st, running) and W.quick_command("Left half.", st, running)
+        assert not W.quick_command("Close tab in Chrome.", st, running)  # names an app: check it
+        assert not W.quick_command("Copy the text.", st, running) and not W.quick_command("Chrom.", st, running)

@@ -135,7 +135,9 @@ class FakeRecorder:
 
 
 class FakeTranscriber:
-    def __init__(self):
+    ready = False  # the fast command model "not loaded": commands use the accurate one unless a test says so
+
+    def __init__(self, spec=None):
         self.calls = []  # (audio, on_done, post)
         self.loaded = 0
 

@@ -72,6 +72,9 @@ def parse(text):
     m = _SPLIT_TAB.match(said)
     if m:  # "tabs side by side", "split tab"
         return ("split_tab", m["app"])
+    m = re.match(r"^(?:exit|leave|get\s+out\s+of|close)\s+full\s*screen(?:\s+(?:in|on)\s+(?P<app>.+))?$", said)
+    if m:  # before the ⌃⌘F "full screen" shortcut: leave it, never toggle it on
+        return ("unexpand", m["app"])
     m = _SITE_TAB.match(said)
     if m and not _SITE_TAB_RESERVED.match(m["site"]) and not _SITE_TAB_RESERVED_END.search(m["site"]):  # "github tab", "youtube tab 2"
         return ("site_tab", m["site"].strip(), int(m["n"]) if m["n"] else 1)
@@ -92,7 +95,7 @@ def parse(text):
     m = _ACTION.match(said)
     if m:  # close / minimize / expand, of an app or (none named) the current one
         target = _FILLER.sub("", m["rest"] or "").strip() or None
-        return (_ACTIONS[m["verb"]], target)
+        return (_ACTIONS[re.sub(r"\s+", " ", m["verb"])], target)
     m = _BESIDE.match(said)
     if m:  # "chrome beside vs code", "window layout chrome 70% next to terminal"
         left, right = _FILLER.sub("", m["left"]).strip(), _FILLER.sub("", m["right"]).strip()
@@ -846,9 +849,14 @@ def command_prompt(nicknames=None, names=()):
     return COMMAND_HINT + (" " + ", ".join(extra) + "." if extra else "")
 
 
+# "expand" is macOS full screen (the green button); "maximize"/"fill" fill the screen without it;
+# "exit full screen"/"shrink" leave full screen.
 _ACTIONS = {"close": "close", "minimize": "minimize", "minimise": "minimize", "hide": "minimize",
-            "expand": "expand", "maximize": "expand", "maximise": "expand", "fill": "expand"}
-_ACTION = re.compile(r"^(?:please\s+)?(?P<verb>close|minimi[sz]e|hide|expand|maximi[sz]e|fill)(?:\s+(?P<rest>.+))?$")
+            "expand": "expand", "maximize": "maximize", "maximise": "maximize", "fill": "maximize",
+            "exit full screen": "unexpand", "leave full screen": "unexpand", "shrink": "unexpand",
+            "unexpand": "unexpand", "un expand": "unexpand"}
+_ACTION = re.compile(r"^(?:please\s+)?(?P<verb>close|minimi[sz]e|hide|expand|maximi[sz]e|fill|exit\s+full\s+screen|"
+                     r"leave\s+full\s+screen|shrink|un\s*expand)(?:\s+(?P<rest>.+))?$")
 _LAYOUT = r"(?:(?:window\s+)?layout\s+|put\s+|place\s+|split\s+)?"
 _BESIDE = re.compile(_LAYOUT + r"(?P<left>.+?)(?:\s+(?P<pct>\d{1,3})\s*(?:percent)?)?\s+(?:beside|next\s+to|and|with)\s+(?P<right>.+)$")
 _SIZE = re.compile(r"^(?:make\s+|resize\s+|size\s+)?(?P<app>.+?)\s+(?:to\s+)?(?P<pct>\d{1,3})\s*(?:percent)?$")
@@ -928,6 +936,9 @@ def window_action(pid, action, frame=None):
         return err == 0 and button is not None and AS.AXUIElementPerformAction(button, "AXPress") == 0
     if action == "minimize":
         return AS.AXUIElementSetAttributeValue(win, "AXMinimized", True) == 0
+    if action in ("fullscreen", "exit fullscreen"):  # macOS full screen, as the green button does
+        AS.AXUIElementSetAttributeValue(win, "AXMinimized", False)
+        return AS.AXUIElementSetAttributeValue(win, "AXFullScreen", action == "fullscreen") == 0
     x, y, w, h = frame
     AS.AXUIElementSetAttributeValue(win, "AXMinimized", False)
     pos = AS.AXValueCreate(AS.kAXValueCGPointType, (x, y))
