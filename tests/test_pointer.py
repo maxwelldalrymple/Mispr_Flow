@@ -100,3 +100,18 @@ class TestCopyText:
     def test_span_inside_one_editable_element_can_be_highlighted(self):
         text, run, where, _ = pointer.copy_span(self.RUNS, "copy text on the screen to just saying")
         assert run == 0 and self.RUNS[0][0][where[0]:where[1]] == text
+
+
+class TestMainInput:
+    def test_biggest_box_wins_text_areas_and_page_boxes_count_more(self):
+        I = pointer.Input
+        small_field = I("f", "AXTextField", (0, 0, 300, 20), False, "")
+        chat_box = I("c", "AXTextArea", (0, 0, 600, 24), True, "")
+        assert pointer.main_input([small_field, chat_box]) is chat_box
+        document = I("d", "AXTextArea", (0, 0, 800, 600), False, "")
+        assert pointer.main_input([chat_box, document]) is document
+        assert pointer.main_input([]) is None
+
+    def test_list_and_toolbar_boxes_never_count(self):
+        assert {"AXToolbar", "AXOutline", "AXTable", "AXList", "AXRow", "AXCell"} <= pointer.SKIP_CONTAINERS
+        assert "address" in pointer.SKIP_WORDS and "search" in pointer.SKIP_WORDS

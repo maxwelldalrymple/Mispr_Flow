@@ -161,6 +161,12 @@ struct GeneralSettings: View {
             }
         }
         SettingsGroup {
+            SettingRow(title: "Paste into the main text box",
+                       detail: "When no text box has the cursor, put it in the window's main one (a chat box, a document) and paste there instead of only copying. Never an address bar, a search field or a file name.") {
+                Toggle("", isOn: model.binding("find_text_box")).toggleStyle(.switch).labelsHidden()
+            }
+        }
+        SettingsGroup {
             SettingRow(title: "Show long dictations as they're processed",
                        detail: "Past 20 seconds, text is typed in piece by piece while the rest is still being worked on. Off: it all appears at once when it's done.") {
                 Toggle("", isOn: model.binding("live_long_dictations")).toggleStyle(.switch).labelsHidden()

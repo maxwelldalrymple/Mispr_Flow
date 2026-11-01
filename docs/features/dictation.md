@@ -25,7 +25,8 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 2. **Cleanup:** Gemma-3-4B removes "um/uh/like", repeats and retracted phrases ("Tuesday, no wait, Wednesday" → "Wednesday"), and fixes punctuation. A code-level guard rejects any output with a word you didn't say; then the raw transcript is pasted instead. Edit the cleanup instructions on the **Prompts** page. Hesitation sounds the model leaves in ("Uhh…", "um,", "erm") are always removed afterwards, however Whisper spells them.
 3. **Where it goes:**
    - **A text box is focused:** it pastes, then restores your clipboard (the dictated text is marked private so clipboard managers skip it).
-   - **No text box** (Finder, the desktop, a page with nothing focused): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
+   - **No text box has the cursor:** it finds the window's **main text box** and pastes there. That's the biggest writable box: a chat box, a message field, a document. It never picks a toolbar's address bar or search, or a file name in a list. The cursor goes to the end of what's already in the box, and Auto-Enter works as usual. Turn this off in Settings → General → **Paste into the main text box**.
+   - **No text box at all** (Finder, the desktop): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
    - **Browsers:** if a browser says "no text box", it checks once more 0.15 s later (YouTube's comment box takes focus as it opens). The log records what was focused.
 4. **History:** audio plus a JSON record is saved under `voice-recordings/YYYY-MM-DD/`, unless Incognito is on.
 

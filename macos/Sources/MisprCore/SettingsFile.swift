@@ -18,7 +18,7 @@ public struct CustomCommand: Equatable, Identifiable {
 public struct SettingsFile {
     public let url: URL
 
-    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true, "live_long_dictations": false, "invisible": false]
+    public static let defaults: [String: Bool] = ["incognito": false, "auto_enter": false, "cleanup": true, "sounds": true, "onboarded": false, "auto_update": true, "live_long_dictations": false, "invisible": false, "find_text_box": true]
 
     public static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

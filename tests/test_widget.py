@@ -2248,3 +2248,33 @@ class TestCopyTextCommand:
         controller.settings.incognito = True
         controller._copy_found(([("x", None, "AXStaticText")], ("x", None, None, 1.0)), "x")
         assert copied == []
+
+
+class TestMainTextBox:
+    """Nothing has the cursor: the words go into the window's main text box instead of the clipboard."""
+
+    def finish(self, controller, monkeypatch, found_box):
+        answers = iter([W.context.NO, W.context.YES])  # nothing selected; then, after focusing the box, yes
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (next(answers, W.context.YES), "App"))
+        box = W.pointer.Input("el", "AXTextArea", (0, 0, 400, 30), True, "") if found_box else None
+        monkeypatch.setattr(W.pointer, "text_inputs", lambda pid: [box] if box else [])
+        monkeypatch.setattr(W.apps, "frontmost_pid", lambda: 42)
+        focused = []
+        monkeypatch.setattr(W.pointer, "focus_input", lambda target: focused.append(target) or True)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        return focused
+
+    def test_pasted_into_the_main_box(self, controller, monkeypatch):
+        focused = self.finish(controller, monkeypatch, True)
+        assert len(focused) == 1 and controller.pasted == ["Hello."] and controller.copied == []
+
+    def test_no_box_in_the_window_still_copies(self, controller, monkeypatch):
+        focused = self.finish(controller, monkeypatch, False)
+        assert focused == [] and controller.copied == ["Hello."] and controller.pasted == []
+
+    def test_switched_off_copies_like_before(self, controller, monkeypatch):
+        controller.settings.find_text_box = False
+        focused = self.finish(controller, monkeypatch, True)
+        assert focused == [] and controller.copied == ["Hello."]

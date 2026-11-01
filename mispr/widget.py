@@ -126,6 +126,7 @@ PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next pa
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
 SPEECH_FLOOR = 0.003  # peak below this: the mic heard nothing
 SPEECH_LEVEL = 0.5  # the speech check listens at this peak level
+MAIN_INPUT_SETTLE = 0.1  # seconds for focus to land in the main text box before pasting
 TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
 WARNING_YELLOW = (0.96, 0.77, 0.26)
@@ -502,6 +503,27 @@ class WidgetController:
             speech=self._speech_seconds,
         )
 
+    def _focus_main_input(self):
+        """Nothing has the cursor: put it in the front window's main text box (a chat box, a
+        document), so the words are pasted there instead of only copied. True if a box now has it.
+        Never a toolbar's address bar or search, or a file name in a list."""
+        pid = apps.frontmost_pid()
+        if not pid:
+            return False
+        try:
+            pointer.enable_web_accessibility(pid)
+            target = pointer.main_input(pointer.text_inputs(pid))
+            if target is None:
+                return False
+            pointer.focus_input(target)
+            time.sleep(MAIN_INPUT_SETTLE)
+            where, _ = context.focused_text_target()
+            log(f"main text box: {target.role} {'on the page' if target.in_page else ''} -> {where}")
+            return where != context.NO
+        except Exception as e:  # never lose the words over this: they're copied instead
+            log(f"main text box failed: {e}")
+            return False
+
     def _speech_seconds(self, audio):
         """Seconds of real speech in `audio` (the speech detector, if the app gave one), else None."""
         detector = getattr(self, "speech", None)
@@ -549,6 +571,8 @@ class WidgetController:
         if run["where"] is None:  # the first words: decide once where they all go
             run["target"] = context.frontmost()
             run["where"], why = context.focused_text_target()
+            if run["where"] == context.NO and self.settings.find_text_box and self._focus_main_input():
+                run["where"], why = context.YES, "the window's main text box"
             log(f"text box: {run['where']} ({why})")
         piece = (" " if run["texts"] else "") + text
         run["texts"].append(text)
@@ -598,6 +622,8 @@ class WidgetController:
                 time.sleep(TEXT_BOX_RECHECK)  # focus may still be moving into the box
                 where, why = context.focused_text_target()
                 why += f" [after a recheck; focused: {context.focus_chain()}]"
+            if where == context.NO and self.settings.find_text_box and self._focus_main_input():
+                where, why = context.YES, "the window's main text box (nothing was selected)"
             log(f"text box: {where} ({why})")
             incognito = self.settings.incognito
             if where == context.NO:

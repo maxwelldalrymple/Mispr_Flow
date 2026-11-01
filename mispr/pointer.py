@@ -398,3 +398,76 @@ def select_range(element, start, end):
         return AS.AXUIElementSetAttributeValue(element, "AXSelectedTextRange", value) == 0
     except Exception:
         return False
+
+
+# --- The window's main text box (dictation with nothing focused) -----------------------------------
+
+INPUT_ROLES = {"AXTextArea", "AXTextField", "AXComboBox"}
+# Never "main": a toolbar's address bar or search, and names in lists and tables (Finder's file names
+# are text fields: pasting there would rename a file).
+SKIP_CONTAINERS = {"AXToolbar", "AXTabGroup", "AXMenuBar", "AXSheet", "AXOutline", "AXTable", "AXList", "AXBrowser",
+                   "AXRow", "AXCell", "AXGrid", "AXColumn"}
+SKIP_WORDS = ("address", "search", "url", "find", "filter")
+
+
+@dataclass
+class Input:
+    element: object
+    role: str
+    frame: tuple
+    in_page: bool  # inside web content (a browser's page, not its toolbar)
+    text: str
+
+    @property
+    def score(self):
+        x, y, w, h = self.frame
+        return (w * h) * (1.4 if self.role == "AXTextArea" else 1.0) * (1.5 if self.in_page else 1.0)
+
+
+def text_inputs(pid, limit=SCAN_LIMIT, budget=SCAN_SECONDS, clock=time.monotonic):
+    """Every visible, enabled, writable text box in the front window, with where it sits."""
+    import ApplicationServices as AS
+    app = AS.AXUIElementCreateApplication(pid)
+    window = _ax(app, "AXFocusedWindow") or _ax(app, "AXMainWindow")
+    bounds = _frame(window) if window is not None else None
+    if bounds is None:
+        return []
+    found, queue, seen, started = [], [(window, False, False)], 0, clock()
+    while queue and seen < limit and clock() - started < budget:
+        el, skipped, in_page = queue.pop(0)
+        seen += 1
+        role = _ax(el, "AXRole") or ""
+        frame = _frame(el)
+        if frame is not None and not _visible(frame, bounds):
+            continue
+        skipped = skipped or role in SKIP_CONTAINERS
+        in_page = in_page or role == "AXWebArea"
+        editable = role in INPUT_ROLES and _ax(el, "AXEnabled") is not False
+        if editable and not skipped and frame is not None and frame[2] >= 40 and frame[3] >= 14:
+            label = " ".join(str(_ax(el, a) or "") for a in ("AXDescription", "AXTitle", "AXPlaceholderValue", "AXIdentifier")).lower()
+            if not any(word in label for word in SKIP_WORDS):
+                value = _ax(el, "AXValue")
+                found.append(Input(el, role, frame, in_page, value if isinstance(value, str) else ""))
+        queue.extend((child, skipped, in_page) for child in (_ax(el, "AXChildren") or []))
+    return found
+
+
+def main_input(found):
+    """The window's main text box: the biggest writable one (a text area counts a bit more, and in
+    a browser one on the page beats the toolbar's)."""
+    return max(found, key=lambda i: i.score) if found else None
+
+
+def focus_input(target, click=None):
+    """Put the cursor at the end of `target`'s text. True if it now has focus."""
+    import ApplicationServices as AS
+    ok = AS.AXUIElementSetAttributeValue(target.element, "AXFocused", True) == 0
+    if not ok:  # some web boxes only take focus from a click
+        x, y, w, h = target.frame
+        (click or click_at)((x + min(w / 2, 40), y + h / 2))
+    try:
+        end = AS.AXValueCreate(AS.kAXValueCFRangeType, (len(target.text), 0))
+        AS.AXUIElementSetAttributeValue(target.element, "AXSelectedTextRange", end)  # after what's already there
+    except Exception:
+        pass
+    return bool(_ax(target.element, "AXFocused"))
