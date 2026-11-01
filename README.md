@@ -33,16 +33,16 @@ All 146 screenshots (every window, state, theme and mode) are in [docs/screensho
 
 ## Download
 
-**[Mispr-Flow-1.2.0.dmg](https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v1.2.0)** (87 MB) for Apple Silicon Macs on macOS 14 or newer. Models (about 3.1 GB) are downloaded during setup. From 1.1.0 on, the app updates itself (Settings → System → Automatic updates).
+**[Mispr-Flow-1.3.0.dmg](https://github.com/maxwelldalrymple/Mispr_Flow/releases/tag/v1.3.0)** (87 MB) for Apple Silicon Macs on macOS 14 or newer. Models (about 3.1 GB) are downloaded during setup. From 1.1.0 on, the app updates itself (Settings → System → Automatic updates).
 
 **Verify it** before opening. The SHA-256 must match exactly:
 
 ```
-c3dcc6dbd8e7a4ce023725251f3e81d9ace92498399bfdb32e5f41fe7492a80b  Mispr-Flow-1.2.0.dmg
+69bdcab19ce3d7b5c922dae5f791cabdeed87fe133a8c4fdede2c3fa3e44ff47  Mispr-Flow-1.3.0.dmg
 ```
 
 ```bash
-shasum -a 256 ~/Downloads/Mispr-Flow-1.2.0.dmg
+shasum -a 256 ~/Downloads/Mispr-Flow-1.3.0.dmg
 ```
 
 **First open:** the app isn't signed with an Apple Developer ID, so macOS blocks a double-click. Drag it to Applications, then right-click it and choose **Open** (or System Settings → Privacy & Security → **Open Anyway**). The DMG holds only the app: it creates its own folders in `~/Library` on first run. Build it yourself with `tools/build_dmg.sh`.
