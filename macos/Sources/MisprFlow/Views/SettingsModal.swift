@@ -210,8 +210,8 @@ struct SystemSettings: View {
                 Toggle("", isOn: model.binding("sounds")).toggleStyle(.switch).labelsHidden()
             }
             Divider()
-            SettingRow(title: "Quiet other sound while you talk",
-                       detail: "Music, videos and anything else playing is muted while you dictate or give a command, and comes back when you let go. Meetings are never muted.") {
+            SettingRow(title: "Pause music and videos while you talk",
+                       detail: "Pressing the dictation key pauses Apple Music, Spotify, TV and videos in Chrome tabs; letting go plays them again. Nothing that wasn't playing is started.") {
                 Toggle("", isOn: model.binding("duck_audio")).toggleStyle(.switch).labelsHidden()
             }
         }

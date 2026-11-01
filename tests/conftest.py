@@ -216,8 +216,8 @@ def controller(monkeypatch, clock):
             self.events = []
         def duck(self):
             self.events.append("duck")
-        def restore(self):
-            self.events.append("restore")
+        def restore(self, later=0.0):
+            self.events.append("restore later" if later else "restore")
         def recover(self):
             return False
     monkeypatch.setattr(W, "Ducker", FakeDucker)

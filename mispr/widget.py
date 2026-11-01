@@ -303,7 +303,6 @@ class WidgetController:
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
         self.ducker = Ducker()
-        self.ducker.recover()  # sound left muted by a dictation when the app last quit
         self.on_busy = lambda busy: None  # the Swift app waits for not-busy before installing an update
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
         self.mic_saved = None  # the mic's level while "mute mic" has it at 0
@@ -402,12 +401,12 @@ class WidgetController:
             self._start_spot = None
 
     def _quiet_others(self):
-        """While you talk, other sound (music, videos) is muted; it's back when you let go."""
+        """While you talk, whatever is playing (music, videos) pauses; it plays again when you let go."""
         if self.settings.duck_audio:
             self.ducker.duck()
 
     def _stop_recording(self):
-        self.ducker.restore()  # before the stop chime, so you hear it
+        self.ducker.restore()
         self.recorder.stop()
         self.rec_ended_at = datetime.now()
 
@@ -485,7 +484,8 @@ class WidgetController:
             return
         self._note_context()
         self.sounds.play(sounds.START)
-        self._quiet_others()
+        if source != "switch":  # a voice command ("pause", "play") must not fight with this
+            self._quiet_others()
         self.hold_source = source
         self.set_state(HOLD)
 
@@ -773,7 +773,7 @@ class WidgetController:
 
     def discard_quietly(self):
         """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
-        self.ducker.restore()
+        self.ducker.restore(later=DOUBLE_TAP_WINDOW)  # a tap may be the first of a double-tap: stay paused for a moment
         self.recorder.stop()
         self._wipe("discarded")
         self.set_state(IDLE)

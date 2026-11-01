@@ -2370,10 +2370,14 @@ class TestQuietWhileYouTalk:
         controller.finish()
         assert controller.ducker.events == ["duck", "restore"]
 
-    def test_a_tap_restores_too(self, controller):
+    def test_a_tap_resumes_a_moment_later(self, controller):
         controller.begin_hold("fn")
         controller.discard_quietly()
-        assert controller.ducker.events[-1] == "restore"
+        assert controller.ducker.events[-1] == "restore later"  # it may be the first of a double-tap
+
+    def test_voice_commands_never_pause(self, controller):
+        controller.begin_hold("switch")
+        assert "duck" not in controller.ducker.events
 
     def test_switched_off(self, controller):
         controller.settings.duck_audio = False

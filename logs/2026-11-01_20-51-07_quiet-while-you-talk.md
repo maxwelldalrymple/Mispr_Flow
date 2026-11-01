@@ -18,3 +18,19 @@
 - `test_settings_models_setup`, `test_entrypoints`.
 - The shared fixture replaces `Ducker`, so tests never mute the real Mac.
 - All pass.
+
+## Changed: pause instead of mute (owner: "it needs to pause while I'm talking… and work in the double-click logic")
+
+**Now (`duck.py`):**
+- On pressing the **dictation key**, a worker thread checks which apps are running. It asks Music, Spotify and TV for `player state` (only those already running, since asking AppleScript would open an app), and pauses any that are playing.
+- In Chrome-family browsers, a page script runs in every tab: it pauses playing `<video>`/`<audio>` and marks them `data-mispr-paused`.
+- On release, it plays exactly those apps and resumes the marked elements.
+- A tap (`discard_quietly`) resumes after `DOUBLE_TAP_WINDOW` (1 s). A second tap (hands-free) cancels that and stays paused until it finishes.
+- The switch key (voice commands) never pauses, so "pause"/"play" don't clash. Meetings are unchanged.
+- One worker queue, so a resume never overtakes its pause. The mute code is removed.
+- **Live, read only:** Music was "stopped" and Chrome tabs had 0 playing media, and the queries ran cleanly. The AppleScripts compile.
+
+**Tests:**
+- `test_duck`: pauses only what plays and resumes only that; nothing playing starts nothing; apps that aren't running are never asked; a tap waits and a second tap keeps it paused without pausing twice.
+- `test_widget`: paused while recording and resumed on finish; a tap resumes later; voice commands never pause; switch off.
+- All pass.

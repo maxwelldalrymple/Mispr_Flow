@@ -53,15 +53,14 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
 - **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
 
-## Quiet while you talk
+## Pause while you talk
 
-While you dictate (or hold the switch key for a command), the Mac's sound output is muted, so music, videos and calls on your speakers go quiet. It comes back the moment you let go.
-- The start chime plays first; the mute follows 0.3 s later. Sound is back before the stop chime.
-- If your Mac was already muted, it stays muted. A quick tap never mutes.
-- Meeting recordings are never muted (they need to hear the call).
-- If the app quits mid-dictation, sound is turned back on the next time it starts.
-- It mutes rather than pressing play/pause, which would *start* music when nothing is playing.
-- Turn it off in **Settings → System → Quiet other sound while you talk**.
+The moment you press the dictation key, whatever is playing pauses: **Apple Music, Spotify, the TV app, and videos or audio in Chrome-family browser tabs** (YouTube and so on). When you let go, exactly those play again.
+- **Double-tap (hands-free):** after a quick first tap it waits a second before resuming. If the second tap comes, everything stays paused until you finish.
+- Nothing that wasn't playing is ever started, and an app that isn't running is never opened. Players are asked through AppleScript; tabs through a page script (needs the browser's **View → Developer → Allow JavaScript from Apple Events**).
+- **Voice commands** (switch key) don't pause anything, so "pause" and "play" keep working.
+- Meetings never pause anything.
+- Turn it off in **Settings → System → Pause music and videos while you talk**.
 
 ## Invisible mode
 
