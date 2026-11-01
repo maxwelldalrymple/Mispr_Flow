@@ -55,6 +55,7 @@ from AppKit import (
 from Foundation import NSObject
 from PyObjCTools import AppHelper
 
+from . import target as spots
 from . import apps, control, pointer, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
@@ -126,6 +127,7 @@ PIECE_GAP = 0.2  # seconds between one piece's clipboard restore and the next pa
 CHUNK_FROM_SECONDS = 20  # longer dictations are transcribed in pieces, typed in as each is ready
 SPEECH_FLOOR = 0.003  # peak below this: the mic heard nothing
 SPEECH_LEVEL = 0.5  # the speech check listens at this peak level
+RETURN_AFTER = 0.9  # seconds after pasting back in the start window before returning you to where you were
 MAIN_INPUT_SETTLE = 0.1  # seconds for focus to land in the main text box before pasting
 TEXT_BOX_RECHECK = 0.15  # seconds: a browser box may still be taking focus (YouTube's comment box opens on click)
 
@@ -388,6 +390,12 @@ class WidgetController:
                 self.show_notice(text, MIC_NOTICE_SECONDS, (HOLD, HANDSFREE))
         # App only (cheap); the browser page is looked up at paste time.
         self.rec_recorded_in = context.frontmost(include_page=False)
+        # Where the words go: this box, even if you switch away before they're ready.
+        try:
+            self._start_spot = spots.capture()
+        except Exception as e:
+            log(f"start spot unknown: {e}")
+            self._start_spot = None
 
     def _stop_recording(self):
         self.recorder.stop()
@@ -503,6 +511,40 @@ class WidgetController:
             speech=self._speech_seconds,
         )
 
+    def _deliver_to_start(self, spot, text, raw, info, reason):
+        """You switched away while it was transcribing: the words go where you started."""
+        box = spots.box_for(spot)
+        if box is None:  # that window has no text box: copy, as when there's no box at all
+            if not self.settings.incognito:
+                copy_text(text)
+            self.sounds.play(sounds.ERROR)
+            self.show_notice(INCOGNITO_NOTICE if self.settings.incognito else COPIED_NOTICE, COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+            self._save(storage.COPIED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
+            self._wipe(reason)
+            return self.to_idle()
+        self._send_to_spot(spot, box, text)
+        self._last_typed = text
+        self.sounds.play(sounds.PASTE)
+        self.show_notice(f"Sent to {spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+        self._save(storage.PASTED, text, pasted_into=self.rec_recorded_in, raw=raw, cleanup=info)
+        self._wipe(reason)
+        self.to_idle()
+
+    def _send_to_spot(self, spot, box, text):
+        """Put `text` in `box` (in the window you started in): quietly if it allows, otherwise by
+        bringing that window back, pasting (and Auto-Enter), then returning you to where you are."""
+        quiet = not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text)
+        log(f"delivered to the start box in {spot.app}: {'quietly' if quiet else 'by switching back'}")
+        if quiet:
+            return
+        here = spots.capture()  # where you are now, to come back to
+        spots.bring_back(spot, box)
+        spots.settle()
+        (type_text if self.settings.incognito else paste_text)(text)
+        if self.settings.auto_enter:
+            AppHelper.callLater(ENTER_DELAY, press_enter, send_with_command((self.rec_recorded_in or {}).get("url")))
+        AppHelper.callLater(RETURN_AFTER, spots.return_to, here)
+
     def _focus_main_input(self):
         """Nothing has the cursor: put it in the front window's main text box (a chat box, a
         document), so the words are pasted there instead of only copied. True if a box now has it.
@@ -556,7 +598,7 @@ class WidgetController:
         as it's ready, so the text grows while the rest is still processing. Auto-Enter presses
         Return once, after the last piece."""
         self._chunks = {"texts": [], "raws": [], "infos": [], "where": None, "target": None, "reason": reason,
-                        "free_at": 0.0}
+                        "free_at": 0.0, "deferred": []}
         bounds = split_points(audio)
         log(f"long dictation: {len(audio) / storage.SAMPLE_RATE:.1f}s in {len(bounds)} pieces")
         self.transcriber.transcribe_chunks_async(audio, bounds, self._on_chunk, self._on_chunks_done,
@@ -576,6 +618,10 @@ class WidgetController:
             log(f"text box: {run['where']} ({why})")
         piece = (" " if run["texts"] else "") + text
         run["texts"].append(text)
+        spot = getattr(self, "_start_spot", None)
+        if run["deferred"] or (spot is not None and not spots.still_there(spot)):
+            run["deferred"].append(piece)  # you've switched away: the rest goes back where you started
+            return
         if run["where"] != context.NO:
             # Each paste lends the clipboard for RESTORE_AFTER: never start one before the last is done.
             now = time.monotonic()
@@ -594,6 +640,13 @@ class WidgetController:
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars in {len(run['raws'])} pieces")
         if not text:
             self.sounds.play(sounds.ALERT)
+        elif run["deferred"] and self._start_spot is not None and spots.box_for(self._start_spot) is not None:
+            self._send_to_spot(self._start_spot, spots.box_for(self._start_spot), "".join(run["deferred"]).lstrip()
+                               if len(run["deferred"]) == len(run["texts"]) else "".join(run["deferred"]))
+            self._last_typed = text
+            self.sounds.play(sounds.PASTE)
+            self.show_notice(f"Sent to {self._start_spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
+            self._save(storage.PASTED, text, pasted_into=run["target"], raw=raw, cleanup=info)
         elif run["where"] == context.NO:
             if not self.settings.incognito:
                 copy_text(text)
@@ -615,6 +668,9 @@ class WidgetController:
         if info:
             cleanup_note = f", cleanup {info['ms']} ms " + ("applied" if info["applied"] else f"rejected ({info['rejected']})")
         log(f"transcribed + cleaned in {secs:.2f}s -> {len(text)} chars{cleanup_note}")
+        spot = getattr(self, "_start_spot", None)
+        if text and spot is not None and not spots.still_there(spot):
+            return self._deliver_to_start(spot, text, raw, info, reason)
         if text:
             target = context.frontmost()  # where the text is about to land
             where, why = context.focused_text_target()

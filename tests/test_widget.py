@@ -2278,3 +2278,46 @@ class TestMainTextBox:
         controller.settings.find_text_box = False
         focused = self.finish(controller, monkeypatch, True)
         assert focused == [] and controller.copied == ["Hello."]
+
+
+class TestWordsGoWhereYouStarted:
+    """Switch windows while it transcribes: the words still go to the box you started in."""
+
+    def run(self, controller, monkeypatch, quiet, auto_enter=False):
+        start = W.spots.Spot(10, "Slack", window="w1", element="box")
+        monkeypatch.setattr(W.spots, "capture", lambda: start)
+        controller.settings.auto_enter = auto_enter
+        controller.begin_handsfree()  # notes the start spot
+        now = W.spots.Spot(11, "Chrome", window="w9")
+        monkeypatch.setattr(W.spots, "capture", lambda: now)
+        calls = []
+        monkeypatch.setattr(W.spots, "insert_quietly", lambda box, text: calls.append(("quiet", box, text)) or quiet)
+        monkeypatch.setattr(W.spots, "bring_back", lambda spot, box: calls.append(("back", spot.app, box)))
+        monkeypatch.setattr(W.spots, "settle", lambda *a: None)
+        monkeypatch.setattr(W.spots, "return_to", lambda spot: calls.append(("return", spot.app)))
+        monkeypatch.setattr(W, "press_enter", lambda *a: calls.append(("enter",)))
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        return calls
+
+    def test_inserted_quietly_without_switching(self, controller, monkeypatch):
+        calls = self.run(controller, monkeypatch, quiet=True)
+        assert calls == [("quiet", "box", "Hello.")] and controller.pasted == []
+        assert controller.notice[0] == "Sent to Slack"
+
+    def test_otherwise_switches_back_pastes_and_returns(self, controller, monkeypatch):
+        calls = self.run(controller, monkeypatch, quiet=False)
+        assert ("back", "Slack", "box") in calls and controller.pasted == ["Hello."]
+        assert calls[-1] == ("return", "Chrome")  # you're put back where you were
+
+    def test_auto_enter_always_switches_back_to_send(self, controller, monkeypatch):
+        calls = self.run(controller, monkeypatch, quiet=True, auto_enter=True)
+        assert not any(c[0] == "quiet" for c in calls) and ("enter",) in calls and controller.pasted == ["Hello."]
+
+    def test_still_there_pastes_as_usual(self, controller, monkeypatch):
+        start = W.spots.Spot(10, "Slack", window="w1", element="box")
+        monkeypatch.setattr(W.spots, "capture", lambda: start)
+        controller.begin_handsfree()
+        controller.finish()
+        controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
+        assert controller.pasted == ["Hi."]

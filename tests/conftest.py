@@ -209,6 +209,7 @@ def controller(monkeypatch, clock):
     monkeypatch.setattr(W.sounds, "Sounds", SpySounds)
     monkeypatch.setattr(W.audio, "input_device", lambda: ("MacBook Pro Microphone", True))
     monkeypatch.setattr(W.pointer, "text_inputs", lambda pid: [])  # never read the real screen's text boxes
+    monkeypatch.setattr(W.spots, "capture", lambda: None)  # never read which app is really in front
     monkeypatch.setattr(W.pointer, "enable_web_accessibility", lambda pid: None)
     c = W.WidgetController()
     c.pasted, c.copied, c.typed = pasted, copied, typed

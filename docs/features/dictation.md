@@ -26,6 +26,7 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 3. **Where it goes:**
    - **A text box is focused:** it pastes, then restores your clipboard (the dictated text is marked private so clipboard managers skip it).
    - **No text box has the cursor:** it finds the window's **main text box** and pastes there. That's the biggest writable box: a chat box, a message field, a document. It never picks a toolbar's address bar or search, or a file name in a list. The cursor goes to the end of what's already in the box, and Auto-Enter works as usual. Turn this off in Settings → General → **Paste into the main text box**.
+   - **You switched away while it was transcribing:** the words still go to the box you **started** in (that box, or the main box of that window). It first tries to insert them without moving you. If that box won't take them quietly, or Auto-Enter has to send, it brings that window back for a moment, pastes (and sends), then returns you to the window you'd switched to. The notice says "Sent to <app>". Long dictations in pieces do the same once you switch.
    - **No text box at all** (Finder, the desktop): nothing is pasted. The error sound plays, and the text is left on the clipboard with "No text box · Copied to clipboard".
    - **Browsers:** if a browser says "no text box", it checks once more 0.15 s later (YouTube's comment box takes focus as it opens). The log records what was focused.
 4. **History:** audio plus a JSON record is saved under `voice-recordings/YYYY-MM-DD/`, unless Incognito is on.
