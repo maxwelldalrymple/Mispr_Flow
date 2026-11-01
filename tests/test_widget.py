@@ -2341,3 +2341,23 @@ class TestWordsGoWhereYouStarted:
         controller.finish()
         controller._on_transcribed("Hi.", "hi", None, 1.0, "finished")
         assert controller.pasted == ["Hi."]
+
+
+class TestBrowserTabInTheBackground:
+    START = W.spots.Spot(10, "Google Chrome", window="w1", element=None, bundle_id="com.google.Chrome", tab=("1", "2"))
+    ELSEWHERE = TestWordsGoWhereYouStarted.ELSEWHERE
+    finish = TestWordsGoWhereYouStarted.finish  # the helpers only, not the other class's tests
+    run_timers = TestWordsGoWhereYouStarted.run_timers
+
+    def test_typed_into_the_tab_without_switching(self, controller, monkeypatch):
+        sent = []
+        monkeypatch.setattr(W.spots, "insert_in_tab", lambda spot, text, enter=False, meta=False: sent.append((text, enter)) or "ok")
+        monkeypatch.setattr(W.spots, "box_for", lambda spot: None)
+        self.finish(controller, monkeypatch, quiet=False, auto_enter=True)
+        assert sent == [("Hello.", True)] and controller.pasted == [] and controller.notice[0] == "Sent to Google Chrome"
+
+    def test_setting_off_says_how_and_waits(self, controller, monkeypatch):
+        monkeypatch.setattr(W.spots, "insert_in_tab", lambda *a, **k: "off")
+        monkeypatch.setattr(W.spots, "box_for", lambda spot: "box")
+        self.finish(controller, monkeypatch, quiet=False)
+        assert controller._told_apple_events and controller.pasted == []

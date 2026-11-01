@@ -36,3 +36,28 @@ def test_landed_needs_the_words_really_there(monkeypatch):
     assert target._landed("Hi there. Hello.", "Hi there.", "Hello.")
     assert not target._landed("Hi there.", "Hi there.", "Hello.")  # accepted the call, changed nothing
     assert not target._landed(None, "", "Hello.")
+
+
+def test_tab_route_types_into_the_start_tab_in_the_background(monkeypatch):
+    sent = []
+    monkeypatch.setattr(target, "_osascript", lambda script, timeout=3: sent.append(script) or (0, "ok"))
+    spot = Spot(1, "Google Chrome", bundle_id="com.google.Chrome", tab=("101", "202"))
+    assert target.insert_in_tab(spot, 'Say "hi"', enter=True) == "ok"
+    assert 'tab id 202 of window id 101' in sent[0] and "javascript" in sent[0]
+    assert "activate" not in sent[0]  # never brings the window forward
+    assert 'Say \\\\\\"hi' in sent[0]  # the words' quotes, escaped for JSON, then again for AppleScript
+
+
+def test_tab_route_reports_the_setting_being_off(monkeypatch):
+    monkeypatch.setattr(target, "_osascript", lambda s, timeout=3: (1, "Executing JavaScript through AppleScript is turned off."))
+    assert target.insert_in_tab(Spot(1, "Chrome", bundle_id="com.google.Chrome", tab=("1", "2")), "x") == "off"
+
+
+def test_not_a_browser_tab():
+    assert target.insert_in_tab(Spot(1, "Slack", bundle_id="com.tinyspeck.slackmacgap"), "x") == "not a browser tab"
+
+
+def test_browser_tab_is_noted_only_for_scriptable_browsers(monkeypatch):
+    monkeypatch.setattr(target, "_osascript", lambda s, timeout=3: (0, "101, 202"))
+    assert target.browser_tab("com.google.Chrome") == ("101", "202")
+    assert target.browser_tab("com.apple.Safari") is None

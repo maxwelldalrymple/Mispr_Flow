@@ -35,3 +35,28 @@
 - `bring_back` and `return_to` are removed.
 
 **Tests:** in the background when allowed; otherwise waits with nothing pasted while elsewhere, then pasted on return; Auto-Enter waits then sends; timeout copies; still there pastes as usual; `_landed` verification. Affected files pass.
+
+## Truly in the background (owner: "it should be very possible")
+
+**More methods tested** with Chrome behind other windows, on a throwaway tab (closed afterwards):
+- real key-down/up posted to Chrome's process: ignored;
+- ⌘V posted to the process: ignored;
+- `AXUIElementPostKeyboardEvent`: ignored;
+- the earlier Accessibility inserts: ignored for rich editors.
+
+Chrome came to the front when the tab was added (both `open -g` and AppleScript `make new tab`); the Claude window was put back in front each time, and the tests themselves ran with Chrome behind.
+
+**Built: the browser tab route.**
+- `target.browser_tab` notes the window and tab ids when dictation starts.
+- `insert_in_tab` runs a page script in that tab through AppleScript `execute … javascript`, with no activation. The script focuses the box that had the cursor (else the biggest editable one) and types with `execCommand('insertText')`, which fires real input events. Enter (⌘Enter where needed) is dispatched with Auto-Enter.
+- It needs Chrome's "Allow JavaScript from Apple Events", currently off. When it's off, the app shows how to turn it on once, and the text waits as before.
+- The generated AppleScript was compiled with `osacompile`, and the page script syntax-checked with JavaScriptCore.
+
+**Not built: a debugging connection into the Claude desktop app.**
+- A second copy of Claude can't start (single instance, even with another profile), and restarting the real one would end this session, so it couldn't be tested live.
+- Its code (`app.asar`) has a deliberate block list for `remote-debugging-port`, `remote-debugging-pipe`, `disable-web-security` and others, checked at launch. That's a security protection, and it isn't worked around. Claude desktop gets the text when you return; claude.ai in Chrome gets the full background route.
+
+**Tests:**
+- `test_target`: the tab route never activates, quotes are escaped, the setting-off result, not a browser, only scriptable browsers noted.
+- `test_widget`: typed into the tab without switching, including Auto-Enter; setting off notifies and waits.
+- All pass.

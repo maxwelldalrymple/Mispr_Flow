@@ -24,6 +24,8 @@ class Spot:
     app: str
     window: object = None
     element: object = None  # the text box with the cursor, or None (its main box is used)
+    bundle_id: str = ""
+    tab: tuple = None  # (window id, tab id) in a scriptable browser: the tab you started in
 
 
 def _app_element(pid):
@@ -46,7 +48,73 @@ def capture():
         element = focused if focused is not None and context._is_text_input(focused) else None
     except Exception:
         window = element = None
-    return Spot(pid, str(front.localizedName() or "the app"), window, element)
+    bundle = str(front.bundleIdentifier() or "")
+    return Spot(pid, str(front.localizedName() or "the app"), window, element, bundle, browser_tab(bundle))
+
+
+# Chromium browsers that run page scripts from AppleScript ("execute … javascript"), once the
+# user turns on View › Developer › Allow JavaScript from Apple Events.
+SCRIPTABLE = {"com.google.Chrome": "Google Chrome", "com.google.Chrome.canary": "Google Chrome Canary",
+              "com.brave.Browser": "Brave Browser", "com.microsoft.edgemac": "Microsoft Edge",
+              "com.vivaldi.Vivaldi": "Vivaldi", "org.chromium.Chromium": "Chromium"}
+
+
+def _osascript(script, timeout=3):
+    import subprocess
+    try:
+        out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout)
+        return out.returncode, (out.stdout or out.stderr).strip()
+    except Exception as e:
+        return 1, str(e)
+
+
+def browser_tab(bundle_id):
+    """(window id, tab id) of the front tab of a scriptable browser, else None."""
+    app = SCRIPTABLE.get(bundle_id)
+    if not app:
+        return None
+    code, out = _osascript(f'tell application "{app}" to get {{id of front window, id of active tab of front window}}')
+    parts = [p.strip() for p in out.split(",")]
+    return (parts[0], parts[1]) if code == 0 and len(parts) == 2 and all(p.isdigit() for p in parts) else None
+
+
+# Runs in the page: the box that had the cursor, else the biggest visible editable box; types the
+# words like real typing (execCommand fires the input events sites listen for), then Enter if asked.
+_PAGE_SCRIPT = r"""(function(text, enter, meta) {
+  function editable(el) { return el && (el.isContentEditable || el.tagName === 'TEXTAREA' ||
+    (el.tagName === 'INPUT' && /^(text|search|email|url|)$/.test(el.type))); }
+  var el = document.activeElement;
+  if (!editable(el)) {
+    var best = null, area = 0;
+    document.querySelectorAll('textarea, [contenteditable="true"], [contenteditable=""], input').forEach(function(c) {
+      if (!editable(c)) return; var r = c.getBoundingClientRect(); var a = r.width * r.height;
+      if (r.width > 40 && r.height > 14 && a > area) { best = c; area = a; } });
+    el = best;
+  }
+  if (!el) return 'no box';
+  el.focus();
+  var ok = document.execCommand('insertText', false, text);
+  if (!ok) { if ('value' in el) { el.value += text; el.dispatchEvent(new Event('input', {bubbles: true})); } else return 'refused'; }
+  if (enter) { ['keydown', 'keypress', 'keyup'].forEach(function(type) {
+    el.dispatchEvent(new KeyboardEvent(type, {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, metaKey: meta, bubbles: true, cancelable: true})); }); }
+  return 'ok';
+})(%s, %s, %s)"""
+
+
+def insert_in_tab(spot, text, enter=False, meta=False):
+    """Type `text` into the tab you started in, in the background (no window switch).
+    Returns "ok", "off" (the browser's Apple Events setting is off), or a reason it didn't."""
+    import json
+    app = SCRIPTABLE.get(spot.bundle_id)
+    if not app or not spot.tab:
+        return "not a browser tab"
+    script = _PAGE_SCRIPT % (json.dumps(text), "true" if enter else "false", "true" if meta else "false")
+    escaped = script.replace("\\", "\\\\").replace('"', '\\"')
+    window, tab = spot.tab
+    code, out = _osascript(f'tell application "{app}" to execute (tab id {tab} of window id {window}) javascript "{escaped}"')
+    if "turned off" in out:
+        return "off"
+    return "ok" if code == 0 and out == "ok" else (out or "failed")
 
 
 _NOW = object()  # "look it up"

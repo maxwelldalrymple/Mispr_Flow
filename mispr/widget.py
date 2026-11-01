@@ -515,7 +515,7 @@ class WidgetController:
     def _deliver_to_start(self, spot, text, raw, info, reason):
         """You switched away while it was transcribing: the words go where you started."""
         box = spots.box_for(spot)
-        if box is None:  # that window has no text box: copy, as when there's no box at all
+        if box is None and not spot.tab:  # that window has no text box: copy, as when there's no box at all
             if not self.settings.incognito:
                 copy_text(text)
             self.sounds.play(sounds.ERROR)
@@ -536,7 +536,17 @@ class WidgetController:
         """Put `text` in `box` (the window you started in) without ever switching windows: in the
         background if the box allows it ("quiet"); otherwise it waits and goes in the moment you go
         back to that window ("held"). Auto-Enter needs a key press there, so it always waits."""
-        if not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text):
+        if spot.tab and not self.settings.incognito:  # a browser tab: typed in the background by a page script
+            result = spots.insert_in_tab(spot, text, enter=self.settings.auto_enter,
+                                         meta=send_with_command((self.rec_recorded_in or {}).get("url")))
+            log(f"delivered to the start tab in {spot.app}: {result}")
+            if result == "ok":
+                return "quiet"
+            if result == "off" and not getattr(self, "_told_apple_events", False):
+                self._told_apple_events = True
+                self.show_notice(f"Turn on {spot.app} › View › Developer › Allow JavaScript from Apple Events "
+                                 "to type into tabs in the background", COPIED_NOTICE_SECONDS, (IDLE, HOVER))
+        if box is not None and not self.settings.auto_enter and not self.settings.incognito and spots.insert_quietly(box, text):
             log(f"delivered to the start box in {spot.app}: quietly")
             return "quiet"
         held = getattr(self, "_held", None)
