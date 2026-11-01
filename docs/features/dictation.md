@@ -11,6 +11,7 @@ Hold a key, speak, let go: clean text appears in the app you're typing in. Every
 | `space` / `return` / `enter` while hands-free | Finish and paste |
 | `delete` or the key while hands-free | Cancel ("Transcript cancelled · Undo" for 5 s) |
 | `delete` on the Undo toast | Discard now |
+| `delete`, or a quick double-tap of the key, **while it's processing** | Cancel it: nothing is pasted or saved, and the audio is wiped at once ("Cancelled"). The speech model finishes in the background and its result is dropped, so you can start a new dictation right away |
 | Click the widget's mic / long-press it | Hands-free / push-to-talk with the mouse |
 
 - A quick tap does nothing, and `fn` + another key (fn + arrow) works as normal.

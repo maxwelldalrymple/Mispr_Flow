@@ -12,6 +12,7 @@ All notable changes to Mispr Flow. Dates are 2026.
 - **Spoken punctuation:** "question mark", "exclamation point", "forward slash", "backslash", "new line", brackets, symbols… and "quote … end quote" → “…”. Ordinary words ("a period of time") stay.
 - **Faster commands:** the small Whisper hears every command first (~0.1 s instead of ~1.4 s). Fixed commands run at once; precise words (click, copy, type, search, folders, site tabs, app names) get the accurate model.
 - **"expand" is real full screen** (the green button); "maximize" fills the screen; "exit full screen" goes back.
+- **Cancel while processing:** delete, or a quick double-tap of the dictation key, drops the dictation (or command) being processed. Nothing is pasted or saved, and a new dictation can start at once.
 - **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
 
 ## Oct 2: v1.2.0: control your whole Mac by voice

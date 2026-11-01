@@ -92,6 +92,8 @@ FPS = 60
 MORPH = 0.3  # per-frame easing factor toward the target shape
 HOLD_DELAY = 0.3  # long-press on the mic longer than this = push-to-talk
 FN_TAP_MAX = 0.3  # an fn press shorter than this is a tap, not push-to-talk
+CANCEL_DOUBLE_TAP = 0.5  # two fn presses this close while processing cancel it (and the 2nd of a cancelling double-tap is ignored)
+CANCELLED_NOTICE_SECONDS = 1.5
 DOUBLE_TAP_WINDOW = 1.0  # two fn taps starting within this many seconds = hands-free
 
 # Hands-free keyboard shortcuts (macOS virtual keycodes).
@@ -336,7 +338,8 @@ class WidgetController:
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
         self.ducker = Ducker()
-        self.on_busy = lambda busy: None  # the Swift app waits for not-busy before installing an update
+        self.on_busy = lambda busy: None
+        self._busy_tap_at = self._cancelled_at = None  # the Swift app waits for not-busy before installing an update
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
         self.mic_saved = None  # the mic's level while "mute mic" has it at 0
 
@@ -550,9 +553,10 @@ class WidgetController:
         if (self.settings.live_long_dictations and len(audio) >= CHUNK_FROM_SECONDS * storage.SAMPLE_RATE
                 and not terminal.is_terminal(self.rec_recorded_in)):
             return self._process_in_chunks(audio, reason)
+        job = self._new_job()
         self.transcriber.transcribe_async(
             self.recorder.audio(),
-            lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason),
+            self._if_current(job, lambda text, raw, info, secs: self._on_transcribed(text, raw, info, secs, reason)),
             post=self._post_processor(),
             prompt=DICTATION_VOCABULARY,  # spell ChatGPT, GitHub, YouTube… right
             speech=self._speech_seconds,
@@ -686,7 +690,9 @@ class WidgetController:
                         "free_at": 0.0, "deferred": []}
         bounds = split_points(audio)
         log(f"long dictation: {len(audio) / storage.SAMPLE_RATE:.1f}s in {len(bounds)} pieces")
-        self.transcriber.transcribe_chunks_async(audio, bounds, self._on_chunk, self._on_chunks_done,
+        job = self._new_job()
+        self.transcriber.transcribe_chunks_async(audio, bounds, self._if_current(job, self._on_chunk),
+                                                 self._if_current(job, self._on_chunks_done),
                                                  post=self._post_processor(), speech=self._speech_seconds)
 
     def _on_chunk(self, i, text, raw, info):
@@ -795,6 +801,34 @@ class WidgetController:
         self._wipe(reason)
         self.to_idle()
 
+    def _new_job(self):
+        """A number for this processing run: cancelling moves on, so its result is dropped."""
+        self._job = getattr(self, "_job", 0) + 1
+        return self._job
+
+    def _if_current(self, job, fn):
+        """`fn`, but only if this run wasn't cancelled meanwhile (then its result is simply dropped:
+        no paste, no save, and no wipe, since a new recording may already be using the buffer)."""
+        def run(*args, **kwargs):
+            if job != getattr(self, "_job", 0):
+                return log("dropped the result of a cancelled dictation")
+            return fn(*args, **kwargs)
+        return run
+
+    def cancel_processing(self):
+        """Delete or a quick fn double-tap while it's still processing: drop this dictation (or command).
+        The speech model can't be stopped mid-sentence, so its result is thrown away when it lands; the
+        audio is wiped now (the model then works on silence)."""
+        if self.state != PROCESSING:
+            return
+        self._job = getattr(self, "_job", 0) + 1
+        self._wipe("cancelled while processing")
+        self.ducker.restore()
+        self.sounds.play(sounds.CANCEL)
+        self.show_notice("Cancelled", CANCELLED_NOTICE_SECONDS, (IDLE, HOVER))
+        self._cancelled_at = time.monotonic()
+        self.to_idle()
+
     def cancel(self):
         """Stop and offer Undo. The audio stays in locked memory until the toast expires."""
         self._stop_recording()
@@ -857,8 +891,17 @@ class WidgetController:
         self.fn_consumed = True
         if self.state == HANDSFREE:
             self.cancel()
+            self._cancelled_at = now
+        elif self.state == PROCESSING:  # a quick double-tap cancels what's being processed
+            if self._busy_tap_at is not None and now - self._busy_tap_at <= CANCEL_DOUBLE_TAP:
+                self._busy_tap_at = None
+                self.cancel_processing()
+            else:
+                self._busy_tap_at = now
         elif self.state not in (IDLE, HOVER, CANCELLED):
-            pass  # busy (processing, meeting, card): ignore fn
+            pass  # busy (meeting, card): ignore fn
+        elif self._cancelled_at is not None and now - self._cancelled_at <= CANCEL_DOUBLE_TAP:
+            pass  # the second tap of the double-tap that just cancelled: not a new recording
         elif self.last_tap_at is not None and now - self.last_tap_at <= DOUBLE_TAP_WINDOW:
             # The first tap already played the start sound; now confirm the lock.
             self.last_tap_at = None
@@ -911,24 +954,26 @@ class WidgetController:
         running = sorted(apps.running_apps())
         hint = apps.command_prompt(self.settings.app_nicknames, running)
         audio = self.recorder.audio()
+        job = self._new_job()
         if not self.fast_transcriber.ready:  # the small model isn't loaded (yet): the accurate one
-            return self.transcriber.transcribe_async(audio, lambda text, raw, info, secs: self._on_switch_heard(text),
+            return self.transcriber.transcribe_async(audio, self._if_current(job, lambda text, raw, info, secs: self._on_switch_heard(text)),
                                                      speech=self._speech_seconds, prompt=hint)
         # The fast model first; a fixed command runs at once, words that need precision get the accurate model.
         self.fast_transcriber.transcribe_async(
-            audio, lambda text, raw, info, secs: self._on_fast_command(text, audio, hint, running, secs),
+            audio, self._if_current(job, lambda text, raw, info, secs: self._on_fast_command(text, audio, hint, running, secs, job)),
             speech=self._speech_seconds, prompt=hint)
 
     def _remute(self):
         if self.mic_saved is not None:
             apps.set_mic_level(0)
 
-    def _on_fast_command(self, text, audio, hint, running, secs):
+    def _on_fast_command(self, text, audio, hint, running, secs, job=None):
         if not text or quick_command(text, self.settings, running):
             log(f"command by the fast model in {secs:.2f}s")
             return self._on_switch_heard(text)
         log(f"command checked by the accurate model (fast one took {secs:.2f}s)")
-        self.transcriber.transcribe_async(audio, lambda text, raw, info, secs: self._on_switch_heard(text), prompt=hint)
+        self.transcriber.transcribe_async(audio, self._if_current(job if job is not None else getattr(self, "_job", 0),
+                                                                  lambda text, raw, info, secs: self._on_switch_heard(text)), prompt=hint)
 
     def _on_switch_heard(self, text):
         try:
@@ -1544,6 +1589,7 @@ class WidgetController:
         """Called from inside the event tap: decide fast, act on the next run-loop pass.
 
         Hands-free: space / return / enter = finish and paste, delete = cancel.
+        Processing: delete = cancel it (nothing is pasted or saved).
         Cancelled toast: delete = discard now (skip the Undo countdown).
         """
         state = self.state
@@ -1553,6 +1599,7 @@ class WidgetController:
             (HANDSFREE, KEY_KEYPAD_ENTER): self.finish,
             (HANDSFREE, KEY_DELETE): self.cancel,
             (CANCELLED, KEY_DELETE): self._expire_cancel,
+            (PROCESSING, KEY_DELETE): self.cancel_processing,
         }.get((state, keycode))
         if action is None:
             return False

@@ -288,6 +288,8 @@ class TestKeys:
     @pytest.mark.parametrize("state", [W.IDLE, W.HOVER, W.HOLD, W.PROCESSING, W.MEETING, W.MISTAKE, W.SETUP])
     @pytest.mark.parametrize("key", [W.KEY_SPACE, W.KEY_RETURN, W.KEY_DELETE])
     def test_keys_pass_through_in_other_states(self, controller, state, key):
+        if state == W.PROCESSING and key == W.KEY_DELETE:
+            pytest.skip("delete cancels while processing: TestCancelWhileProcessing")
         controller.state = state
         assert controller.handle_key(key) is False
         assert controller.state == state
@@ -2438,3 +2440,57 @@ class TestFastCommands(TestAppSwitcher):
         assert W.quick_command("Pause.", st, running) and W.quick_command("Left half.", st, running)
         assert not W.quick_command("Close tab in Chrome.", st, running)  # names an app: check it
         assert not W.quick_command("Copy the text.", st, running) and not W.quick_command("Chrom.", st, running)
+
+
+class TestCancelWhileProcessing:
+    """Delete, or a quick fn double-tap, while it's processing: the dictation is dropped."""
+
+    def processing(self, controller):
+        controller.begin_handsfree()
+        controller.finish()
+        assert controller.state == W.PROCESSING
+        return controller.transcriber.calls[-1][1]  # what runs when the words arrive
+
+    def test_delete_cancels_and_the_result_is_dropped(self, controller):
+        on_done = self.processing(controller)
+        assert controller.handle_key(W.KEY_DELETE) is True
+        assert controller.state == W.IDLE and controller.notice[0] == "Cancelled"
+        assert controller.sounds.played[-1] == "cancel" and controller.recorder.wiped
+        on_done("Hello.", "hello", None, 1.0)  # the model finishes later
+        assert controller.pasted == [] and controller.copied == []
+
+    def test_quick_fn_double_tap_cancels(self, controller, clock):
+        on_done = self.processing(controller)
+        controller.fn_down()
+        controller.fn_up()
+        assert controller.state == W.PROCESSING  # one press alone does nothing
+        clock.advance(0.2)
+        controller.fn_down()
+        assert controller.state == W.IDLE
+        on_done("Hello.", "hello", None, 1.0)
+        assert controller.pasted == []
+
+    def test_slow_presses_dont_cancel(self, controller, clock):
+        self.processing(controller)
+        controller.fn_down()
+        controller.fn_up()
+        clock.advance(1.0)
+        controller.fn_down()
+        assert controller.state == W.PROCESSING
+
+    def test_a_new_dictation_isnt_touched_by_the_dropped_one(self, controller, clock):
+        on_done = self.processing(controller)
+        controller.cancel_processing()
+        clock.advance(1.0)
+        controller.begin_handsfree()  # a new dictation, while the old result is still coming
+        wiped = controller.recorder.wiped
+        on_done("Old words.", "old words", None, 1.0)
+        assert controller.state == W.HANDSFREE and controller.recorder.wiped == wiped and controller.pasted == []
+
+    def test_double_tap_to_cancel_hands_free_doesnt_start_a_new_one(self, controller, clock):
+        controller.begin_handsfree()
+        controller.fn_down()  # cancels hands-free
+        controller.fn_up()
+        clock.advance(0.2)
+        controller.fn_down()  # the second tap of the double-tap
+        assert controller.state != W.HOLD and controller.recorder.started == 1
