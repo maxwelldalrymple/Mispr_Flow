@@ -60,3 +60,9 @@ Chrome came to the front when the tab was added (both `open -g` and AppleScript 
 - `test_target`: the tab route never activates, quotes are escaped, the setting-off result, not a browser, only scriptable browsers noted.
 - `test_widget`: typed into the tab without switching, including Auto-Enter; setting off notifies and waits.
 - All pass.
+
+## Clicked out of the box, same window (owner question)
+
+- **Before:** clicking out but staying in the window counted as "still there", so the text went to the window's main box, not the one you'd been typing in.
+- **Now:** if nothing has the cursor at the end but a box had it at the start, `_refocus` puts the cursor back in that box (AXFocused, then a check) and pastes there. The main box is used only when no box had the cursor at the start.
+- **Test:** `TestClickedOutOfTheBox`; `test_widget` passes.

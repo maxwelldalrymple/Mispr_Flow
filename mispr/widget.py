@@ -630,6 +630,16 @@ class WidgetController:
         self.sounds.play(sounds.PASTE)
         self.show_notice(f"In {spot.app}", SWITCH_RESULT_SECONDS, (IDLE, HOVER))
 
+    def _refocus(self, element):
+        """Put the cursor back in `element` (the box you were in, same window). True if it took it."""
+        try:
+            spots.focus(element)
+            time.sleep(MAIN_INPUT_SETTLE)
+            return context.focused_text_target()[0] != context.NO
+        except Exception as e:
+            log(f"refocus failed: {e}")
+            return False
+
     def _focus_main_input(self):
         """Nothing has the cursor: put it in the front window's main text box (a chat box, a
         document), so the words are pasted there instead of only copied. True if a box now has it.
@@ -771,6 +781,8 @@ class WidgetController:
                 time.sleep(TEXT_BOX_RECHECK)  # focus may still be moving into the box
                 where, why = context.focused_text_target()
                 why += f" [after a recheck; focused: {context.focus_chain()}]"
+            if where == context.NO and spot is not None and spot.element is not None and self._refocus(spot.element):
+                where, why = context.YES, "the box you were in (you'd clicked out of it)"
             if where == context.NO and self.settings.find_text_box and self._focus_main_input():
                 where, why = context.YES, "the window's main text box (nothing was selected)"
             log(f"text box: {where} ({why})")

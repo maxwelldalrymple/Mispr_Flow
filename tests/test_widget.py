@@ -2494,3 +2494,18 @@ class TestCancelWhileProcessing:
         clock.advance(0.2)
         controller.fn_down()  # the second tap of the double-tap
         assert controller.state != W.HOLD and controller.recorder.started == 1
+
+
+class TestClickedOutOfTheBox:
+    def test_back_into_the_box_you_were_in(self, controller, monkeypatch):
+        start = W.spots.Spot(10, "Notes", window="w1", element="my box")
+        monkeypatch.setattr(W.spots, "capture", lambda: start)
+        controller.begin_handsfree()
+        monkeypatch.setattr(W.spots, "capture", lambda: W.spots.Spot(10, "Notes", window="w1", element=None))  # clicked out
+        answers = iter([W.context.NO, W.context.YES])
+        monkeypatch.setattr(W.context, "focused_text_target", lambda: (next(answers, W.context.YES), "Notes"))
+        focused = []
+        monkeypatch.setattr(W.spots, "focus", focused.append)
+        controller.finish()
+        controller._on_transcribed("Hello.", "hello", None, 1.0, "finished")
+        assert focused == ["my box"] and controller.pasted == ["Hello."]
