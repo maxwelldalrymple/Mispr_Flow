@@ -479,25 +479,27 @@ class WidgetController:
 
     def begin_hold(self, source):
         self._drop_cancelled()
+        if source != "switch":  # first, so it pauses at once; a voice command ("pause", "play") must not fight with this
+            self._quiet_others()
         if not self.recorder.start():
+            self.ducker.restore()
             self.sounds.play(sounds.ERROR)  # the mic didn't open: don't fail silently
             return
         self._note_context()
         self.sounds.play(sounds.START)
-        if source != "switch":  # a voice command ("pause", "play") must not fight with this
-            self._quiet_others()
         self.hold_source = source
         self.set_state(HOLD)
 
     def begin_handsfree(self, sound=True):
         self._drop_cancelled()
+        self._quiet_others()
         if not self.recorder.start():
+            self.ducker.restore()
             self.sounds.play(sounds.ERROR)
             return
         self._note_context()
         if sound:
             self.sounds.play(sounds.START)
-        self._quiet_others()
         self.set_state(HANDSFREE)
 
     def _wipe(self, reason):

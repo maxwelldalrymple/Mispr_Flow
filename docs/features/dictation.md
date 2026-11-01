@@ -55,10 +55,9 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 
 ## Pause while you talk
 
-The moment you press the dictation key, whatever is playing pauses: **Apple Music, Spotify, the TV app, and videos or audio in Chrome-family browser tabs** (YouTube and so on). When you let go, exactly those play again.
+The moment you press the dictation key, whatever is playing pauses (about 4 ms, before the mic even opens), and it plays again when you let go. macOS reports which apps are making sound; if one is a music or video source (Chrome, Safari, Firefox and other browsers, Apple Music, Spotify, TV, Podcasts, VLC, IINA, QuickTime…), the play/pause media key is pressed, just like the keyboard's own key.
 - **Double-tap (hands-free):** after a quick first tap it waits a second before resuming. If the second tap comes, everything stays paused until you finish.
-- Nothing that wasn't playing is ever started, and an app that isn't running is never opened. Players are asked through AppleScript; tabs through a page script, which needs the browser's **View → Developer → Allow JavaScript from Apple Events**. In Chrome that setting is **per profile**: turn it on in a window of each profile.
-- Tabs the page script can't reach (a profile with the setting off) get the **play/pause media key** instead, but only when macOS reports the browser really is making sound (CoreAudio's per-app output, macOS 14.4+). It's pressed again when you let go.
+- When nothing is playing, nothing is pressed, so it never starts music on its own.
 - **Voice commands** (switch key) don't pause anything, so "pause" and "play" keep working.
 - Meetings never pause anything.
 - Turn it off in **Settings → System → Pause music and videos while you talk**.

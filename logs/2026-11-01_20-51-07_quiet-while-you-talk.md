@@ -45,3 +45,13 @@
   - It's never used when no browser is making sound.
 - **Cleanup:** a leftover test tab (from the earlier background-typing test) was found in the other profile and closed. The earlier close command hadn't reached every window, so it now loops through each window's tabs.
 - **Tests:** `test_duck` adds unreachable tab + sound → key pressed then pressed again; all tabs reached → no key; nothing playing → no key. All pass.
+
+## Faster (owner: "takes too long to activate", about 0.5 s)
+
+- **Where the time went:** spawning AppleScripts for each player, a page script in every Chrome tab (19 tabs), and loading CoreAudio on first use (127 ms cold, 4 ms warm).
+- **Now:**
+  - CoreAudio is loaded at startup.
+  - At the key press, before the mic opens, it checks which apps are making sound. If any is a media source, it presses the play/pause media key, and presses it again on release (a tap waits 1 s for a possible double-tap).
+  - Measured from press to key press: **3.5 ms**.
+  - The per-player AppleScripts and per-tab page scripts are gone.
+- **Tests (`test_duck`, `test_widget`):** playing media paused then played; nothing playing presses nothing; a tap waits and a second tap stays paused; a lone tap plays after the wait; media-source list. All pass.
