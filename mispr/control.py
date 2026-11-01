@@ -292,6 +292,7 @@ _FIND = re.compile(r"^(?:find|search\s+(?:the\s+)?page\s+for|find\s+on\s+(?:the\
 _SPOTLIGHT = re.compile(r"^spotlight(?:\s+(?:search\s+)?(?:for\s+)?(?P<q>.+))?$")
 _SHORTCUT = re.compile(r"^(?:run|start)\s+(?:the\s+|my\s+)?shortcut\s+(?P<name>.+)$|^(?:run|start)\s+(?:the\s+|my\s+)?(?P<name2>.+?)\s+shortcut$")
 _AGAIN = re.compile(r"^(?:again|repeat(?:\s+that)?|do\s+(?:it|that)\s+again)$|^(?:do\s+(?:it|that)|repeat(?:\s+that)?)\s+(?P<n>\d+)\s+times$")
+_COPY_TEXT = re.compile(r"^copy\s+(?:the\s+text\s+|the\s+words\s+)?(?:from\s+)?(?P<what>.+)$")
 _THAT = re.compile(r"^(?P<what>select|delete|scratch|capitalize|uppercase|lowercase|bold)\s+that$")
 _DRAG = re.compile(r"^drag\s+(?:the\s+)?(?P<a>.+?)\s+(?:to|onto|into)\s+(?:the\s+)?(?P<b>.+)$")
 _SCROLL_IN = re.compile(r"^scroll\s+(?:the\s+)?(?P<what>.+?)\s+(?P<dir>up|down)$")
@@ -323,6 +324,11 @@ def parse(said, original=""):
     if said in EDIT_KEYS:
         key, mods = EDIT_KEYS[said]
         return ("keys", [(key, mods)], 1)
+    if said in ("copy all", "copy everything", "copy it all", "select all and copy"):
+        return ("keys", [("a", "cmd"), ("c", "cmd")], 1)
+    m = _COPY_TEXT.match(said)
+    if m and m["what"] not in ("that", "this", "it", "all", "everything", "the selection"):
+        return ("copy_text", m["what"])  # "copy you should be able", "copy key press was to auto enter does"
     if said in ("new paragraph",):
         return ("keys", [("return", "shift")], 2)
     m = _THAT.match(said)

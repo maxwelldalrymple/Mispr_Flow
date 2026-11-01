@@ -60,7 +60,7 @@ from .draw import Rect, white
 from .audio import Recorder
 from .cleanup import Cleaner
 from .models import DEFAULT_MODEL
-from .paste import ENTER_DELAY, RESTORE_AFTER, copy_text, paste_text, press_enter, send_with_command, type_text
+from .paste import ENTER_DELAY, RESTORE_AFTER, copy_normally, copy_text, paste_text, press_enter, send_with_command, type_text
 from .threads import start_daemon
 from .transcribe import DICTATION_VOCABULARY, Transcriber, split_points
 from .levels import FakeLevelSource
@@ -111,7 +111,7 @@ INCOGNITO_COLOR = NSColor.colorWithSRGBRed_green_blue_alpha_(0.66, 0.52, 1.0, 1.
 AUTO_ENTER_COLOR = (0.25, 0.55, 1.0)  # the ⏎ badge while Auto-Enter is on
 AUTO_ENTER_NOTICE_SECONDS = 2.0
 # Commands handled by control.py (keys, windows, switches, the web…).
-CONTROL_KINDS = {"mode", "keys", "type", "custom", "that", "snap", "other_screen", "desktop", "mission", "dark_mode", "wifi",
+CONTROL_KINDS = {"copy_text", "mode", "keys", "type", "custom", "that", "snap", "other_screen", "desktop", "mission", "dark_mode", "wifi",
                  "brightness", "output", "search", "go_to", "find", "spotlight", "run_shortcut", "grid", "drag", "scroll_in"}
 AGAIN_GAP = 0.35  # seconds between repeats of "do that 3 times"
 FIND_DELAY = 0.25  # ⌘F opens the find bar, then the words are typed
@@ -791,6 +791,12 @@ class WidgetController:
         kind, args = command[0], command[1:]
         if kind == "mode":
             return self.set_mode(*args)
+        if kind == "copy_text":  # "copy you should be able", "copy key press was to auto enter does"
+            pid = apps.frontmost_pid()
+            if not pid:
+                return self._switch_failed("No app in front")
+            spoken = args[0]
+            return self._in_background(lambda: self._find_text(pid, spoken), lambda found: self._copy_found(found, spoken))
         if kind == "keys":
             keys, times = args
             for key, mods in keys:
@@ -867,6 +873,25 @@ class WidgetController:
             what, direction = args
             return self._in_background(lambda: self._scan(pid, what), lambda found: self._scroll_in(found, what, direction))
         return self._switch_failed("Not sure how to do that yet")
+
+    @staticmethod
+    def _find_text(pid, spoken):
+        pointer.enable_web_accessibility(pid)
+        runs = pointer.visible_text(pid)
+        return runs, pointer.copy_span(runs, spoken)
+
+    def _copy_found(self, found, spoken):
+        runs, span = found
+        if span is None:
+            return self._switch_failed(f"Couldn't find “{spoken}” on screen")
+        text, run, where, _ = span
+        if self.settings.incognito:
+            return self._switch_failed("Incognito never uses the clipboard")
+        copy_normally(text)
+        if run is not None and runs[run][2] in pointer.EDITABLE:
+            pointer.select_range(runs[run][1], *where)  # show what was copied
+        preview = text if len(text) <= 40 else text[:18].rstrip() + " … " + text[-18:].lstrip()
+        return self._switch_done(f"Copied “{preview}”")
 
     def set_mode(self, name, on=None):
         """Auto-Enter, Incognito or sounds by voice: on, off, or (None) flip. Saved like the switches."""

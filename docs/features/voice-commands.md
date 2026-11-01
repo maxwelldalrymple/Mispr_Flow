@@ -46,7 +46,12 @@ Buttons, links, fields, tabs, menu items and labeled pictures in **any app**, by
 | "press command shift t" / "press option left" | Any shortcut: command, shift, option, control + a key |
 | "press tab 3 times" / "down 3" / "left five" | Repeated keys and arrows |
 | "type hello@example.com" | Types exactly what you said (no cleanup; Whisper's closing period dropped) |
+| "copy you should be able" | Copies text on screen from those words to the end of that line or passage |
+| "copy key press was to auto enter does" | Copies from the first words through the last ("to", "through", "until"); a split that fits best wins, so "to" inside the text is fine |
+| "copy all" | ⌘A then ⌘C |
 | "select all" / "copy" / "cut" / "paste" / "undo" / "redo" / "save" / "print" | ⌘A ⌘C ⌘X ⌘V ⌘Z ⇧⌘Z ⌘S ⌘P, in any app |
+
+Copying reads the text from the app (Accessibility), no screenshot; the words only need to be close. In editable text the copied part is also highlighted. Incognito never copies.
 
 ## Editing text
 

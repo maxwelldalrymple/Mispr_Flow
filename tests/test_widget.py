@@ -2226,3 +2226,25 @@ class TestInvisibleMode:
         assert current.invisible is True and controller.panel.alpha == 0.0 and controller.sounds.played[-1] == "lock"
         controller.set_mode("invisible", False)
         assert controller.panel.alpha == 1.0 and controller.notice[0] == "Widget visible again"
+
+
+class TestCopyTextCommand:
+    def test_copies_what_was_found_and_highlights_it(self, controller, monkeypatch):
+        copied, selected = [], []
+        monkeypatch.setattr(W, "copy_normally", copied.append)
+        monkeypatch.setattr(W.pointer, "select_range", lambda el, a, b: selected.append((el, a, b)))
+        runs = [("Hello there world.", "el", "AXTextArea")]
+        controller._copy_found((runs, ("there world.", 0, (6, 18), 1.0)), "there to world")
+        assert copied == ["there world."] and selected == [("el", 6, 18)]
+        assert controller.notice[0] == "Copied “there world.”"
+
+    def test_not_found(self, controller):
+        controller._copy_found(([], None), "zebra")
+        assert controller.notice[0] == "Couldn't find “zebra” on screen"
+
+    def test_incognito_never_copies(self, controller, monkeypatch):
+        copied = []
+        monkeypatch.setattr(W, "copy_normally", copied.append)
+        controller.settings.incognito = True
+        controller._copy_found(([("x", None, "AXStaticText")], ("x", None, None, 1.0)), "x")
+        assert copied == []

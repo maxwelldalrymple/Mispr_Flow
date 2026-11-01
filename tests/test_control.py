@@ -144,3 +144,14 @@ def test_custom_commands():
     assert control.custom("Send it!", cmds) == ("custom", "send it", [("return", "cmd")], "")
     assert control.custom("something else", cmds) is None
     assert control.custom("anything", None) is None
+
+
+@pytest.mark.parametrize("said, expected", [
+    ("Copy you should be able.", ("copy_text", "you should be able")),
+    ("copy from key press was to auto enter does", ("copy_text", "key press was to auto enter does")),
+    ("copy", ("keys", [("c", "cmd")], 1)),
+    ("Copy that.", ("keys", [("c", "cmd")], 1)),
+    ("copy all", ("keys", [("a", "cmd"), ("c", "cmd")], 1)),
+])
+def test_copy_commands(said, expected):
+    assert parse(said) == expected

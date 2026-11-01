@@ -279,3 +279,122 @@ def press_menu_extra(name):
         if name.lower() in label or (name == "Clock" and "clock" in label):
             return AS.AXUIElementPerformAction(item, "AXPress") == 0
     return False
+
+
+# --- Copying text on screen by voice ("copy You should be able to … the text") ------------------
+
+TEXT_ROLES = {"AXStaticText", "AXTextArea", "AXTextField", "AXSearchField", "AXComboBox", "AXHeading", "AXCell", "AXLink"}
+EDITABLE = {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox"}
+SPAN_MIN = 0.72  # how closely the spoken words must match the words on screen
+COPY_LIMIT = 20000  # characters read from a window (long documents)
+
+
+def visible_text(pid, limit=SCAN_LIMIT, budget=SCAN_SECONDS, clock=time.monotonic):
+    """[(text, element, role)] of the front window's text, in reading order (depth first).
+    Text inside a parent that already gave its whole text isn't repeated."""
+    import ApplicationServices as AS
+    app = AS.AXUIElementCreateApplication(pid)
+    window = _ax(app, "AXFocusedWindow") or _ax(app, "AXMainWindow")
+    if window is None:
+        return []
+    runs, stack, seen, started, total = [], [window], 0, clock(), 0
+    while stack and seen < limit and clock() - started < budget and total < COPY_LIMIT:
+        el = stack.pop()
+        seen += 1
+        role = _ax(el, "AXRole") or ""
+        value = _ax(el, "AXValue") if role in TEXT_ROLES else None
+        if isinstance(value, str) and value.strip():
+            runs.append((value, el, role))
+            total += len(value)
+            if role in EDITABLE:
+                continue  # its children only repeat the same text
+        children = _ax(el, "AXChildren") or []
+        stack.extend(reversed(children))
+    return runs
+
+
+_WORD = re.compile(r"[A-Za-z0-9']+")
+
+
+def _tokens(text):
+    return [(m.group().lower().replace("'", ""), m.start(), m.end()) for m in _WORD.finditer(text)]
+
+
+def _best_window(words, tokens, start_at=0):
+    """(score, first token index, last token index) of the run of on-screen words that best
+    matches `words`, from token `start_at` on."""
+    want = " ".join(words)
+    best = (0.0, -1, -1)
+    n = len(words)
+    for size in {max(1, n - 1), n, n + 1}:
+        for i in range(start_at, len(tokens) - size + 1):
+            got = " ".join(t[0] for t in tokens[i:i + size])
+            score = difflib.SequenceMatcher(None, want, got).ratio()
+            if score > best[0]:
+                best = (score, i, i + size - 1)
+    return best
+
+
+def find_span(document, start, end=None):
+    """The text in `document` from the words `start` through the words `end` (or, with no `end`,
+    to the end of that line or paragraph). Returns (text, first char, last char, score) or None."""
+    tokens = _tokens(document)
+    first = [w.lower().replace("'", "") for w in _WORD.findall(start)]
+    if not tokens or not first:
+        return None
+    score, i, _ = _best_window(first, tokens)
+    if score < SPAN_MIN:
+        return None
+    a = tokens[i][1]
+    if end:
+        last = [w.lower().replace("'", "") for w in _WORD.findall(end)]
+        score2, _, j = _best_window(last, tokens, start_at=i)
+        if score2 < SPAN_MIN:
+            return None
+        b = tokens[j][2]
+        score = min(score, score2)
+    else:
+        b = document.find("\n", a)
+        b = len(document) if b < 0 else b
+    if b < len(document) and document[b:b + 1] in ".!?" and not end:
+        b += 1
+    if end and b < len(document) and document[b] in ".!?":
+        b += 1  # the sentence's own period comes with it
+    return document[a:b].strip(), a, b, score
+
+
+SPAN_WORDS = re.compile(r"\s+(?:to|through|thru|until|till|up\s+to)\s+")
+
+
+def copy_span(runs, spoken):
+    """What "copy …" means on this screen: (text, run index or None, (start, end) in that run, score).
+    "first words to last words" is tried at every "to"/"through" and the best reading kept."""
+    document, offsets = "", []
+    for text, _, _ in runs:
+        offsets.append(len(document))
+        document += text + "\n"
+    candidates = [(spoken, None)]
+    for m in SPAN_WORDS.finditer(spoken):
+        candidates.append((spoken[:m.start()], spoken[m.end():]))
+    best = None
+    for start, end in candidates:
+        found = find_span(document, start, end) if start.strip() and (end is None or end.strip()) else None
+        # Prefer a "from … to …" reading when it fits about as well as the whole phrase.
+        if found and (best is None or found[3] > best[3] + (0.0 if end else 0.05)):
+            best = found
+    if best is None:
+        return None
+    text, a, b, score = best
+    run = next((k for k in range(len(runs) - 1, -1, -1) if offsets[k] <= a), None)
+    inside = run is not None and b <= offsets[run] + len(runs[run][0])
+    return text, (run if inside else None), ((a - offsets[run], b - offsets[run]) if inside else None), score
+
+
+def select_range(element, start, end):
+    """Highlight characters start..end of an editable text element (best effort)."""
+    import ApplicationServices as AS
+    try:
+        value = AS.AXValueCreate(AS.kAXValueCFRangeType, (start, end - start))
+        return AS.AXUIElementSetAttributeValue(element, "AXSelectedTextRange", value) == 0
+    except Exception:
+        return False

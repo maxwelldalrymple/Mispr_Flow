@@ -74,3 +74,29 @@ def test_badges_sit_on_the_targets_top_left_corner():
     assert x == 101 and y == 1000 - 50 - h - 1
     (cx, cy, cw, ch), = overlay.centered_badges([(0, 0, 300, 300)], screen_height=1000)
     assert cx + cw / 2 == pytest.approx(150) and cy + ch / 2 == pytest.approx(850)
+
+
+class TestCopyText:
+    """ "copy <first words>" and "copy <first words> to <last words>": text read from the app."""
+
+    RUNS = [("You should be able to copy text on the screen by just saying the first part of the text.", "area", "AXTextArea"),
+            ("The key press was sent, then auto enter does the rest. Done.", "label", "AXStaticText")]
+
+    @pytest.mark.parametrize("spoken, text", [
+        ("you should be able", "You should be able to copy text on the screen by just saying the first part of the text."),
+        ("key press was to auto enter does", "key press was sent, then auto enter does"),
+        ("key press was sent to the rest", "key press was sent, then auto enter does the rest."),
+        ("You should be able to copy text to the first part",  # "to" inside the text and as the separator
+         "You should be able to copy text on the screen by just saying the first part"),
+        ("by just sayin", "by just saying the first part of the text."),  # misheard: close is enough
+    ])
+    def test_spans(self, spoken, text):
+        assert pointer.copy_span(self.RUNS, spoken)[0] == text
+
+    def test_nothing_close_is_none(self):
+        assert pointer.copy_span(self.RUNS, "zebra crossing") is None
+        assert pointer.copy_span([], "anything") is None
+
+    def test_span_inside_one_editable_element_can_be_highlighted(self):
+        text, run, where, _ = pointer.copy_span(self.RUNS, "copy text on the screen to just saying")
+        assert run == 0 and self.RUNS[0][0][where[0]:where[1]] == text
