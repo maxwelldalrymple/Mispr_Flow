@@ -209,6 +209,11 @@ struct SystemSettings: View {
             SettingRow(title: "Dictation and notification sounds", detail: "Start, stop, paste, and alert cues.") {
                 Toggle("", isOn: model.binding("sounds")).toggleStyle(.switch).labelsHidden()
             }
+            Divider()
+            SettingRow(title: "Quiet other sound while you talk",
+                       detail: "Music, videos and anything else playing is muted while you dictate or give a command, and comes back when you let go. Meetings are never muted.") {
+                Toggle("", isOn: model.binding("duck_audio")).toggleStyle(.switch).labelsHidden()
+            }
         }
         SettingsGroup {
             SettingRow(title: "Automatic updates",

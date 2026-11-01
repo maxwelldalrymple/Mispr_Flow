@@ -2361,3 +2361,21 @@ class TestBrowserTabInTheBackground:
         monkeypatch.setattr(W.spots, "box_for", lambda spot: "box")
         self.finish(controller, monkeypatch, quiet=False)
         assert controller._told_apple_events and controller.pasted == []
+
+
+class TestQuietWhileYouTalk:
+    def test_muted_while_recording_and_back_when_you_let_go(self, controller):
+        controller.begin_handsfree()
+        assert controller.ducker.events == ["duck"]
+        controller.finish()
+        assert controller.ducker.events == ["duck", "restore"]
+
+    def test_a_tap_restores_too(self, controller):
+        controller.begin_hold("fn")
+        controller.discard_quietly()
+        assert controller.ducker.events[-1] == "restore"
+
+    def test_switched_off(self, controller):
+        controller.settings.duck_audio = False
+        controller.begin_handsfree()
+        assert "duck" not in controller.ducker.events

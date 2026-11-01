@@ -53,6 +53,16 @@ The ⏎ button left of Incognito. When on, Return is pressed 0.25 s after your t
 - **Keyboard shortcut:** ⌃⌥↩ (Control-Option-Return) turns it on or off from anywhere. Change it, or turn it off, in **Settings → General → Auto-Enter key**.
 - **⌘Return where Return is a new line:** on LinkedIn messages, Gmail and Outlook on the web, plain Return only starts a new line, so Auto-Enter presses ⌘Return there to send.
 
+## Quiet while you talk
+
+While you dictate (or hold the switch key for a command), the Mac's sound output is muted, so music, videos and calls on your speakers go quiet. It comes back the moment you let go.
+- The start chime plays first; the mute follows 0.3 s later. Sound is back before the stop chime.
+- If your Mac was already muted, it stays muted. A quick tap never mutes.
+- Meeting recordings are never muted (they need to hear the call).
+- If the app quits mid-dictation, sound is turned back on the next time it starts.
+- It mutes rather than pressing play/pause, which would *start* music when nothing is playing.
+- Turn it off in **Settings → System → Quiet other sound while you talk**.
+
 ## Invisible mode
 
 Hides the pill completely: it can't be seen or clicked (clicks go through to whatever is underneath). Everything else works the same: dictation, commands, pasting, Auto-Enter and sounds. Turning it on or off plays the mode chime.

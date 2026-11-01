@@ -56,6 +56,7 @@ from Foundation import NSObject
 from PyObjCTools import AppHelper
 
 from . import target as spots
+from .duck import Ducker
 from . import apps, control, pointer, sites, terminal, audio, context, draw, prompts, settings, setup, sounds, storage
 from .draw import Rect, white
 from .audio import Recorder
@@ -301,6 +302,8 @@ class WidgetController:
         # Set by the Swift app: the ◉ button opens its note window instead of starting at once.
         self.on_note_requested = None
         self.on_meeting_changed = lambda active: None
+        self.ducker = Ducker()
+        self.ducker.recover()  # sound left muted by a dictation when the app last quit
         self.on_busy = lambda busy: None  # the Swift app waits for not-busy before installing an update
         self.on_settings_changed = lambda: None  # the Swift app re-reads settings.json
         self.mic_saved = None  # the mic's level while "mute mic" has it at 0
@@ -398,7 +401,13 @@ class WidgetController:
             log(f"start spot unknown: {e}")
             self._start_spot = None
 
+    def _quiet_others(self):
+        """While you talk, other sound (music, videos) is muted; it's back when you let go."""
+        if self.settings.duck_audio:
+            self.ducker.duck()
+
     def _stop_recording(self):
+        self.ducker.restore()  # before the stop chime, so you hear it
         self.recorder.stop()
         self.rec_ended_at = datetime.now()
 
@@ -476,6 +485,7 @@ class WidgetController:
             return
         self._note_context()
         self.sounds.play(sounds.START)
+        self._quiet_others()
         self.hold_source = source
         self.set_state(HOLD)
 
@@ -487,6 +497,7 @@ class WidgetController:
         self._note_context()
         if sound:
             self.sounds.play(sounds.START)
+        self._quiet_others()
         self.set_state(HANDSFREE)
 
     def _wipe(self, reason):
@@ -762,6 +773,7 @@ class WidgetController:
 
     def discard_quietly(self):
         """Drop a recording that was never meant to be one (an fn tap or fn+key combo)."""
+        self.ducker.restore()
         self.recorder.stop()
         self._wipe("discarded")
         self.set_state(IDLE)

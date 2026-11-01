@@ -21,6 +21,8 @@ class Settings:
     # Sound cues (start, stop, paste...).
     sounds: bool = True
     auto_update: bool = True  # the app checks GitHub for a new version about 5 times a day
+    # Mute other sound (music, videos) while you dictate or give a command; back on when you let go.
+    duck_audio: bool = True
     # No text box selected: paste into the window's main text box instead of copying.
     find_text_box: bool = True
     # Long dictations typed in piece by piece while they're processed (off: all at once at the end).

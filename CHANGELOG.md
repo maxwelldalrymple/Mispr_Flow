@@ -8,6 +8,7 @@ All notable changes to Mispr Flow. Dates are 2026.
 - **Copy text on screen by voice:** "copy you should be able" (to the end of the passage) or "copy key press was to auto enter does" (from … through …). It reads the text from the app, close words are enough, and editable text gets highlighted. "copy all" = ⌘A ⌘C.
 - **Main text box:** when no text box has the cursor, dictation goes into the window's main text box (chat box, message field, document) instead of only the clipboard. Never an address bar, a search field or a file name. Switch: Settings → General.
 - **Words go where you started:** switch windows or apps while it transcribes, and the text still lands in the box you began in. Windows never switch: it goes in the background where the box allows it (native apps, plain web boxes); Chrome tabs get it by a page script (after turning on the browser's "Allow JavaScript from Apple Events"); apps that block background control (the Claude desktop app) get it the moment you go back.
+- **Quiet while you talk:** other sound is muted while you dictate or give a command, and back the moment you let go (never in meetings; restored after a crash; Settings → System).
 - **Fixed:** a mode change made by key or voice now always plays its chime. It compared the new value with itself, so the first toggle could be silent.
 
 ## Oct 2: v1.2.0: control your whole Mac by voice
