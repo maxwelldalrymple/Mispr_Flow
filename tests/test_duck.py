@@ -5,16 +5,20 @@ from mispr import duck
 from mispr.duck import Ducker
 
 
-def make(playing=("Music",), tabs=1, running=("com.apple.Music", "com.google.Chrome")):
+def make(playing=("Music",), tabs=1, running=("com.apple.Music", "com.google.Chrome"), missed=0, sounding=()):
     ran = []
     def run(script):
         ran.append(script)
         if "player state" in script:
             return "playing" if any(f'"{a}"' in script for a in playing) else "paused"
-        if duck._PAUSE_PAGE.replace('"', '\\"') in script.replace("\\\\", "\\"):
-            return str(tabs)
-        return "0"
-    return Ducker(run=run, running=lambda: set(running), worker=False), ran
+        if "mispr-paused','1'" in script:
+            return f"{tabs} {missed}"
+        return "0 0"
+    keys = []
+    d = Ducker(run=run, running=lambda: set(running), worker=False, sounding=lambda: set(sounding),
+               media_key=lambda: keys.append("play/pause"))
+    d.keys = keys
+    return d, ran
 
 
 def test_pauses_what_plays_and_resumes_only_that():
@@ -57,3 +61,23 @@ def test_a_tap_waits_for_a_possible_second_tap(monkeypatch):
     d.duck()  # the second tap: hands-free, stays paused
     assert timers[0].cancelled and d.paused is not None
     assert ran.count('tell application "Music" to pause') == 1  # not paused twice
+
+
+def test_unreachable_tab_making_sound_gets_the_media_key():
+    d, ran = make(playing=(), tabs=0, missed=3, sounding=("com.google.Chrome.helper",))
+    d.duck()
+    assert d.keys == ["play/pause"]
+    d.restore()
+    assert d.keys == ["play/pause", "play/pause"]  # pressed again to play
+
+
+def test_no_media_key_when_the_scripts_reached_every_tab():
+    d, ran = make(playing=(), tabs=1, missed=0, sounding=("com.google.Chrome.helper",))
+    d.duck()
+    assert d.keys == []  # Chrome may still report sound just after a pause: the key would restart it
+
+
+def test_no_media_key_when_nothing_is_playing():
+    d, ran = make(playing=(), tabs=0, missed=3, sounding=("com.thebandwagonapp.app",))
+    d.duck()
+    assert d.keys == []

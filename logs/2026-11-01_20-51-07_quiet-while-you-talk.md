@@ -34,3 +34,14 @@
 - `test_duck`: pauses only what plays and resumes only that; nothing playing starts nothing; apps that aren't running are never asked; a tap waits and a second tap keeps it paused without pausing twice.
 - `test_widget`: paused while recording and resumed on finish; a tap resumes later; voice commands never pause; switch off.
 - All pass.
+
+## "not working": found and fixed
+
+- **Diagnosis:**
+  - CoreAudio's per-process output (`prs#`/`piro`, read with ctypes) showed `com.google.Chrome.helper` making sound: a YouTube tab.
+  - The page script reached only 1 profile's tabs. The other profile's 18 tabs answered "Executing JavaScript through AppleScript is turned off". **The Chrome setting is per profile.**
+- **Fix:** `playing_apps()` reports which apps are making sound. If page scripts missed any tabs and a browser is making sound, the play/pause media key is pressed, and pressed again on release.
+  - It's not used when the scripts reached every tab: Chrome can still report sound just after a pause, and the key would restart it.
+  - It's never used when no browser is making sound.
+- **Cleanup:** a leftover test tab (from the earlier background-typing test) was found in the other profile and closed. The earlier close command hadn't reached every window, so it now loops through each window's tabs.
+- **Tests:** `test_duck` adds unreachable tab + sound → key pressed then pressed again; all tabs reached → no key; nothing playing → no key. All pass.
